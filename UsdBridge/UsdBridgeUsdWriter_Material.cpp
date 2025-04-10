@@ -6,8 +6,11 @@
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeUsdWriter_Arrays.h"
 #include "stb_image_write.h"
+#include <fstream>
+#include <iostream>
 
 #include <limits>
+#include <openssl/evp.h>
 
 _TF_TOKENS_STRUCT_NAME(QualifiedInputTokens)::_TF_TOKENS_STRUCT_NAME(QualifiedInputTokens)()
   : roughness(TfToken("inputs:roughness", TfToken::Immortal))
@@ -394,6 +397,7 @@ namespace
     CreateShaderInput(sampler, timeEval, DMI::DATA, UsdBridgeTokens->tex, QualifiedInputTokens->tex, SdfValueTypeNames->Asset);
     CreateShaderInput(sampler, timeEval, DMI::WRAPS, UsdBridgeTokens->wrap_u, QualifiedInputTokens->wrap_u, SdfValueTypeNames->Int);
     if((uint32_t)type >= (uint32_t)UsdBridgeSamplerData::SamplerType::SAMPLER_2D)
+
       CreateShaderInput(sampler, timeEval, DMI::WRAPT, UsdBridgeTokens->wrap_v, QualifiedInputTokens->wrap_v, SdfValueTypeNames->Int);
     if((uint32_t)type >= (uint32_t)UsdBridgeSamplerData::SamplerType::SAMPLER_3D)
       CreateShaderInput(sampler, timeEval, DMI::WRAPR, UsdBridgeTokens->wrap_w, QualifiedInputTokens->wrap_w, SdfValueTypeNames->Int);
@@ -1172,6 +1176,7 @@ void UsdBridgeUsdWriter::UpdateUsdMaterial(UsdStageRefPtr timeVarStage, const Sd
     // Update mdl shader
     this->UpdateMdlShader(timeVarStage, matPrimPath, matData, boundGeomPrimvars, timeStep);
   }
+  //WriteUsdStageToText(timeVarStage, "material_verification_" + std::to_string(timeStep) + ".usda");
 }
 
 #define UPDATE_USD_SHADER_INPUT_MACRO(...) \
@@ -1342,16 +1347,83 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
           numComponents, convertedSamplerData, convertedSamplerStride);
 
         // Filename, relative from connection working dir
-        std::string wdRelFilename(SessionDirectory + imgFileName);
-        Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
-      }
-      else
-      {
-        UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING, "Image file not written out, format not supported (should be 1-4 component unsigned char/short/int or float/double): " << samplerData.ImageName);
-      }
-    }
+                       // Filename, relative from connection working dir
+                std::string wdRelFilename(SessionDirectory + imgFileName);
+                Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
+
+                // --- ZMQ Sending Section for Texture ---
+                if (zmqSocket && zmqInitialized) {
+                    try {
+                        // Prepare the filename (use the actual image filename with path relative to root if needed)
+                        std::string filename = imgFileName; // e.g., "images/some_texture.png"
+
+                        // Calculate SHA256 hash of the image data
+                        unsigned char hash[EVP_MAX_MD_SIZE];
+                        unsigned int hashLen;
+                        EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+                        const EVP_MD* md = EVP_sha256();
+                        if (mdctx && md && EVP_DigestInit_ex(mdctx, md, nullptr) &&
+                            EVP_DigestUpdate(mdctx, writeOutput.imageData, writeOutput.imageSize) &&
+                            EVP_DigestFinal_ex(mdctx, hash, &hashLen))
+                        {
+                            EVP_MD_CTX_free(mdctx);
+
+                            // Convert hash to hexadecimal string
+                            std::stringstream ss;
+                            for (unsigned int i = 0; i < hashLen; i++) {
+                                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+                            }
+                            std::string hashsum = ss.str();
+
+                            // Send multi-part message: Filename, Content, Hash
+                            // 1. Filename
+                            zmq::message_t filenameMsg(filename.data(), filename.size());
+                            zmqSocket->send(filenameMsg, zmq::send_flags::sndmore);
+
+                            // 2. PNG image data
+                            zmq::message_t contentMsg(writeOutput.imageData, writeOutput.imageSize);
+                            zmqSocket->send(contentMsg, zmq::send_flags::sndmore);
+
+                            // 3. Hash
+                            zmq::message_t hashMsg(hashsum.data(), hashsum.size());
+                            zmqSocket->send(hashMsg, zmq::send_flags::none); // Last part
+
+                            std::cout << "Texture sent via DEALER: " << filename << std::endl;
+                            // DEALER sockets don't typically wait for a reply unless the protocol demands it.
+                            // No recv() call here.
+                        } else {
+                            if (mdctx) EVP_MD_CTX_free(mdctx);
+                            std::cerr << "OpenSSL hash calculation failed for texture: " << filename << std::endl;
+                            // Decide if you want to send anyway or handle the error
+                        }
+
+                    } catch (const zmq::error_t& e) {
+                        std::cerr << "ZeroMQ DEALER error while sending texture: " << e.what() << std::endl;
+                        zmqInitialized = false; // Assume connection is broken
+                        // Attempt to reinitialize the socket using the stored endpoint
+                        if (zmqSocket) zmqSocket->close();
+                        zmqSocket.reset();
+                        // Try re-initializing completely
+                        if (!InitializeZmq(GetZmqTargetEndpoint().c_str())) {
+                             std::cerr << "Failed to reinitialize ZeroMQ DEALER socket after texture send error." << std::endl;
+                             // Handle persistent failure (e.g., stop trying, log critical error)
+                        } else {
+                            std::cerr << "ZeroMQ DEALER socket reinitialized after texture send error. Might need to retry sending." << std::endl;
+                            // Consider logic here if you need to guarantee texture delivery (e.g., queueing)
+                        }
+                    }
+                } else if (!zmqInitialized) {
+                    std::cerr << "Skipping texture send, ZMQ DEALER not initialized." << std::endl;
+                }
+                // writeOutput destructor will delete[] writeOutput.imageData
+            } else {
+                 UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING, "Image file not written out or sent via ZMQ, format not supported or conversion failed: " << (samplerData.ImageName ? samplerData.ImageName : defaultName.c_str()));
+            }
+        } // end if(!isSharedResource || !SetSharedResourceModified(key))
+    } // end if(writeFile)
   }
-}
+
+
 
 namespace
 {
@@ -1510,4 +1582,34 @@ void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWr
 {
   RemoveResourceFiles(cache, usdWriter, constring::imgFolder, constring::imageExtension);
 }
+
+void WriteUsdStageToText(const UsdStageRefPtr& stage, const std::string& filename)
+{
+  if (!stage)
+  {
+    std::cerr << "Invalid USD stage." << std::endl;
+    return;
+  }
+
+  // Get the root layer of the stage
+  SdfLayerRefPtr rootLayer = stage->GetRootLayer();
+
+  // Export the layer to a string
+  std::string usdaContent;
+  rootLayer->ExportToString(&usdaContent);
+
+  // Write the string to a file
+  std::ofstream outFile(filename);
+  if (outFile.is_open())
+  {
+    outFile << usdaContent;
+    outFile.close();
+    std::cout << "USDA file written successfully: " << filename << std::endl;
+  }
+  else
+  {
+    std::cerr << "Unable to open file for writing: " << filename << std::endl;
+  }
+}
+
 

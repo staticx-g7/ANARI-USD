@@ -23,6 +23,10 @@ set(USD_PYTHON_LINK_DIRS "${Python3_LIBRARY_DIRS}")
 list(GET Python3_INCLUDE_DIRS 0 Python3_INCLUDE_DIR) # Required for passing pxrConfig.cmake
 list(GET Python3_LIBRARIES 0 Python3_LIBRARY) # Required for passing pxrConfig.cmake
 
+# Add at top after USD dependencies
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZMQ REQUIRED libzmq)
+
 # USD
 
 if (NOT EXISTS ${USD_ROOT_DIR})
@@ -211,6 +215,7 @@ target_link_libraries(UsdBridge
     UsdBridge_Connect
     ${USD_TARGETS}
     ${USD_PYTHON_TARGETS}
+    ${ZMQ_LIBRARIES}
 )
 
 # USDRT/CarbSDK
@@ -230,6 +235,7 @@ if(${USD_DEVICE_USE_USDRT})
       "${CUDA_INCLUDE_DIR}"
       "${CUDA_BASE_DIR_PARENT}"
       ${CARBSDK_INCLUDE_DIR}
+      ${ZMQ_INCLUDE_DIRS}
   )
   if (WIN32)
     set(CARB_LIB "${CARBSDK_BIN_DIR}/carb${CMAKE_STATIC_LIBRARY_SUFFIX}")

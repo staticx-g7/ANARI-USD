@@ -7,6 +7,25 @@
 #include "UsdBridgeUsdWriter_Arrays.h"
 #include "UsdBridgeRt.h"
 
+#include <fstream>
+#include <iostream>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/stage.h>
+#include <pxr/usd/sdf/layer.h>
+#include <fstream>
+
+#include <iomanip>
+#include <sstream>
+#include <openssl/evp.h>
+
+std::string ExportUsdAsString(const SdfLayerRefPtr& rootLayer)
+{
+  std::string usdAsString;
+  rootLayer->ExportToString(&usdAsString);
+  return usdAsString;
+}
+
 namespace
 {
   template<typename GeomDataType>
@@ -1177,36 +1196,128 @@ void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cac
 
 void UsdBridgeUsdWriter::UpdateUsdGeometry(const UsdStagePtr& timeVarStage, const SdfPath& meshPath, const UsdBridgeMeshData& geomData, double timeStep)
 {
-  // To avoid data duplication when using of clip stages, we need to potentially use the scenestage prim for time-uniform data.
-  UsdGeomMesh uniformGeom = UsdGeomMesh::Get(this->SceneStage, meshPath);
-  assert(uniformGeom);
-  UsdGeomPrimvarsAPI uniformPrimvars(uniformGeom);
+    // To avoid data duplication when using of clip stages, we need to potentially use the scenestage prim for time-uniform data.
+    UsdGeomMesh uniformGeom = UsdGeomMesh::Get(this->SceneStage, meshPath);
+    assert(uniformGeom);
+    UsdGeomPrimvarsAPI uniformPrimvars(uniformGeom);
 
-  UsdGeomMesh timeVarGeom = UsdGeomMesh::Get(timeVarStage, meshPath);
-  assert(timeVarGeom);
-  UsdGeomPrimvarsAPI timeVarPrimvars(timeVarGeom);
+    UsdGeomMesh timeVarGeom = UsdGeomMesh::Get(timeVarStage, meshPath);
+    assert(timeVarGeom);
+    UsdGeomPrimvarsAPI timeVarPrimvars(timeVarGeom);
 
-  // Update the mesh
-  UsdBridgeUpdateEvaluator<const UsdBridgeMeshData> updateEval(geomData);
-  TimeEvaluator<UsdBridgeMeshData> timeEval(geomData, timeStep);
+    // Update the mesh
+    UsdBridgeUpdateEvaluator<const UsdBridgeMeshData> updateEval(geomData);
+    TimeEvaluator<UsdBridgeMeshData> timeEval(geomData, timeStep);
 
-  assert((geomData.NumIndices % geomData.FaceVertexCount) == 0);
-  uint64_t numPrims = int(geomData.NumIndices) / geomData.FaceVertexCount;
+    assert((geomData.NumIndices % geomData.FaceVertexCount) == 0);
+    uint64_t numPrims = int(geomData.NumIndices) / geomData.FaceVertexCount;
 
-  UsdBridgeRt usdRtData(this->SceneStage, meshPath);
+    UsdBridgeRt usdRtData(this->SceneStage, meshPath);
 
-  UsdGeomUpdateArguments<UsdBridgeMeshData> updateArgs = { usdRtData, geomData, numPrims, updateEval, timeEval };
-  UsdGeomUpdateAttribArgs<UsdGeomMesh> attribArgs = { this->LogObject, timeVarGeom, uniformGeom };
-  UsdGeomUpdatePrimvarArgs primvarArgs = { this, timeVarPrimvars, uniformPrimvars };
+    UsdGeomUpdateArguments<UsdBridgeMeshData> updateArgs = { usdRtData, geomData, numPrims, updateEval, timeEval };
+    UsdGeomUpdateAttribArgs<UsdGeomMesh> attribArgs = { this->LogObject, timeVarGeom, uniformGeom };
+    UsdGeomUpdatePrimvarArgs primvarArgs = { this, timeVarPrimvars, uniformPrimvars };
 
-  UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomPoints);
-  UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomNormals);
-  if( Settings.EnableStTexCoords && UsdGeomDataHasTexCoords(geomData) )
-    { UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomTexCoords); }
-  UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomAttributes);
-  UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomColors);
-  UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomIndices);
+    UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomPoints);
+    UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomNormals);
+    if (Settings.EnableStTexCoords && UsdGeomDataHasTexCoords(geomData))
+    {
+        UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomTexCoords);
+    }
+    UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomAttributes);
+    UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomColors);
+    UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomIndices);
+
+    // Export the USD stage to a string in USDA format
+    std::string usdaContent;
+    timeVarStage->GetRootLayer()->ExportToString(&usdaContent); // false for ASCII format
+if (zmqSocket && zmqInitialized) {
+        try {
+            // Prepare the filename
+            std::string filename = "geometry_" + meshPath.GetName() + "_" + std::to_string(timeStep) + ".usda";
+
+            // Calculate SHA256 hash using EVP
+            unsigned char hash[EVP_MAX_MD_SIZE];
+            unsigned int hashLen;
+            EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+            const EVP_MD* md = EVP_sha256();
+
+            if (mdctx && md && EVP_DigestInit_ex(mdctx, md, nullptr) &&
+                EVP_DigestUpdate(mdctx, usdaContent.c_str(), usdaContent.length()) &&
+                EVP_DigestFinal_ex(mdctx, hash, &hashLen))
+            {
+                EVP_MD_CTX_free(mdctx);
+
+                // Convert hash to hexadecimal string
+                std::stringstream ss;
+                for (unsigned int i = 0; i < hashLen; i++) {
+                    ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+                }
+                std::string hashsum = ss.str();
+
+                // Send multi-part message: Filename, Content, Hash
+                // 1. Filename
+                zmq::message_t filenameMsg(filename.data(), filename.size());
+                zmqSocket->send(filenameMsg, zmq::send_flags::sndmore);
+
+                // 2. USD content (file data)
+                zmq::message_t contentMsg(usdaContent.data(), usdaContent.size());
+                zmqSocket->send(contentMsg, zmq::send_flags::sndmore);
+
+                // 3. Hash
+                zmq::message_t hashMsg(hashsum.data(), hashsum.size());
+                zmqSocket->send(hashMsg, zmq::send_flags::none); // Last part
+
+                std::cout << "Geometry sent via DEALER: " << filename << std::endl;
+
+                // Optional: Wait for reply if your ROUTER is expected to send one
+                // Note: DEALER recv is non-blocking by default, you might need flags
+                // or a different approach if blocking is desired.
+                zmq::message_t reply;
+                // Use recv with a timeout or non-blocking flag if needed, otherwise this could block indefinitely
+                // Example: Use poll for non-blocking recv with timeout
+                zmq::pollitem_t items[] = { { *zmqSocket, 0, ZMQ_POLLIN, 0 } };
+                zmq::poll(&items[0], 1, std::chrono::milliseconds(1000)); // 1 second timeout
+
+                if (items[0].revents & ZMQ_POLLIN) {
+                    auto result = zmqSocket->recv(reply, zmq::recv_flags::none);
+                    if (result.has_value()) {
+                         std::cout << "Received reply for geometry: " << reply.to_string() << std::endl;
+                    } else {
+                         std::cerr << "Error receiving geometry reply from ROUTER." << std::endl;
+                         // Handle receive error if necessary
+                    }
+                } else {
+                    std::cout << "No reply received for geometry within timeout." << std::endl;
+                    // Handle timeout if necessary (maybe the ROUTER doesn't always reply)
+                }
+
+            } else {
+                if (mdctx) EVP_MD_CTX_free(mdctx);
+                std::cerr << "OpenSSL hash calculation failed for geometry: " << filename << std::endl;
+                // Decide if you want to send anyway or handle the error
+            }
+
+        } catch (const zmq::error_t& e) {
+            std::cerr << "ZeroMQ DEALER error while sending/receiving geometry: " << e.what() << std::endl;
+            zmqInitialized = false; // Assume connection is broken
+            // Attempt to reinitialize the socket using the stored endpoint
+            if (zmqSocket) zmqSocket->close();
+            zmqSocket.reset();
+            // Try re-initializing completely
+            if (!InitializeZmq(GetZmqTargetEndpoint().c_str())) {
+                 std::cerr << "Failed to reinitialize ZeroMQ DEALER socket after geometry send/recv error." << std::endl;
+                 // Handle persistent failure
+            } else {
+                std::cerr << "ZeroMQ DEALER socket reinitialized after geometry send/recv error. Might need to retry sending." << std::endl;
+                // Consider logic here if you need to guarantee geometry delivery
+            }
+        }
+    } else if (!zmqInitialized) {
+         std::cerr << "Skipping geometry send, ZMQ DEALER not initialized." << std::endl;
+    }
 }
+
 
 void UsdBridgeUsdWriter::UpdateUsdGeometry(const UsdStagePtr& timeVarStage, const SdfPath& instancerPath, const UsdBridgeInstancerData& geomData, double timeStep)
 {
@@ -1268,6 +1379,7 @@ void UsdBridgeUsdWriter::UpdateUsdGeometry(const UsdStagePtr& timeVarStage, cons
     //UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomLinearVelocities);
     //UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomAngularVelocities);
     UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomInvisibleIds);
+
   }
 }
 
@@ -1302,6 +1414,8 @@ void UsdBridgeUsdWriter::UpdateUsdGeometry(const UsdStagePtr& timeVarStage, cons
   UPDATE_USDGEOM_PRIMVAR_ARRAYS(UpdateUsdGeomColors);
   UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomWidths);
   UPDATE_USDGEOM_ATTRIB_ARRAYS(UpdateUsdGeomCurveLengths);
+
+
 }
 
 void UsdBridgeUsdWriter::UpdateUsdInstancerPrototypes(const SdfPath& instancerPath, const UsdBridgeInstancerRefData& geomRefData,
@@ -1317,3 +1431,32 @@ void UsdBridgeUsdWriter::UpdateUsdInstancerPrototypes(const SdfPath& instancerPa
   // Very basic rel update, without any timevarying aspects
   UpdateUsdGeomPrototypes(this->LogObject, this->SceneStage, uniformGeom, geomRefData, refProtoGeomPrimPaths, protoShapePathRp);
 }
+
+/*void UsdBridgeUsdWriter::WriteUsdStageToText(const UsdStageRefPtr& stage, const std::string& filename)
+{
+  if (!stage)
+  {
+    std::cerr << "Invalid USD stage." << std::endl;
+    return;
+  }
+
+  // Get the root layer of the stage
+  SdfLayerRefPtr rootLayer = stage->GetRootLayer();
+
+  // Export the layer to a string
+  std::string usdAsString;
+  rootLayer->ExportToString(&usdAsString);
+
+  // Write the string to a file
+  std::ofstream outFile(filename);
+  if (outFile.is_open())
+  {
+    outFile << usdAsString;
+    outFile.close();
+    std::cout << "USD stage written to " << filename << std::endl;
+  }
+  else
+  {
+    std::cerr << "Unable to open file: " << filename << std::endl;
+  }
+}*/

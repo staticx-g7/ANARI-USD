@@ -4,6 +4,8 @@
 #ifndef UsdBridge_h
 #define UsdBridge_h
 
+#include <string>
+
 #include "UsdBridgeData.h"
 
 struct UsdBridgeInternals;
@@ -101,6 +103,9 @@ class UsdBridge
     //
 
     static void SetConnectionLogVerbosity(int logVerbosity); // 0 <= logVerbosity <= USDBRIDGE_MAX_LOG_VERBOSITY, 0 is quietest
+  //start edit here ==================================================================================
+  void SendTestMessage(const std::string& message);
+  //end edit here ====================================================================================
 
   protected: 
 

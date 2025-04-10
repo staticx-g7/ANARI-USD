@@ -7,9 +7,16 @@
 #include "UsdBridgeCaches.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 
+#include "pxr/usd/usdUtils/stitch.h"
+#include "pxr/usd/usdUtils/usdzPackage.h"
+
+#include "pxr/usd/usd/stage.h"
+
 #include <string>
 #include <memory>
 #include <algorithm>
+
+#include "UsdBridgeUtils.h"
 
 #ifdef USE_USDRT
 #include "carb/ClientUtils.h"
@@ -271,11 +278,20 @@ bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
 
   Internals->DiagnosticDelegate = std::make_unique<UsdBridgeDiagnosticMgrDelegate>(logUserData, logCallback);
   Internals->DiagRemoveFunc = [](UsdBridgeDiagnosticMgrDelegate* delegate)
-    { TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate); };
+  { TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate); };
   TfDiagnosticMgr::GetInstance().AddDelegate(Internals->DiagnosticDelegate.get());
 
   SessionValid = BRIDGE_USDWRITER.InitializeSession();
   SessionValid = SessionValid && BRIDGE_USDWRITER.OpenSceneStage();
+
+  // Initialize ZMQ after the session is successfully initialized
+  if (SessionValid) {
+    bool zmqInitialized = BRIDGE_USDWRITER.InitializeZmq();
+    if (!zmqInitialized) {
+      UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::ERR, "Failed to initialize ZMQ publisher.");
+      SessionValid = false;
+    }
+  }
 
   return SessionValid;
 }
