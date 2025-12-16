@@ -121,7 +121,7 @@ bool UsdBridgeUsdWriter::InitializeZmq(const char* endpoint) {
             zmqTargetEndpoint = endpoint;
         } else {
             // *** DEFAULT ROUTER ADDRESS (Adjust if localhost isn't correct) ***
-            zmqTargetEndpoint = "tcp://192.168.227.1:" + std::to_string(DEFAULT_ZMQ_ROUTER_PORT);
+            zmqTargetEndpoint = "tcp://127.0.0.1:" + std::to_string(DEFAULT_ZMQ_ROUTER_PORT);
         }
 
         // *** ALWAYS USE CONNECT for DEALER client ***
@@ -284,7 +284,7 @@ bool UsdBridgeUsdWriter::InitializeSession()
     SessionNumber = FindSessionNumber();
     SessionDirectory = constring::sessionPf + std::to_string(SessionNumber) + "/";
 
-    bool valid = true;
+    bool valid = Connect->CreateFolder((SessionDirectory + "/images").c_str(), true, true);
 
     valid = CreateDirectories();
 
@@ -330,7 +330,7 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
     if (!this->SceneStage && !Settings.CreateNewSession)
         this->SceneStage = UsdStage::Open(absSceneFile);
     if (!this->SceneStage)
-        this->SceneStage = UsdStage::CreateNew(absSceneFile);
+        this->SceneStage = UsdStage::CreateInMemory();
 
     if (!this->SceneStage)
     {
@@ -421,7 +421,7 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
     std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + cacheEntry->ManifestStage.first).c_str());
 
     UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
-    cacheEntry->ManifestStage.second = UsdStage::CreateNew(absoluteFileName);
+    cacheEntry->ManifestStage.second = UsdStage::CreateInMemory();
     UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
 
     if (!cacheEntry->ManifestStage.second)
@@ -482,7 +482,7 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
         std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + relativeFileName).c_str());
 
         UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
-        UsdStageRefPtr primClipStage = UsdStage::CreateNew(absoluteFileName);
+        UsdStageRefPtr primClipStage = UsdStage::CreateInMemory();
         UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
 
         exists = !primClipStage;

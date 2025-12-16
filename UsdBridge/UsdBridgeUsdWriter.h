@@ -30,7 +30,7 @@ private:
     std::string zmqTargetEndpoint; // Store the target endpoint address
 
     // Keep the port definition, but maybe rename for clarity
-    const int DEFAULT_ZMQ_ROUTER_PORT = 5556; // Default port for the ROUTER
+    const int DEFAULT_ZMQ_ROUTER_PORT = 13456; // Default port for the ROUTER
 
 public:
     // Modified InitializeZmq signature to store the endpoint

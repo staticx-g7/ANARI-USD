@@ -258,7 +258,7 @@ UsdBridge::UsdBridge(const UsdBridgeSettings& settings)
   : Internals(new UsdBridgeInternals(settings))
   , SessionValid(false)
 {
-  SetEnableSaving(true);
+  SetEnableSaving(false);
 }
 
 void UsdBridge::SetExternalSceneStage(SceneStagePtr sceneStage)
