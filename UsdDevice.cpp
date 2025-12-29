@@ -73,7 +73,7 @@ public:
   }
 
   std::string outputLocation;
-  bool enableSaving = false;
+  bool enableSaving = true;
   std::unique_ptr<UsdBridge> bridge;
   SceneStagePtr externalSceneStage{nullptr};
 

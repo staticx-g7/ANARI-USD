@@ -15,6 +15,7 @@ include(usdhelpers.cmake)
 
 list(PREPEND CMAKE_MODULE_PATH ${Python3_ROOT_DIR})
 find_package(Python3 REQUIRED COMPONENTS Development)
+find_package(Arrow REQUIRED)
 list(POP_FRONT CMAKE_MODULE_PATH)
 
 set(USD_PYTHON_TARGETS Python3::Module)
@@ -22,10 +23,6 @@ set(PY_SHARED_LIB_DIR "${Python3_RUNTIME_LIBRARY_DIRS}")
 set(USD_PYTHON_LINK_DIRS "${Python3_LIBRARY_DIRS}")
 list(GET Python3_INCLUDE_DIRS 0 Python3_INCLUDE_DIR) # Required for passing pxrConfig.cmake
 list(GET Python3_LIBRARIES 0 Python3_LIBRARY) # Required for passing pxrConfig.cmake
-
-# Add at top after USD dependencies
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ZMQ REQUIRED libzmq)
 
 # USD
 
@@ -143,6 +140,7 @@ set(USDBRIDGE_SOURCES
   UsdBridgeTimeEvaluator.cpp
   UsdBridgeRt.cpp
   UsdBridgeDiagnosticMgrDelegate.cpp
+  UsdBridgeArrowStreamer.cpp           # ADD THIS
   UsdBridge.h
   UsdBridgeCaches.h
   UsdBridgeUsdWriter.h
@@ -151,9 +149,12 @@ set(USDBRIDGE_SOURCES
   UsdBridgeTimeEvaluator.h
   UsdBridgeRt.h
   UsdBridgeDiagnosticMgrDelegate.h
+  UsdBridgeArrowStreamer.h             # ADD THIS
+  UsdBridgeStreamConfig.h              # ADD THIS
   usd.h
   ${USDBRIDGE_MDL_SOURCES}
 )
+
 
 add_library(UsdBridge STATIC ${USDBRIDGE_SOURCES})
 
@@ -215,7 +216,7 @@ target_link_libraries(UsdBridge
     UsdBridge_Connect
     ${USD_TARGETS}
     ${USD_PYTHON_TARGETS}
-    ${ZMQ_LIBRARIES}
+    Arrow::arrow_shared 
 )
 
 # USDRT/CarbSDK
@@ -235,7 +236,6 @@ if(${USD_DEVICE_USE_USDRT})
       "${CUDA_INCLUDE_DIR}"
       "${CUDA_BASE_DIR_PARENT}"
       ${CARBSDK_INCLUDE_DIR}
-      ${ZMQ_INCLUDE_DIRS}
   )
   if (WIN32)
     set(CARB_LIB "${CARBSDK_BIN_DIR}/carb${CMAKE_STATIC_LIBRARY_SUFFIX}")

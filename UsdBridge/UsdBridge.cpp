@@ -7,16 +7,12 @@
 #include "UsdBridgeCaches.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 
-#include "pxr/usd/usdUtils/stitch.h"
-#include "pxr/usd/usdUtils/usdzPackage.h"
-
-#include "pxr/usd/usd/stage.h"
+#include "UsdBridgeArrowStreamer.h"
+#include "UsdBridgeStreamConfig.h"
 
 #include <string>
 #include <memory>
 #include <algorithm>
-
-#include "UsdBridgeUtils.h"
 
 #ifdef USE_USDRT
 #include "carb/ClientUtils.h"
@@ -87,6 +83,10 @@ struct UsdBridgeInternals
 #ifdef USE_USDRT
     InitializeCarbSDK();
 #endif
+
+    // Initialize Arrow streamer
+    UsdBridgeStreamConfig cfg;
+    Streamer = std::make_unique<UsdBridgeArrowStreamer>(cfg);
   }
 
   ~UsdBridgeInternals()
@@ -126,6 +126,9 @@ struct UsdBridgeInternals
   SdfPrimPathList TempPrimPaths;
   SdfPrimPathList ProtoPrimPaths;
 
+  // Arrow streaming
+  std::unique_ptr<UsdBridgeArrowStreamer> Streamer;
+
 #ifdef USE_USDRT
   void InitializeCarbSDK();
   void CleanupCarbSDK();
@@ -133,6 +136,7 @@ struct UsdBridgeInternals
   UsdBridgeCarbLogger* CarbLogObject;
 #endif
 };
+
 
 
 BoolEntryPair UsdBridgeInternals::FindOrCreatePrim(const char* category, const char* name, ResourceCollectFunc collectFunc)
@@ -258,7 +262,7 @@ UsdBridge::UsdBridge(const UsdBridgeSettings& settings)
   : Internals(new UsdBridgeInternals(settings))
   , SessionValid(false)
 {
-  SetEnableSaving(false);
+  SetEnableSaving(true);
 }
 
 void UsdBridge::SetExternalSceneStage(SceneStagePtr sceneStage)
@@ -275,26 +279,23 @@ void UsdBridge::SetEnableSaving(bool enableSaving)
 bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
 {
   BRIDGE_USDWRITER.LogObject = {logUserData, logCallback};
-
   Internals->DiagnosticDelegate = std::make_unique<UsdBridgeDiagnosticMgrDelegate>(logUserData, logCallback);
   Internals->DiagRemoveFunc = [](UsdBridgeDiagnosticMgrDelegate* delegate)
-  { TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate); };
+    { TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate); };
   TfDiagnosticMgr::GetInstance().AddDelegate(Internals->DiagnosticDelegate.get());
 
   SessionValid = BRIDGE_USDWRITER.InitializeSession();
   SessionValid = SessionValid && BRIDGE_USDWRITER.OpenSceneStage();
 
-  // Initialize ZMQ after the session is successfully initialized
-  if (SessionValid) {
-    bool zmqInitialized = BRIDGE_USDWRITER.InitializeZmq();
-    if (!zmqInitialized) {
-      UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::ERR, "Failed to initialize ZMQ publisher.");
-      SessionValid = false;
-    }
+  // ADD THIS:
+  if (SessionValid && Internals->Streamer)
+  {
+    Internals->Streamer->Initialize();
   }
 
   return SessionValid;
 }
+
 
 void UsdBridge::CloseSession()
 {
@@ -924,6 +925,14 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
   if(this->EnableSaving)
     geomStage->Save();
 #endif
+ // ADD THIS:
+  if constexpr (std::is_same_v<GeomDataType, UsdBridgeMeshData>)
+  {
+    if (Internals->Streamer && Internals->Streamer->IsActive())
+    {
+      Internals->Streamer->StreamGeometry(cache->Name.GetString(), geomData, timeStep);
+    }
+  }
 }
 
 void UsdBridge::SetGeometryData(UsdGeometryHandle geometry, const UsdBridgeMeshData& meshData, double timeStep)
@@ -998,14 +1007,29 @@ void UsdBridge::SetSamplerData(UsdSamplerHandle sampler, const UsdBridgeSamplerD
 #endif
 
   UsdStageRefPtr samplerStage = BRIDGE_USDWRITER.GetTimeVarStage(cache);
-  
+
   BRIDGE_USDWRITER.UpdateUsdSampler(samplerStage, cache, samplerData, timeStep);
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     samplerStage->Save();
 #endif
+
+  // ADD THIS:
+  if (Internals->Streamer && Internals->Streamer->IsActive())
+  {
+    // Use raw data pointer for now (assumes UCHAR type already)
+    Internals->Streamer->StreamTexture(
+      cache->Name.GetString(),
+      samplerData,
+      samplerData.Data,
+      static_cast<int>(samplerData.ImageDims[0]),
+      static_cast<int>(samplerData.ImageDims[1]),
+      samplerData.ImageNumComponents,
+      timeStep);
+  }
 }
+
 
 void UsdBridge::SetCameraData(UsdCameraHandle camera, const UsdBridgeCameraData& cameraData, double timeStep)
 {
