@@ -71,23 +71,41 @@ struct UsdBridgeInternals
   UsdBridgeInternals(const UsdBridgeSettings& settings)
     : UsdWriter(settings)
   {
-    RefModCallbacks.AtNewRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache){
-      // Increase the reference count for the child on creation of referencing prim
-      this->Cache.AddChild(parentCache, childCache);
-    };
+  RefModCallbacks.AtNewRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache)
+  {
+    // Increase the reference count for the child on creation of referencing prim
+    this->Cache.AddChild(parentCache, childCache);
+  };
+  RefModCallbacks.AtRemoveRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache)
+  {
+    this->Cache.RemoveChild(parentCache, childCache);
+  };
 
-    RefModCallbacks.AtRemoveRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache) {
-      this->Cache.RemoveChild(parentCache, childCache);
-    };
-
-#ifdef USE_USDRT
-    InitializeCarbSDK();
+#ifdef USE_USD_RT
+  InitializeCarbSDK();
 #endif
 
-    // Initialize Arrow streamer
-    UsdBridgeStreamConfig cfg;
-    Streamer = std::make_unique<UsdBridgeArrowStreamer>(cfg);
-  }
+  // Initialize Arrow streamer with config
+  UsdBridgeStreamConfig cfg;
+  cfg.EnableStreaming = true;
+  cfg.StreamGeometry = true;
+  cfg.StreamTextures = true;
+  cfg.EnableDebugLogging = true;
+  cfg.LogChunkDetails = true;
+  
+  Streamer = std::make_unique<UsdBridgeArrowStreamer>(cfg);
+  
+  // Connect logging to UsdBridge's log system
+  Streamer->SetLogCallback([this](const std::string& message) {
+    if (UsdWriter.LogObject.LogUserData && UsdWriter.LogObject.LogCallback) {
+      UsdWriter.LogObject.LogCallback(
+        UsdBridgeLogLevel::STATUS,
+        UsdWriter.LogObject.LogUserData,
+        message.c_str()
+      );
+    }
+  });
+}
 
   ~UsdBridgeInternals()
   {
@@ -278,17 +296,20 @@ void UsdBridge::SetEnableSaving(bool enableSaving)
 
 bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
 {
-  BRIDGE_USDWRITER.LogObject = {logUserData, logCallback};
+  BRIDGE_USDWRITER.LogObject = { logUserData, logCallback };
+
   Internals->DiagnosticDelegate = std::make_unique<UsdBridgeDiagnosticMgrDelegate>(logUserData, logCallback);
-  Internals->DiagRemoveFunc = [](UsdBridgeDiagnosticMgrDelegate* delegate)
-    { TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate); };
+  Internals->DiagRemoveFunc = [delegate = Internals->DiagnosticDelegate.get()](UsdBridgeDiagnosticMgrDelegate*)
+  {
+    TfDiagnosticMgr::GetInstance().RemoveDelegate(delegate);
+  };
   TfDiagnosticMgr::GetInstance().AddDelegate(Internals->DiagnosticDelegate.get());
 
   SessionValid = BRIDGE_USDWRITER.InitializeSession();
   SessionValid = SessionValid && BRIDGE_USDWRITER.OpenSceneStage();
 
-  // ADD THIS:
-  if (SessionValid && Internals->Streamer)
+  // Initialize Arrow streaming
+  if (SessionValid)
   {
     Internals->Streamer->Initialize();
   }
@@ -301,6 +322,7 @@ void UsdBridge::CloseSession()
 {
   BRIDGE_USDWRITER.ResetSession();
 }
+
 
 UsdBridge::~UsdBridge()
 {

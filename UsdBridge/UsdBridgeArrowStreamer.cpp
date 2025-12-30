@@ -4,15 +4,21 @@
 #include "UsdBridgeArrowStreamer.h"
 
 #include <arrow/api.h>
-#include <arrow/ipc/api.h>
-#include <arrow/io/api.h>
+#include <arrow/flight/api.h>
 
-#include <cstdio>
 #include <algorithm>
+#include <sstream>
+#include <vector>
 
 struct UsdBridgeArrowStreamer::Impl
 {
-  std::string OutputDir = "./";
+  std::unique_ptr<arrow::flight::FlightClient> FlightClient;
+  bool IsConnected = false;
+  
+  // For batched mode: accumulate all chunks
+  std::vector<std::shared_ptr<arrow::RecordBatch>> BatchedChunks;
+  std::string CurrentPrimName;
+  int CurrentTotalChunks = 0;
 };
 
 UsdBridgeArrowStreamer::UsdBridgeArrowStreamer(const UsdBridgeStreamConfig& cfg)
@@ -28,28 +34,70 @@ UsdBridgeArrowStreamer::~UsdBridgeArrowStreamer()
 bool UsdBridgeArrowStreamer::Initialize()
 {
   if (!Config.EnableStreaming)
+  {
+    if (Config.EnableDebugLogging)
+      Log("[ArrowStreamer] Streaming disabled in config");
     return false;
+  }
 
   InitSchemas();
+  
+  // Connect to Arrow Flight server
+  if (!ConnectToFlightServer())
+  {
+    Log("[ArrowStreamer] Failed to connect to Flight server");
+    return false;
+  }
+  
+  if (Config.EnableDebugLogging)
+  {
+    std::ostringstream initLog;
+    initLog << "[ArrowStreamer] Initialized successfully"
+            << " (PointsPerChunk=" << Config.PointsPerChunk
+            << ", Incremental=" << (Config.StreamIncrementally ? "true" : "false")
+            << ", Server=" << Config.Host << ":" << Config.Port << ")";
+    Log(initLog.str());
+  }
+  
   return true;
 }
 
 void UsdBridgeArrowStreamer::Shutdown()
 {
+  DisconnectFromFlightServer();
+  
+  if (Pimpl)
+    Pimpl->BatchedChunks.clear();
+  
+  if (Config.EnableDebugLogging)
+    Log("[ArrowStreamer] Shutdown");
 }
 
 bool UsdBridgeArrowStreamer::IsActive() const
 {
-  return Config.EnableStreaming;
+  return Config.EnableStreaming && Pimpl->IsConnected;
 }
 
 void UsdBridgeArrowStreamer::InitSchemas()
 {
   using arrow::field;
   using arrow::int32;
+  using arrow::int64;
+  using arrow::float32;
   using arrow::float64;
   using arrow::utf8;
   using arrow::binary;
+
+  // Geometry schema (same as before, but will use Flight)
+  GeometrySchema = arrow::schema({
+    field("prim_name", utf8()),
+    field("time", float64()),
+    field("chunk_id", int32()),
+    field("total_chunks", int32()),
+    field("point_offset", int64()),
+    field("points", arrow::list(float32())),
+    field("indices", arrow::list(int32()))
+  });
 
   // Texture schema
   TextureSchema = arrow::schema({
@@ -62,6 +110,59 @@ void UsdBridgeArrowStreamer::InitSchemas()
   });
 }
 
+void UsdBridgeArrowStreamer::Log(const std::string& msg)
+{
+  if (OnLog)
+    OnLog(msg);
+}
+
+bool UsdBridgeArrowStreamer::ConnectToFlightServer()
+{
+  arrow::flight::Location location;
+  arrow::Status status;
+  
+  if (Config.UseTLS)
+  {
+    status = arrow::flight::Location::ForGrpcTls(Config.Host, Config.Port).Value(&location);
+  }
+  else
+  {
+    status = arrow::flight::Location::ForGrpcTcp(Config.Host, Config.Port).Value(&location);
+  }
+  
+  if (!status.ok())
+  {
+    std::ostringstream err;
+    err << "[ArrowStreamer] Failed to create location: " << status.ToString();
+    Log(err.str());
+    return false;
+  }
+  
+  auto clientResult = arrow::flight::FlightClient::Connect(location);
+  if (!clientResult.ok())
+  {
+    std::ostringstream err;
+    err << "[ArrowStreamer] Failed to connect to Flight server at " 
+        << Config.Host << ":" << Config.Port << " - " << clientResult.status().ToString();
+    Log(err.str());
+    return false;
+  }
+  
+  Pimpl->FlightClient = std::move(*clientResult);
+  Pimpl->IsConnected = true;
+  
+  return true;
+}
+
+void UsdBridgeArrowStreamer::DisconnectFromFlightServer()
+{
+  if (Pimpl->FlightClient)
+  {
+    Pimpl->FlightClient.reset();
+    Pimpl->IsConnected = false;
+  }
+}
+
 bool UsdBridgeArrowStreamer::StreamGeometry(const std::string& primName,
                                             const UsdBridgeMeshData& geomData,
                                             double timeStep)
@@ -70,42 +171,55 @@ bool UsdBridgeArrowStreamer::StreamGeometry(const std::string& primName,
     return false;
 
   arrow::MemoryPool* pool = arrow::default_memory_pool();
-
-  // Schema: each row is a chunk
-  auto schema = arrow::schema({
-    arrow::field("prim_name", arrow::utf8()),
-    arrow::field("time", arrow::float64()),
-    arrow::field("chunk_id", arrow::int32()),
-    arrow::field("total_chunks", arrow::int32()),
-    arrow::field("point_offset", arrow::int64()),      // NEW: global offset for this chunk's points
-    arrow::field("points", arrow::list(arrow::float32())),
-    arrow::field("indices", arrow::list(arrow::int32()))  // Global indices
-  });
-
-  auto sinkRes = arrow::io::BufferOutputStream::Create();
-  if (!sinkRes.ok())
-    return false;
-  auto sink = *sinkRes;
-  auto wrRes = arrow::ipc::MakeStreamWriter(sink, schema);
-  if (!wrRes.ok())
-    return false;
-  auto writer = *wrRes;
-
-  // Chunking parameters
-  const size_t POINTS_PER_CHUNK = 50000;
+  
+  const size_t POINTS_PER_CHUNK = Config.PointsPerChunk;
   const float* pts = static_cast<const float*>(geomData.Points);
   const int32_t* idx = static_cast<const int32_t*>(geomData.Indices);
 
   size_t totalChunks = (geomData.NumPoints + POINTS_PER_CHUNK - 1) / POINTS_PER_CHUNK;
 
-  // Write chunks
+  if (Config.EnableDebugLogging)
+  {
+    std::ostringstream logMsg;
+    logMsg << "[ArrowStreamer] Streaming geometry '" << primName 
+           << "': " << geomData.NumPoints << " points, " 
+           << geomData.NumIndices << " indices, " 
+           << totalChunks << " chunks"
+           << (Config.StreamIncrementally ? " (incremental)" : " (batched)");
+    Log(logMsg.str());
+  }
+
+  // Clear batch storage if starting new geometry in batched mode
+  if (!Config.StreamIncrementally)
+  {
+    Pimpl->BatchedChunks.clear();
+    Pimpl->CurrentPrimName = primName;
+    Pimpl->CurrentTotalChunks = static_cast<int>(totalChunks);
+  }
+
+  // Create Flight descriptor for this geometry
+  arrow::flight::FlightDescriptor descriptor;
+  descriptor.type = arrow::flight::FlightDescriptor::PATH;
+  descriptor.path = {"geometry", primName, std::to_string(timeStep)};
+
+  // Process each chunk
+  std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+  
   for (size_t chunkIdx = 0; chunkIdx < totalChunks; ++chunkIdx)
   {
     size_t startPt = chunkIdx * POINTS_PER_CHUNK;
     size_t endPt = std::min(startPt + POINTS_PER_CHUNK, static_cast<size_t>(geomData.NumPoints));
     size_t numPts = endPt - startPt;
 
-    // Metadata
+    if (Config.LogChunkDetails)
+    {
+      std::ostringstream chunkLog;
+      chunkLog << "[ArrowStreamer] Processing chunk " << chunkIdx 
+               << "/" << (totalChunks-1) << ": " << numPts << " points";
+      Log(chunkLog.str());
+    }
+
+    // Build record batch for this chunk
     arrow::StringBuilder nameB(pool);
     nameB.Append(primName);
     std::shared_ptr<arrow::Array> nameArr;
@@ -128,7 +242,7 @@ bool UsdBridgeArrowStreamer::StreamGeometry(const std::string& primName,
     std::shared_ptr<arrow::Array> offsetArr;
     offsetB.Finish(&offsetArr);
 
-    // Points (flat xyz for this chunk)
+    // Points for THIS chunk only
     arrow::ListBuilder ptsListB(pool, std::make_shared<arrow::FloatBuilder>(pool));
     auto* ptsValB = static_cast<arrow::FloatBuilder*>(ptsListB.value_builder());
     ptsListB.Append();
@@ -136,24 +250,22 @@ bool UsdBridgeArrowStreamer::StreamGeometry(const std::string& primName,
     std::shared_ptr<arrow::Array> ptsListArr;
     ptsListB.Finish(&ptsListArr);
 
-    // Indices: global indices for triangles touching this chunk
+    // Indices
     arrow::ListBuilder idxListB(pool, std::make_shared<arrow::Int32Builder>(pool));
     auto* idxValB = static_cast<arrow::Int32Builder*>(idxListB.value_builder());
     idxListB.Append();
     
-    // Filter triangles: include if ANY vertex is in [startPt, endPt)
     for (uint64_t i = 0; i < geomData.NumIndices; i += 3)
     {
       int32_t i0 = idx[i];
       int32_t i1 = idx[i + 1];
       int32_t i2 = idx[i + 2];
       
-      // Include triangle if any vertex is in this chunk's point range
       if ((i0 >= static_cast<int32_t>(startPt) && i0 < static_cast<int32_t>(endPt)) ||
           (i1 >= static_cast<int32_t>(startPt) && i1 < static_cast<int32_t>(endPt)) ||
           (i2 >= static_cast<int32_t>(startPt) && i2 < static_cast<int32_t>(endPt)))
       {
-        idxValB->Append(i0);  // Global index
+        idxValB->Append(i0);
         idxValB->Append(i1);
         idxValB->Append(i2);
       }
@@ -162,30 +274,107 @@ bool UsdBridgeArrowStreamer::StreamGeometry(const std::string& primName,
     idxListB.Finish(&idxListArr);
 
     auto batch = arrow::RecordBatch::Make(
-      schema, 1,
+      GeometrySchema, 1,
       {nameArr, timeArr, chunkIdArr, totalChunksArr, offsetArr, ptsListArr, idxListArr});
 
-    if (!writer->WriteRecordBatch(*batch).ok())
-      return false;
+    // DECISION POINT: Incremental or Batched?
+    if (Config.StreamIncrementally)
+    {
+      // Send immediately via Flight (Arrow 22.x API)
+      batches.clear();
+      batches.push_back(batch);
+      
+      // NEW API: DoPut returns a DoPutResult with writer
+      auto resultOrError = Pimpl->FlightClient->DoPut(descriptor, GeometrySchema);
+      if (!resultOrError.ok())
+      {
+        Log("[ArrowStreamer] DoPut failed: " + resultOrError.status().ToString());
+        return false;
+      }
+      
+      auto doPutResult = std::move(*resultOrError);
+      auto status = doPutResult.writer->WriteRecordBatch(*batch);
+      if (!status.ok())
+      {
+        Log("[ArrowStreamer] WriteRecordBatch failed: " + status.ToString());
+        return false;
+      }
+      
+      status = doPutResult.writer->DoneWriting();
+      if (!status.ok())
+      {
+        Log("[ArrowStreamer] DoneWriting failed: " + status.ToString());
+        return false;
+      }
+      
+      status = doPutResult.writer->Close();
+      if (!status.ok())
+      {
+        Log("[ArrowStreamer] Close failed: " + status.ToString());
+        return false;
+      }
+    }
+    else
+    {
+      // BATCHED MODE: Keep in memory
+      Pimpl->BatchedChunks.push_back(batch);
+    }
   }
 
-  if (!writer->Close().ok())
-    return false;
-  auto bufRes = sink->Finish();
-  if (!bufRes.ok())
-    return false;
-  auto buf = *bufRes;
+  // If batched mode, send all chunks now
+  if (!Config.StreamIncrementally)
+  {
+    if (Config.EnableDebugLogging)
+    {
+      std::ostringstream batchLog;
+      batchLog << "[ArrowStreamer] Sending " << Pimpl->BatchedChunks.size() 
+               << " batched chunks for '" << primName << "'";
+      Log(batchLog.str());
+    }
 
-  std::string fileName = Pimpl->OutputDir + primName + "_" +
-                         std::to_string(static_cast<int>(timeStep)) + ".geom.arrow";
-  FILE* f = std::fopen(fileName.c_str(), "wb");
-  if (!f)
-    return false;
-  std::fwrite(buf->data(), 1, buf->size(), f);
-  std::fclose(f);
+    auto resultOrError = Pimpl->FlightClient->DoPut(descriptor, GeometrySchema);
+    if (!resultOrError.ok())
+    {
+      Log("[ArrowStreamer] DoPut failed: " + resultOrError.status().ToString());
+      return false;
+    }
+    
+    auto doPutResult = std::move(*resultOrError);
+    for (const auto& batch : Pimpl->BatchedChunks)
+    {
+      auto status = doPutResult.writer->WriteRecordBatch(*batch);
+      if (!status.ok())
+      {
+        Log("[ArrowStreamer] WriteRecordBatch failed: " + status.ToString());
+        return false;
+      }
+    }
+    
+    auto status = doPutResult.writer->DoneWriting();
+    if (!status.ok())
+    {
+      Log("[ArrowStreamer] DoneWriting failed: " + status.ToString());
+      return false;
+    }
+    
+    status = doPutResult.writer->Close();
+    if (!status.ok())
+    {
+      Log("[ArrowStreamer] Close failed: " + status.ToString());
+      return false;
+    }
+    
+    // Now free all buffers
+    Pimpl->BatchedChunks.clear();
+  }
+
+  if (Config.EnableDebugLogging)
+  {
+    Log("[ArrowStreamer] Geometry streaming complete");
+  }
+
   return true;
 }
-
 
 bool UsdBridgeArrowStreamer::StreamTexture(const std::string& texName,
                                            const UsdBridgeSamplerData& samplerData,
@@ -199,6 +388,16 @@ bool UsdBridgeArrowStreamer::StreamTexture(const std::string& texName,
   size_t imageSize = static_cast<size_t>(width) * height * numComponents;
   if (!convertedImage || imageSize == 0)
     return false;
+
+  if (Config.EnableDebugLogging)
+  {
+    std::ostringstream logMsg;
+    logMsg << "[ArrowStreamer] Streaming texture '" << texName 
+           << "': " << width << "x" << height 
+           << " (" << numComponents << " channels, " 
+           << imageSize << " bytes)";
+    Log(logMsg.str());
+  }
 
   arrow::MemoryPool* pool = arrow::default_memory_pool();
 
@@ -242,29 +441,49 @@ bool UsdBridgeArrowStreamer::StreamTexture(const std::string& texName,
     TextureSchema, 1,
     {nameArr, timeArr, wArr, hArr, cArr, dataArr});
 
-  auto sinkRes = arrow::io::BufferOutputStream::Create();
-  if (!sinkRes.ok())
+  // Send via Flight (Arrow 22.x API)
+  arrow::flight::FlightDescriptor descriptor;
+  descriptor.type = arrow::flight::FlightDescriptor::PATH;
+  descriptor.path = {"texture", texName, std::to_string(timeStep)};
+  
+  auto resultOrError = Pimpl->FlightClient->DoPut(descriptor, TextureSchema);
+  if (!resultOrError.ok())
+  {
+    Log("[ArrowStreamer] Texture DoPut failed: " + resultOrError.status().ToString());
     return false;
-  auto sink = *sinkRes;
-  auto wrRes = arrow::ipc::MakeStreamWriter(sink, TextureSchema);
-  if (!wrRes.ok())
+  }
+  
+  auto doPutResult = std::move(*resultOrError);
+  auto status = doPutResult.writer->WriteRecordBatch(*batch);
+  if (!status.ok())
+  {
+    Log("[ArrowStreamer] Texture WriteRecordBatch failed: " + status.ToString());
     return false;
-  auto writer = *wrRes;
-  if (!writer->WriteRecordBatch(*batch).ok())
+  }
+  
+  status = doPutResult.writer->DoneWriting();
+  if (!status.ok())
+  {
+    Log("[ArrowStreamer] Texture DoneWriting failed: " + status.ToString());
     return false;
-  if (!writer->Close().ok())
+  }
+  
+  status = doPutResult.writer->Close();
+  if (!status.ok())
+  {
+    Log("[ArrowStreamer] Texture Close failed: " + status.ToString());
     return false;
-  auto bufRes = sink->Finish();
-  if (!bufRes.ok())
-    return false;
-  auto buf = *bufRes;
+  }
 
-  std::string fileName = Pimpl->OutputDir + texName + "_" +
-                         std::to_string(static_cast<int>(timeStep)) + ".tex.arrow";
-  FILE* f = std::fopen(fileName.c_str(), "wb");
-  if (!f)
-    return false;
-  std::fwrite(buf->data(), 1, buf->size(), f);
-  std::fclose(f);
+  if (Config.EnableDebugLogging)
+  {
+    Log("[ArrowStreamer] Texture streaming complete");
+  }
+
   return true;
+}
+
+void UsdBridgeArrowStreamer::SetLogCallback(LogCallback callback)
+{
+  OnLog = callback;
 }

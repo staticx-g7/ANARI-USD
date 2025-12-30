@@ -15,7 +15,6 @@ include(usdhelpers.cmake)
 
 list(PREPEND CMAKE_MODULE_PATH ${Python3_ROOT_DIR})
 find_package(Python3 REQUIRED COMPONENTS Development)
-find_package(Arrow REQUIRED)
 list(POP_FRONT CMAKE_MODULE_PATH)
 
 set(USD_PYTHON_TARGETS Python3::Module)
@@ -23,6 +22,28 @@ set(PY_SHARED_LIB_DIR "${Python3_RUNTIME_LIBRARY_DIRS}")
 set(USD_PYTHON_LINK_DIRS "${Python3_LIBRARY_DIRS}")
 list(GET Python3_INCLUDE_DIRS 0 Python3_INCLUDE_DIR) # Required for passing pxrConfig.cmake
 list(GET Python3_LIBRARIES 0 Python3_LIBRARY) # Required for passing pxrConfig.cmake
+
+# ==========================
+# Arrow (with optional Flight)
+# ==========================
+find_package(Arrow REQUIRED)
+
+# Try to find Arrow Flight (optional)
+find_package(ArrowFlight QUIET)
+
+if(ArrowFlight_FOUND)
+  message(STATUS "Arrow Flight support: ENABLED")
+  set(ARROW_FLIGHT_ENABLED TRUE)
+  add_compile_definitions(ARROW_FLIGHT_ENABLED)
+else()
+  message(WARNING "Arrow Flight not found - building without network streaming support")
+  message(WARNING "To enable Flight: sudo apt install libarrow-flight-dev")
+  set(ARROW_FLIGHT_ENABLED FALSE)
+endif()
+
+message(STATUS "Arrow version: ${Arrow_VERSION}")
+message(STATUS "Arrow shared library: ${ARROW_SHARED_LIB}")
+message(STATUS "Arrow include dir: ${ARROW_INCLUDE_DIR}")
 
 # USD
 
@@ -140,7 +161,7 @@ set(USDBRIDGE_SOURCES
   UsdBridgeTimeEvaluator.cpp
   UsdBridgeRt.cpp
   UsdBridgeDiagnosticMgrDelegate.cpp
-  UsdBridgeArrowStreamer.cpp           # ADD THIS
+  UsdBridgeArrowStreamer.cpp           
   UsdBridge.h
   UsdBridgeCaches.h
   UsdBridgeUsdWriter.h
@@ -149,8 +170,8 @@ set(USDBRIDGE_SOURCES
   UsdBridgeTimeEvaluator.h
   UsdBridgeRt.h
   UsdBridgeDiagnosticMgrDelegate.h
-  UsdBridgeArrowStreamer.h             # ADD THIS
-  UsdBridgeStreamConfig.h              # ADD THIS
+  UsdBridgeArrowStreamer.h            
+  UsdBridgeStreamConfig.h             
   usd.h
   ${USDBRIDGE_MDL_SOURCES}
 )
@@ -216,8 +237,10 @@ target_link_libraries(UsdBridge
     UsdBridge_Connect
     ${USD_TARGETS}
     ${USD_PYTHON_TARGETS}
-    Arrow::arrow_shared 
+    Arrow::arrow_shared
+    $<$<BOOL:${ARROW_FLIGHT_ENABLED}>:ArrowFlight::arrow_flight_shared>  # Conditional Flight
 )
+
 
 # USDRT/CarbSDK
 
