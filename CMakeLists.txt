@@ -13,6 +13,7 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+
 ## Top-level project ##
 set(USD_DEVICE_VERSION_MAJOR 0)
 set(USD_DEVICE_VERSION_MINOR 2)
@@ -37,6 +38,8 @@ endif()
 message(STATUS "DEVICE VERSION: ${USD_DEVICE_VERSION} build ${USD_DEVICE_BUILD_VERSION}")
 
 project(AnariUsdDevice VERSION ${USD_DEVICE_VERSION} LANGUAGES C CXX)
+
+find_package(MPI REQUIRED COMPONENTS CXX)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
@@ -163,14 +166,25 @@ set(USDModule_HEADERS
 
 add_library(anari_library_usd SHARED ${USDModule_SOURCES} ${USDModule_HEADERS})
 
+if(TARGET MPI::MPI_CXX)
+  target_link_libraries(anari_library_usd PRIVATE MPI::MPI_CXX)
+else()
+  target_include_directories(anari_library_usd PRIVATE ${MPI_CXX_INCLUDE_DIRS})
+  target_link_libraries(anari_library_usd PRIVATE ${MPI_CXX_LIBRARIES})
+endif()
+
+
 target_compile_definitions(anari_library_usd
-	PRIVATE
+  PRIVATE
+    ANARI_USD_ENABLE_MPI
     -DDEVICE_VERSION_BUILD=${USD_DEVICE_BUILD_VERSION}
     -DDEVICE_VERSION_MAJOR=${USD_DEVICE_VERSION_MAJOR}
     -DDEVICE_VERSION_MINOR=${USD_DEVICE_VERSION_MINOR}
     -DDEVICE_VERSION_PATCH=${USD_DEVICE_VERSION_PATCH}
     -DDEVICE_VERSION_NAME="${USD_DEVICE_VERSION}"
-    ${USD_DEVICE_TIME_DEFS})
+    ${USD_DEVICE_TIME_DEFS}
+)
+
 
 option(CHECK_OBJECT_REFERENCES "Perform a memory check on the reference count of all objects allocated by a USD device, avoiding memleaks and double deletion." OFF)
 if(CHECK_OBJECT_REFERENCES)
@@ -179,8 +193,11 @@ if(CHECK_OBJECT_REFERENCES)
 endif()
 
 target_link_libraries(anari_library_usd
-	PUBLIC anari::anari
-	PRIVATE anari::helium UsdBridge
+  PUBLIC
+    anari::anari
+  PRIVATE
+    anari::helium
+    UsdBridge
 )
 
 option(USD_DEVICE_BUILD_EXAMPLES "Build USD device examples" OFF)

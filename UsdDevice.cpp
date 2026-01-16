@@ -26,6 +26,8 @@
 #include <sstream>
 #include <algorithm>
 #include <limits>
+#include <filesystem>
+#include <system_error>
 
 static char deviceName[] = "usd";
 
@@ -102,15 +104,37 @@ void UsdDevice::clearDeviceParameters()
 //----
 
 UsdDevice::UsdDevice()
-  : UsdParameterizedBaseObject<UsdDevice, UsdDeviceData>(ANARI_DEVICE)
+  : UsdParameterizedBaseObject(ANARI_DEVICE)
   , internals(std::make_unique<UsdDeviceInternals>())
-{}
+{
+#ifdef ANARI_USD_ENABLE_MPI
+  int mpi_initialized = 0;
+  MPI_Initialized(&mpi_initialized);
+  if (mpi_initialized) {
+    mpiAvailable = true;
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);
+  }
+#endif
+}
 
 UsdDevice::UsdDevice(ANARILibrary library)
   : DeviceImpl(library)
-  , UsdParameterizedBaseObject<UsdDevice, UsdDeviceData>(ANARI_DEVICE)
+  , UsdParameterizedBaseObject(ANARI_DEVICE)
   , internals(std::make_unique<UsdDeviceInternals>())
-{}
+{
+#ifdef ANARI_USD_ENABLE_MPI
+  int mpi_initialized = 0;
+  MPI_Initialized(&mpi_initialized);
+  if (mpi_initialized) {
+    mpiAvailable = true;
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);
+  }
+#endif
+}
+
+
 
 UsdDevice::~UsdDevice()
 {
@@ -304,11 +328,38 @@ void UsdDevice::initializeBridge()
     internals->outputLocation = "./";
   }
 
+#ifdef ANARI_USD_ENABLE_MPI
+  if (mpiAvailable && mpiSize > 1) {
+    internals->outputLocation += "/rank_" + std::to_string(mpiRank);
+  }
+#endif
+
+  std::error_code ec;
+  std::filesystem::create_directories(internals->outputLocation, ec);
+  if (ec) {
+    std::stringstream ss;
+    ss << "Failed to create USD output directory: " << internals->outputLocation << "\n"
+       << "Error: " << ec.message() << "\n"
+       << "On compute nodes, set ANARI_USD_SERIALIZE_LOCATION to a shared filesystem path.";
+
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+      "%s", ss.str().c_str());
+
+    // prevent crash, fail gracefully
+    bridgeInitAttempt = true;
+    return;
+  }
+
+
   if (!internals->CreateNewBridge(paramData, &reportBridgeStatus, this))
   {
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR, "Usd Bridge failed to load");
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+      "Usd Bridge failed to load");
+    bridgeInitAttempt = true;
+    return;
   }
 }
+
 
 ANARIArray UsdDevice::CreateDataArray(const void *appMemory,
   ANARIMemoryDeleter deleter,

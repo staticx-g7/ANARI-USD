@@ -10,6 +10,12 @@
 #include <vector>
 #include <memory>
 
+#ifdef ANARI_USD_ENABLE_MPI
+#include <mpi.h>
+#endif
+
+
+
 #ifdef _WIN32
 #ifdef anari_library_usd_EXPORTS
 #define USDDevice_INTERFACE __declspec(dllexport)
@@ -312,5 +318,13 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     ANARIStatusCallback userSetStatusFunc = nullptr;
     const void* userSetStatusUserData = nullptr;
     std::vector<char> lastStatusMessage;
+
+  private:
+  #ifdef ANARI_USD_ENABLE_MPI
+  int mpiRank = 0;
+  int mpiSize = 1;
+  bool mpiAvailable = false;
+  #endif
+
 };
 
