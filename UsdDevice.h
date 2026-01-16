@@ -10,12 +10,6 @@
 #include <vector>
 #include <memory>
 
-#ifdef ANARI_USD_ENABLE_MPI
-#include <mpi.h>
-#endif
-
-
-
 #ifdef _WIN32
 #ifdef anari_library_usd_EXPORTS
 #define USDDevice_INTERFACE __declspec(dllexport)

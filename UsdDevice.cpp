@@ -107,34 +107,13 @@ UsdDevice::UsdDevice()
   : UsdParameterizedBaseObject(ANARI_DEVICE)
   , internals(std::make_unique<UsdDeviceInternals>())
 {
-#ifdef ANARI_USD_ENABLE_MPI
-  int mpi_initialized = 0;
-  MPI_Initialized(&mpi_initialized);
-  if (mpi_initialized) {
-    mpiAvailable = true;
-    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
-    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);
-  }
-#endif
 }
 
 UsdDevice::UsdDevice(ANARILibrary library)
   : DeviceImpl(library)
   , UsdParameterizedBaseObject(ANARI_DEVICE)
   , internals(std::make_unique<UsdDeviceInternals>())
-{
-#ifdef ANARI_USD_ENABLE_MPI
-  int mpi_initialized = 0;
-  MPI_Initialized(&mpi_initialized);
-  if (mpi_initialized) {
-    mpiAvailable = true;
-    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);
-    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);
-  }
-#endif
-}
-
-
+{}
 
 UsdDevice::~UsdDevice()
 {
@@ -329,6 +308,29 @@ void UsdDevice::initializeBridge()
   }
 
 #ifdef ANARI_USD_ENABLE_MPI
+  // Read MPI rank from environment variables set by launcher (srun, mpirun, etc.)
+  // This avoids calling MPI functions which would interfere with ParaView's MPI setup
+  const char* slurm_procid = getenv("SLURM_PROCID");       // Slurm on JURECA
+  const char* slurm_ntasks = getenv("SLURM_NTASKS");
+  const char* ompi_rank = getenv("OMPI_COMM_WORLD_RANK");  // OpenMPI
+  const char* ompi_size = getenv("OMPI_COMM_WORLD_SIZE");
+  const char* pmi_rank = getenv("PMI_RANK");               // Intel MPI
+  const char* pmi_size = getenv("PMI_SIZE");
+
+  if (slurm_procid && slurm_ntasks) {
+    mpiRank = std::atoi(slurm_procid);
+    mpiSize = std::atoi(slurm_ntasks);
+    mpiAvailable = true;
+  } else if (ompi_rank && ompi_size) {
+    mpiRank = std::atoi(ompi_rank);
+    mpiSize = std::atoi(ompi_size);
+    mpiAvailable = true;
+  } else if (pmi_rank && pmi_size) {
+    mpiRank = std::atoi(pmi_rank);
+    mpiSize = std::atoi(pmi_size);
+    mpiAvailable = true;
+  }
+
   if (mpiAvailable && mpiSize > 1) {
     internals->outputLocation += "/rank_" + std::to_string(mpiRank);
   }
