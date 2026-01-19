@@ -7,6 +7,12 @@
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 
+#include <cstdlib>
+#include <filesystem>
+#include <thread>
+#include <chrono>
+
+
 #define PROCESS_PREFIX
 
 TF_DEFINE_PUBLIC_TOKENS(
@@ -75,6 +81,35 @@ namespace constring
   const char* const indexColorMapPf = "indexcolormap";
 #endif
 }
+
+static bool GetMpiRankSizeFromEnv(int &rank, int &size)
+{
+  const char *slurmprocid = getenv("SLURM_PROCID");
+  const char *slurmntasks = getenv("SLURM_NTASKS");
+  const char *ompirank = getenv("OMPI_COMM_WORLD_RANK");
+  const char *ompisize = getenv("OMPI_COMM_WORLD_SIZE");
+  const char *pmirank = getenv("PMI_RANK");
+  const char *pmisize = getenv("PMI_SIZE");
+
+  if (slurmprocid && slurmntasks) {
+    rank = std::atoi(slurmprocid);
+    size = std::atoi(slurmntasks);
+    return true;
+  } else if (ompirank && ompisize) {
+    rank = std::atoi(ompirank);
+    size = std::atoi(ompisize);
+    return true;
+  } else if (pmirank && pmisize) {
+    rank = std::atoi(pmirank);
+    size = std::atoi(pmisize);
+    return true;
+  }
+
+  rank = 0;
+  size = 1;
+  return false;
+}
+
   
 #define PROCESS_PREFIX(elem) AttributeTokens.push_back(UsdBridgeTokens->elem); // Converts any token sequence macro to add all tokens to list
 
@@ -121,36 +156,90 @@ bool UsdBridgeUsdWriter::CreateDirectories()
 {
   bool valid = true;
 
+  // --- Multi-rank safety: only rank 0 creates folders, others wait. ---
+  int mpiRank = 0, mpiSize = 1;
+  bool mpi = GetMpiRankSizeFromEnv(mpiRank, mpiSize) && (mpiSize > 1);
+
+  if (mpi && mpiRank != 0)
+  {
+    const auto base    = std::filesystem::path(ConnectionSettings.WorkingDirectory);
+    const auto session = base / SessionDirectory;
+
+    const auto images  = session / constring::imgFolder;
+    const auto volumes = session / constring::volFolder;
+
+#ifdef VALUE_CLIP_RETIMING
+    const auto manifests = session / constring::manifestFolder;
+    const auto primstages = session / constring::primStageFolder;
+#endif
+
+#ifdef TIME_CLIP_STAGES
+    const auto clips = session / constring::clipFolder;
+#endif
+
+    // Wait up to ~20 seconds (200 * 100ms)
+    for (int i = 0; i < 200; ++i)
+    {
+      bool ok = std::filesystem::exists(session)
+             && std::filesystem::exists(images)
+             && std::filesystem::exists(volumes);
+
+#ifdef VALUE_CLIP_RETIMING
+      ok = ok && std::filesystem::exists(manifests)
+              && std::filesystem::exists(primstages);
+#endif
+
+#ifdef TIME_CLIP_STAGES
+      ok = ok && std::filesystem::exists(clips);
+#endif
+
+      if (ok)
+        return true;
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR,
+      "Timeout waiting for rank 0 to create USD output directories.");
+    return false;
+  }
+
+  // --- Original folder creation logic (rank 0, or non-MPI runs). ---
   valid = Connect->CreateFolder("", true, true);
 
   //Connect->RemoveFolder(SessionDirectory.c_str(), true, true);
   bool folderMayExist = !Settings.CreateNewSession;
-  
+
   valid = valid && Connect->CreateFolder(SessionDirectory.c_str(), true, folderMayExist);
 
 #ifdef VALUE_CLIP_RETIMING
   valid = valid && Connect->CreateFolder((SessionDirectory + constring::manifestFolder).c_str(), true, folderMayExist);
   valid = valid && Connect->CreateFolder((SessionDirectory + constring::primStageFolder).c_str(), true, folderMayExist);
 #endif
+
 #ifdef TIME_CLIP_STAGES
   valid = valid && Connect->CreateFolder((SessionDirectory + constring::clipFolder).c_str(), true, folderMayExist);
 #endif
+
 #ifdef CUSTOM_PBR_MDL
-  if(Settings.EnableMdlShader)
+  if (Settings.EnableMdlShader)
   {
     valid = valid && Connect->CreateFolder((SessionDirectory + constring::mdlFolder).c_str(), true, folderMayExist);
   }
 #endif
+
   valid = valid && Connect->CreateFolder((SessionDirectory + constring::imgFolder).c_str(), true, folderMayExist);
   valid = valid && Connect->CreateFolder((SessionDirectory + constring::volFolder).c_str(), true, folderMayExist);
 
   if (!valid)
   {
-    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR, "Something went wrong in the filesystem creating the required output folders (permissions?).");
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR,
+      "Something went wrong in the filesystem creating the required output folders (permissions?).");
   }
 
   return valid;
 }
+
 
 #ifdef CUSTOM_PBR_MDL
 namespace

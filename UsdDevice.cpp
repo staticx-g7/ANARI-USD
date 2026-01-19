@@ -409,7 +409,6 @@ void UsdDevice::initializeBridge()
 #endif
 
 
-  
   std::filesystem::create_directories(internals->outputLocation, ec);
   if (ec) {
     std::stringstream ss;
