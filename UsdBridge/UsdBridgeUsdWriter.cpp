@@ -146,9 +146,27 @@ void UsdBridgeUsdWriter::SetEnableSaving(bool enableSaving)
 int UsdBridgeUsdWriter::FindSessionNumber()
 {
   int sessionNr = Connect->MaxSessionNr();
-
+  
+  // In MPI runs with CreateNewSession disabled, all ranks should use the same session
+  int mpiRank = 0, mpiSize = 1;
+  bool isMpi = GetMpiRankSizeFromEnv(mpiRank, mpiSize) && (mpiSize > 1);
+  
+  if (isMpi && !Settings.CreateNewSession) {
+    // All ranks reuse the existing max session
+    return std::max(0, sessionNr);
+  }
+  
+  // Only rank 0 increments session number in MPI mode
+  if (isMpi && mpiRank != 0) {
+    // Non-root ranks wait and discover the session number created by rank 0
+    // Give rank 0 time to create the session directory
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sessionNr = Connect->MaxSessionNr();
+    return std::max(0, sessionNr);
+  }
+  
+  // Original logic for rank 0 or non-MPI
   sessionNr = std::max(0, sessionNr + Settings.CreateNewSession);
-
   return sessionNr;
 }
 
@@ -490,12 +508,20 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
     // Create a new Clipstage
     const char* folder = constring::primStageFolder;
     std::string fullNamePostfix(namePostfix); 
-    if(isClip) 
-    {
-      folder = constring::clipFolder;
-      fullNamePostfix += std::to_string(timeStep); 
+  if(isClip) {
+    folder = constring::clipFolder;
+    
+    // Add rank suffix to clip filename (but prim name stays the same)
+    int mpiRank = 0, mpiSize = 1;
+    if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1) {
+      fullNamePostfix += "_r" + std::to_string(mpiRank);
     }
+    
+    fullNamePostfix += "_" + std::to_string(timeStep);
+  }
+
     std::string relativeFileName = folder + cacheEntry->Name.GetString() + fullNamePostfix + (binary ? ".usd" : ".usda");
+
     std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + relativeFileName).c_str());
 
     UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);

@@ -1401,14 +1401,17 @@ bool UsdGeometry::commitTemplate(UsdDevice* device)
   bool isNew = false;
   if (!usdHandle.value)
   {
-  // Make USD name unique per rank to avoid clip-file collisions
-  std::string usdUniqueName = debugName;
   int mpiRank = 0, mpiSize = 1;
-  if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1) {
-    usdUniqueName = std::string(debugName) + "_r" + std::to_string(mpiRank);
-  }
+  GetMpiRankSizeFromEnv(mpiRank, mpiSize);
   
-  isNew = usdBridge->CreateGeometry(usdUniqueName.c_str(), usdHandle, geomData);
+  // Only rank 0 creates the geometry prim in FullScene.usda
+  if (mpiRank == 0 || mpiSize == 1) {
+    isNew = usdBridge->CreateGeometry(debugName, usdHandle, geomData);
+  } else {
+    // Non-root ranks: let rank 0 create the prim first
+    // The handle will be set when we write our clip file
+    isNew = false;
+  }
 
   }
 
