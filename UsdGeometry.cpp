@@ -1401,18 +1401,10 @@ bool UsdGeometry::commitTemplate(UsdDevice* device)
   bool isNew = false;
   if (!usdHandle.value)
   {
-  int mpiRank = 0, mpiSize = 1;
-  GetMpiRankSizeFromEnv(mpiRank, mpiSize);
-  
-  // Only rank 0 creates the geometry prim in FullScene.usda
-  if (mpiRank == 0 || mpiSize == 1) {
+    // All ranks create the geometry with the same name
+    // USD will handle prim reuse if it already exists
+    // Only rank 0 writes to FullScene.usda (controlled by InitializeSession)
     isNew = usdBridge->CreateGeometry(debugName, usdHandle, geomData);
-  } else {
-    // Non-root ranks: let rank 0 create the prim first
-    // The handle will be set when we write our clip file
-    isNew = false;
-  }
-
   }
 
   if (paramChanged || isNew)
