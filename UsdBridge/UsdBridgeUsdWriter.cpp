@@ -312,8 +312,15 @@ bool UsdBridgeUsdWriter::InitializeSession()
   }
 #endif
 
+  // Only rank 0 should write/save the master FullScene.usda
+  int mpiRank = 0, mpiSize = 1;
+  if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1 && mpiRank != 0) {
+    SetEnableSaving(false);
+  }
+
   return valid;
 }
+
 
 void UsdBridgeUsdWriter::ResetSession()
 {

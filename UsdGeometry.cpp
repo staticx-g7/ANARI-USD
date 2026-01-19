@@ -139,6 +139,34 @@ struct UsdGeometryTempArrays
   }
 };
 
+static bool GetMpiRankSizeFromEnv(int &rank, int &size)
+{
+  const char *slurmprocid = getenv("SLURM_PROCID");
+  const char *slurmntasks = getenv("SLURM_NTASKS");
+  const char *ompirank = getenv("OMPI_COMM_WORLD_RANK");
+  const char *ompisize = getenv("OMPI_COMM_WORLD_SIZE");
+  const char *pmirank = getenv("PMI_RANK");
+  const char *pmisize = getenv("PMI_SIZE");
+
+  if (slurmprocid && slurmntasks) {
+    rank = std::atoi(slurmprocid);
+    size = std::atoi(slurmntasks);
+    return true;
+  } else if (ompirank && ompisize) {
+    rank = std::atoi(ompirank);
+    size = std::atoi(ompisize);
+    return true;
+  } else if (pmirank && pmisize) {
+    rank = std::atoi(pmirank);
+    size = std::atoi(pmisize);
+    return true;
+  }
+  rank = 0;
+  size = 1;
+  return false;
+}
+
+
 namespace
 {
   struct UsdGeometryDebugData
@@ -1373,7 +1401,15 @@ bool UsdGeometry::commitTemplate(UsdDevice* device)
   bool isNew = false;
   if (!usdHandle.value)
   {
-    isNew = usdBridge->CreateGeometry(debugName, usdHandle, geomData);
+  // Make USD name unique per rank to avoid clip-file collisions
+  std::string usdUniqueName = debugName;
+  int mpiRank = 0, mpiSize = 1;
+  if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1) {
+    usdUniqueName = std::string(debugName) + "_r" + std::to_string(mpiRank);
+  }
+  
+  isNew = usdBridge->CreateGeometry(usdUniqueName.c_str(), usdHandle, geomData);
+
   }
 
   if (paramChanged || isNew)
