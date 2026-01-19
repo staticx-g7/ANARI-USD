@@ -36,15 +36,15 @@ struct UsdDeviceData
 {
   UsdSharedString* hostName = nullptr;
   UsdSharedString* outputPath = nullptr;
-  bool createNewSession = true;
+  bool createNewSession = false;
   bool outputBinary = false;
   bool writeAtCommit = false;
 
   double timeStep = 0.0;
 
   bool outputMaterial = true;
-  bool outputPreviewSurfaceShader = true;
-  bool outputMdlShader = true;
+  bool outputPreviewSurfaceShader = false;
+  bool outputMdlShader = false;
 };
 
 class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<UsdDevice, UsdDeviceData>
