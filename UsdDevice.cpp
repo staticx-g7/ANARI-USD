@@ -28,6 +28,9 @@
 #include <limits>
 #include <filesystem>
 #include <system_error>
+#include <thread>
+#include <chrono>
+
 
 static char deviceName[] = "usd";
 
@@ -307,36 +310,106 @@ void UsdDevice::initializeBridge()
     internals->outputLocation = "./";
   }
 
-#ifdef ANARI_USD_ENABLE_MPI
-  // Read MPI rank from environment variables set by launcher (srun, mpirun, etc.)
-  // This avoids calling MPI functions which would interfere with ParaView's MPI setup
-  const char* slurm_procid = getenv("SLURM_PROCID");       // Slurm on JURECA
-  const char* slurm_ntasks = getenv("SLURM_NTASKS");
-  const char* ompi_rank = getenv("OMPI_COMM_WORLD_RANK");  // OpenMPI
-  const char* ompi_size = getenv("OMPI_COMM_WORLD_SIZE");
-  const char* pmi_rank = getenv("PMI_RANK");               // Intel MPI
-  const char* pmi_size = getenv("PMI_SIZE");
+#ifdef ANARIUSDENABLEMPI
+  // Read MPI rank from environment variables
+  const char* slurmprocid = getenv("SLURM_PROCID");
+  const char* slurmntasks = getenv("SLURM_NTASKS");
+  const char* ompirank = getenv("OMPI_COMM_WORLD_RANK");
+  const char* ompisize = getenv("OMPI_COMM_WORLD_SIZE");
+  const char* pmirank = getenv("PMI_RANK");
+  const char* pmisize = getenv("PMI_SIZE");
 
-  if (slurm_procid && slurm_ntasks) {
-    mpiRank = std::atoi(slurm_procid);
-    mpiSize = std::atoi(slurm_ntasks);
+  if (slurmprocid && slurmntasks) {
+    mpiRank = std::atoi(slurmprocid);
+    mpiSize = std::atoi(slurmntasks);
     mpiAvailable = true;
-  } else if (ompi_rank && ompi_size) {
-    mpiRank = std::atoi(ompi_rank);
-    mpiSize = std::atoi(ompi_size);
+  }
+  else if (ompirank && ompisize) {
+    mpiRank = std::atoi(ompirank);
+    mpiSize = std::atoi(ompisize);
     mpiAvailable = true;
-  } else if (pmi_rank && pmi_size) {
-    mpiRank = std::atoi(pmi_rank);
-    mpiSize = std::atoi(pmi_size);
+  }
+  else if (pmirank && pmisize) {
+    mpiRank = std::atoi(pmirank);
+    mpiSize = std::atoi(pmisize);
     mpiAvailable = true;
   }
 
-  if (mpiAvailable && mpiSize > 1) {
-    internals->outputLocation += "/rank_" + std::to_string(mpiRank);
+  // REMOVE OR COMMENT OUT THESE LINES:
+  // if (mpiAvailable && mpiSize > 1)
+  //   internals->outputLocation += "/rank" + std::to_string(mpiRank);
+#endif
+
+  // Add MPI-aware directory creation with barrier
+  std::error_code ec;
+  
+#ifdef ANARIUSDENABLEMPI
+  if (mpiAvailable) {
+    // Only rank 0 creates the directories
+    if (mpiRank == 0) {
+      std::filesystem::create_directories(internals->outputLocation, ec);
+      if (ec) {
+        std::stringstream ss;
+        ss << "Failed to create USD output directory: " << internals->outputLocation 
+           << " Error: " << ec.message();
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                     ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+        bridgeInitAttempt = true;
+        return;
+      }
+    }
+    
+    // Simple barrier: other ranks wait briefly for rank 0 to create directory
+    // This is crude but avoids MPI dependencies
+    if (mpiRank != 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100 * (mpiRank / 4 + 1)));
+      
+      // Verify directory exists
+      int retries = 10;
+      while (retries > 0 && !std::filesystem::exists(internals->outputLocation)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        retries--;
+      }
+      
+      if (!std::filesystem::exists(internals->outputLocation)) {
+        std::stringstream ss;
+        ss << "Rank " << mpiRank << ": USD output directory not found: " 
+           << internals->outputLocation;
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                     ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+        bridgeInitAttempt = true;
+        return;
+      }
+    }
+  } else {
+    // Non-MPI case: just create directories normally
+    std::filesystem::create_directories(internals->outputLocation, ec);
+    if (ec) {
+      std::stringstream ss;
+      ss << "Failed to create USD output directory: " << internals->outputLocation 
+           << " Error: " << ec.message();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                   ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+      bridgeInitAttempt = true;
+      return;
+    }
+  }
+#else
+  // Non-MPI build
+  std::filesystem::create_directories(internals->outputLocation, ec);
+  if (ec) {
+    std::stringstream ss;
+    ss << "Failed to create USD output directory: " << internals->outputLocation 
+         << " Error: " << ec.message();
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                 ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+    bridgeInitAttempt = true;
+    return;
   }
 #endif
 
-  std::error_code ec;
+
+  
   std::filesystem::create_directories(internals->outputLocation, ec);
   if (ec) {
     std::stringstream ss;
