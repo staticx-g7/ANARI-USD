@@ -163,6 +163,7 @@ public:
   void SetSelectiveFileSaving(bool enable) { SelectiveFileSaving = enable; }
   bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
+  size_t GetTotalMemoryUsage() const;
 
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
   friend void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
@@ -231,7 +232,6 @@ protected:
   
   // Helper to estimate stage memory usage and log it
   void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
-  size_t GetTotalMemoryUsage() const;
 };
 
 void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 

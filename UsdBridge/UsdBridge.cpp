@@ -6,10 +6,12 @@
 #include "UsdBridgeUsdWriter.h"
 #include "UsdBridgeCaches.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
+#include "Common/UsdBridgeUtils.h"
 
 #include <string>
 #include <memory>
 #include <algorithm>
+#include <sstream>
 
 #ifdef USE_USDRT
 #include "carb/ClientUtils.h"
