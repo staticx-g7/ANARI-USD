@@ -164,6 +164,7 @@ public:
   bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
+  void RecalculateAllMemoryUsage(); // Recalculate memory for all tracked stages
 
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
   friend void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
@@ -206,7 +207,7 @@ protected:
   int SessionNumber = -1;
   UsdStageRefPtr SceneStage;
   UsdStageRefPtr ExternalSceneStage;
-  bool EnableSaving = true;
+  bool EnableSaving = false; // Default to memory-only mode
   bool SelectiveFileSaving = false; // Only save geometry and texture files
   std::string SceneFileName;
   std::string SessionDirectory;
@@ -227,6 +228,7 @@ protected:
   struct StageMemoryInfo {
     std::string name;
     size_t estimatedBytes;
+    UsdStageRefPtr stage; // Keep reference to stage for recalculation
   };
   std::vector<StageMemoryInfo> MemoryTracking;
   

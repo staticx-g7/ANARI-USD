@@ -455,6 +455,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   StageMemoryInfo info;
   info.name = stageName;
   info.estimatedBytes = estimatedBytes;
+  info.stage = stage; // Store reference for later recalculation
   MemoryTracking.push_back(info);
   
   // Log the memory usage
@@ -471,6 +472,34 @@ size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
     total += info.estimatedBytes;
   }
   return total;
+}
+
+void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
+{
+  // Recalculate memory usage for all tracked stages
+  for(auto& info : MemoryTracking)
+  {
+    if(info.stage)
+    {
+      size_t estimatedBytes = 0;
+      
+      // Get all layers in the stage
+      auto layers = info.stage->GetUsedLayers();
+      for(const auto& layer : layers)
+      {
+        if(layer)
+        {
+          // Export to string to estimate memory
+          std::string layerStr;
+          layer->ExportToString(&layerStr);
+          estimatedBytes += layerStr.size();
+        }
+      }
+      
+      // Update the stored estimate
+      info.estimatedBytes = estimatedBytes;
+    }
+  }
 }
 
 UsdStageRefPtr UsdBridgeUsdWriter::GetSceneStage() const

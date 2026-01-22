@@ -1079,6 +1079,9 @@ void UsdBridge::SaveScene()
   }
   else
   {
+    // Recalculate actual memory usage for all stages (now that data is written)
+    BRIDGE_USDWRITER.RecalculateAllMemoryUsage();
+    
     // Report total memory usage
     size_t totalBytes = BRIDGE_USDWRITER.GetTotalMemoryUsage();
     double totalMB = totalBytes / (1024.0 * 1024.0);
