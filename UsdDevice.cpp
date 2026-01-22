@@ -1,4 +1,4 @@
-﻿// Copyright 2020 The Khronos Group
+// Copyright 2020 The Khronos Group
 // SPDX-License-Identifier: Apache-2.0
 
 #include "UsdDevice.h"
@@ -59,6 +59,7 @@ public:
 
     bridge->SetExternalSceneStage(externalSceneStage);
     bridge->SetEnableSaving(this->enableSaving);
+    bridge->SetSelectiveFileSaving(deviceParams.selectiveFileSaving);
 
     bridgeStatusFunc(UsdBridgeLogLevel::STATUS, userData, "Initializing UsdBridge Session");
 
@@ -96,6 +97,7 @@ DEFINE_PARAMETER_MAP(UsdDevice,
   REGISTER_PARAMETER_MACRO("usd::output.material", ANARI_BOOL, outputMaterial)
   REGISTER_PARAMETER_MACRO("usd::output.previewSurfaceShader", ANARI_BOOL, outputPreviewSurfaceShader)
   REGISTER_PARAMETER_MACRO("usd::output.mdlShader", ANARI_BOOL, outputMdlShader)
+  REGISTER_PARAMETER_MACRO("usd::selectiveFileSaving", ANARI_BOOL, selectiveFileSaving)
 )
 
 void UsdDevice::clearDeviceParameters()
@@ -305,9 +307,17 @@ void UsdDevice::initializeBridge()
 
   if (internals->outputLocation.empty())
   {
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT,
-      "Usd Device parameter 'usd::serialize.location' not set, defaulting to './'");
-    internals->outputLocation = "./";
+    if(internals->enableSaving)
+    {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT,
+        "Usd Device parameter 'usd::serialize.location' not set, defaulting to './'");
+      internals->outputLocation = "./";
+    }
+    else
+    {
+      // For memory-only mode, location doesn't matter
+      internals->outputLocation = "memory://";
+    }
   }
 
 #ifdef ANARIUSDENABLEMPI
@@ -340,89 +350,78 @@ void UsdDevice::initializeBridge()
   //   internals->outputLocation += "/rank" + std::to_string(mpiRank);
 #endif
 
-  // Add MPI-aware directory creation with barrier
-  std::error_code ec;
-  
+  // Only create directories if saving is enabled
+  if(internals->enableSaving)
+  {
+    // Add MPI-aware directory creation with barrier
+    std::error_code ec;
+    
 #ifdef ANARIUSDENABLEMPI
-  if (mpiAvailable) {
-    // Only rank 0 creates the directories
-    if (mpiRank == 0) {
+    if (mpiAvailable) {
+      // Only rank 0 creates the directories
+      if (mpiRank == 0) {
+        std::filesystem::create_directories(internals->outputLocation, ec);
+        if (ec) {
+          std::stringstream ss;
+          ss << "Failed to create USD output directory: " << internals->outputLocation 
+             << " Error: " << ec.message();
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                       ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+          bridgeInitAttempt = true;
+          return;
+        }
+      }
+      
+      // Simple barrier: other ranks wait briefly for rank 0 to create directory
+      // This is crude but avoids MPI dependencies
+      if (mpiRank != 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100 * (mpiRank / 4 + 1)));
+        
+        // Verify directory exists
+        int retries = 10;
+        while (retries > 0 && !std::filesystem::exists(internals->outputLocation)) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          retries--;
+        }
+        
+        if (!std::filesystem::exists(internals->outputLocation)) {
+          std::stringstream ss;
+          ss << "Rank " << mpiRank << ": USD output directory not found: " 
+             << internals->outputLocation;
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+                       ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
+          bridgeInitAttempt = true;
+          return;
+        }
+      }
+    } else {
+      // Non-MPI case: just create directories normally
       std::filesystem::create_directories(internals->outputLocation, ec);
       if (ec) {
         std::stringstream ss;
         ss << "Failed to create USD output directory: " << internals->outputLocation 
-           << " Error: " << ec.message();
+             << " Error: " << ec.message();
         reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
                      ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
         bridgeInitAttempt = true;
         return;
       }
     }
-    
-    // Simple barrier: other ranks wait briefly for rank 0 to create directory
-    // This is crude but avoids MPI dependencies
-    if (mpiRank != 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100 * (mpiRank / 4 + 1)));
-      
-      // Verify directory exists
-      int retries = 10;
-      while (retries > 0 && !std::filesystem::exists(internals->outputLocation)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        retries--;
-      }
-      
-      if (!std::filesystem::exists(internals->outputLocation)) {
-        std::stringstream ss;
-        ss << "Rank " << mpiRank << ": USD output directory not found: " 
-           << internals->outputLocation;
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
-                     ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
-        bridgeInitAttempt = true;
-        return;
-      }
-    }
-  } else {
-    // Non-MPI case: just create directories normally
+#else
+    // Non-MPI build
     std::filesystem::create_directories(internals->outputLocation, ec);
     if (ec) {
       std::stringstream ss;
       ss << "Failed to create USD output directory: " << internals->outputLocation 
-           << " Error: " << ec.message();
+           << " Error: " << ec.message() << "\n"
+           << "On compute nodes, set ANARI_USD_SERIALIZE_LOCATION to a shared filesystem path.";
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
                    ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
       bridgeInitAttempt = true;
       return;
     }
-  }
-#else
-  // Non-MPI build
-  std::filesystem::create_directories(internals->outputLocation, ec);
-  if (ec) {
-    std::stringstream ss;
-    ss << "Failed to create USD output directory: " << internals->outputLocation 
-         << " Error: " << ec.message();
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
-                 ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
-    bridgeInitAttempt = true;
-    return;
-  }
 #endif
-
-
-  std::filesystem::create_directories(internals->outputLocation, ec);
-  if (ec) {
-    std::stringstream ss;
-    ss << "Failed to create USD output directory: " << internals->outputLocation << "\n"
-       << "Error: " << ec.message() << "\n"
-       << "On compute nodes, set ANARI_USD_SERIALIZE_LOCATION to a shared filesystem path.";
-
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
-      "%s", ss.str().c_str());
-
-    // prevent crash, fail gracefully
-    bridgeInitAttempt = true;
-    return;
-  }
+  } // End of enableSaving check
 
 
   if (!internals->CreateNewBridge(paramData, &reportBridgeStatus, this))

@@ -21,6 +21,7 @@ class UsdBridge
 
     void SetExternalSceneStage(SceneStagePtr sceneStage);
     void SetEnableSaving(bool enableSaving);
+    void SetSelectiveFileSaving(bool selectiveFileSaving);
   
     bool OpenSession(UsdBridgeLogCallback logCallback, void* logUserData);
     bool GetSessionValid() const { return SessionValid; }

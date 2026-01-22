@@ -1335,15 +1335,35 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
 
       if(numComponents <= 4 && convertedSamplerData)
       {
-        StbWriteOutput writeOutput;
+        // Only write texture files if saving is enabled and either:
+        // - Not in selective mode, OR
+        // - In selective mode (which includes textures)
+        if(this->EnableSaving)
+        {
+          StbWriteOutput writeOutput;
 
-        stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
+          stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
           static_cast<int>(samplerData.ImageDims[0]), static_cast<int>(samplerData.ImageDims[1]),
           numComponents, convertedSamplerData, convertedSamplerStride);
 
-        // Filename, relative from connection working dir
-        std::string wdRelFilename(SessionDirectory + imgFileName);
-        Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
+          // Filename, relative from connection working dir
+          std::string wdRelFilename(SessionDirectory + imgFileName);
+          Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
+          
+          UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+            "Saved texture: %s (%.2f MB)", imgFileName, writeOutput.imageSize / (1024.0 * 1024.0));
+        }
+        else
+        {
+          // In memory-only mode, log the texture size
+          StbWriteOutput writeOutput;
+          stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
+          static_cast<int>(samplerData.ImageDims[0]), static_cast<int>(samplerData.ImageDims[1]),
+          numComponents, convertedSamplerData, convertedSamplerStride);
+          
+          UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+            "In-memory texture '%s': ~%.2f MB", imgFileName, writeOutput.imageSize / (1024.0 * 1024.0));
+        }
       }
       else
       {

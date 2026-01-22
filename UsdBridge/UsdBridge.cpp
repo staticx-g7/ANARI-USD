@@ -265,6 +265,11 @@ void UsdBridge::SetEnableSaving(bool enableSaving)
   BRIDGE_USDWRITER.SetEnableSaving(enableSaving);
 }
 
+void UsdBridge::SetSelectiveFileSaving(bool selectiveFileSaving)
+{
+  BRIDGE_USDWRITER.SelectiveFileSaving = selectiveFileSaving;
+}
+
 bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
 {
   BRIDGE_USDWRITER.LogObject = {logUserData, logCallback};
@@ -1067,7 +1072,18 @@ void UsdBridge::SaveScene()
   if (!SessionValid) return;
 
   if(this->EnableSaving)
+  {
     BRIDGE_USDWRITER.GetSceneStage()->Save();
+  }
+  else
+  {
+    // Report total memory usage
+    size_t totalBytes = BRIDGE_USDWRITER.GetTotalMemoryUsage();
+    double totalMB = totalBytes / (1024.0 * 1024.0);
+    UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::STATUS,
+      "Total in-memory USD data: ~%.2f MB across %zu stages", 
+      totalMB, BRIDGE_USDWRITER.MemoryTracking.size());
+  }
 }
 
 void UsdBridge::ResetResourceUpdateState()

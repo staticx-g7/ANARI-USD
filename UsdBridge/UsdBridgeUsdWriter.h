@@ -201,6 +201,7 @@ protected:
   UsdStageRefPtr SceneStage;
   UsdStageRefPtr ExternalSceneStage;
   bool EnableSaving = true;
+  bool SelectiveFileSaving = false; // Only save geometry and texture files
   std::string SceneFileName;
   std::string SessionDirectory;
   std::string RootName;
@@ -215,6 +216,17 @@ protected:
 
   std::string TempNameStr;
   std::vector<unsigned char> TempImageData;
+  
+  // Memory tracking for in-memory stages
+  struct StageMemoryInfo {
+    std::string name;
+    size_t estimatedBytes;
+  };
+  std::vector<StageMemoryInfo> MemoryTracking;
+  
+  // Helper to estimate stage memory usage and log it
+  void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
+  size_t GetTotalMemoryUsage() const;
 };
 
 void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 
