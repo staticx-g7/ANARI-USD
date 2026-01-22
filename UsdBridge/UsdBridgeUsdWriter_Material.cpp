@@ -1351,7 +1351,7 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
           Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
           
           UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
-            "Saved texture: %s (%.2f MB)", imgFileName, writeOutput.imageSize / (1024.0 * 1024.0));
+            "Saved texture: " << imgFileName << " (" << (writeOutput.imageSize / (1024.0 * 1024.0)) << " MB)");
         }
         else
         {
@@ -1362,7 +1362,7 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
           numComponents, convertedSamplerData, convertedSamplerStride);
           
           UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
-            "In-memory texture '%s': ~%.2f MB", imgFileName, writeOutput.imageSize / (1024.0 * 1024.0));
+            "In-memory texture '" << imgFileName << "': ~" << (writeOutput.imageSize / (1024.0 * 1024.0)) << " MB");
         }
       }
       else

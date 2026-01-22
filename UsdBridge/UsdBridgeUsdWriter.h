@@ -159,6 +159,11 @@ public:
 
   TfToken& AttributeNameToken(const char* attribName);
 
+  // Public accessors for selective file saving and memory tracking
+  void SetSelectiveFileSaving(bool enable) { SelectiveFileSaving = enable; }
+  bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
+  size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
+
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
   friend void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
   friend void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 

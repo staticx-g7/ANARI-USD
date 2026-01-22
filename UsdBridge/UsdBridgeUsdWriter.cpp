@@ -460,7 +460,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   // Log the memory usage
   double sizeMB = estimatedBytes / (1024.0 * 1024.0);
   UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
-    "In-memory stage '%s': ~%.2f MB", stageName.c_str(), sizeMB);
+    "In-memory stage '" << stageName << "': ~" << sizeMB << " MB");
 }
 
 size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
