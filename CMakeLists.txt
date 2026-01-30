@@ -137,7 +137,8 @@ set(USDModule_SOURCES
   UsdFrame.cpp
   UsdLight.cpp
   UsdCamera.cpp
-  UsdDeviceQueries.cpp)
+  UsdDeviceQueries.cpp
+  UsdBridgeZmqBroker.cpp)
 
 set(USDModule_HEADERS
   UsdCommonMacros.h
@@ -162,7 +163,8 @@ set(USDModule_HEADERS
   UsdRenderer.h
   UsdFrame.h
   UsdLight.h
-  UsdCamera.h)
+  UsdCamera.h
+  UsdBridgeZmqBroker.h)
 
 add_library(anari_library_usd SHARED ${USDModule_SOURCES} ${USDModule_HEADERS})
 
@@ -172,6 +174,67 @@ else()
   target_include_directories(anari_library_usd PRIVATE ${MPI_CXX_INCLUDE_DIRS})
   target_link_libraries(anari_library_usd PRIVATE ${MPI_CXX_LIBRARIES})
 endif()
+# ==================== ZeroMQ ====================
+find_package(cppzmq QUIET)
+if(cppzmq_FOUND)
+  message(STATUS "Found cppzmq (C++ bindings)")
+  set(ZMQ_FOUND TRUE)
+else()
+  find_package(ZeroMQ QUIET)
+  if(NOT ZeroMQ_FOUND)
+    find_library(ZMQ_LIBRARY
+            NAMES zmq libzmq
+            HINTS /usr/lib /usr/local/lib $ENV{ZMQ_ROOT}/lib
+    )
+    find_path(ZMQ_INCLUDE_DIR
+            NAMES zmq.h
+            HINTS /usr/include /usr/local/include $ENV{ZMQ_ROOT}/include
+    )
+
+    # Also look for zmq.hpp (cppzmq)
+    find_path(CPPZMQ_INCLUDE_DIR
+            NAMES zmq.hpp
+            HINTS /usr/include /usr/local/include
+            $ENV{CPPZMQ_ROOT}/include
+            $ENV{ZMQ_ROOT}/include
+    )
+
+    if(ZMQ_LIBRARY AND ZMQ_INCLUDE_DIR)
+      message(STATUS "Found ZeroMQ: ${ZMQ_LIBRARY}")
+      add_library(libzmq UNKNOWN IMPORTED)
+      set_target_properties(libzmq PROPERTIES
+              IMPORTED_LOCATION "${ZMQ_LIBRARY}"
+              INTERFACE_INCLUDE_DIRECTORIES "${ZMQ_INCLUDE_DIR}"
+      )
+      set(ZMQ_FOUND TRUE)
+
+      if(CPPZMQ_INCLUDE_DIR)
+        message(STATUS "Found cppzmq headers: ${CPPZMQ_INCLUDE_DIR}")
+        set_property(TARGET libzmq APPEND PROPERTY
+                INTERFACE_INCLUDE_DIRECTORIES "${CPPZMQ_INCLUDE_DIR}")
+      else()
+        message(WARNING "cppzmq headers (zmq.hpp) not found - will use C API")
+      endif()
+    else()
+      message(WARNING "ZeroMQ not found - ZMQ streaming disabled")
+    endif()
+  endif()
+endif()
+
+# ==================== Link ZeroMQ ====================
+if(TARGET cppzmq)
+  target_link_libraries(anari_library_usd PRIVATE cppzmq)
+  message(STATUS "Linking cppzmq (C++ bindings)")
+elseif(TARGET libzmq)
+  target_link_libraries(anari_library_usd PRIVATE libzmq)
+  message(STATUS "Linking libzmq")
+elseif(TARGET ZeroMQ::ZeroMQ)
+  target_link_libraries(anari_library_usd PRIVATE ZeroMQ::ZeroMQ)
+  message(STATUS "Linking ZeroMQ::ZeroMQ")
+else()
+  message(STATUS "ZeroMQ disabled - building without ZMQ support")
+endif()
+# ====================================================
 
 
 target_compile_definitions(anari_library_usd

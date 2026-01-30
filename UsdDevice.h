@@ -18,6 +18,10 @@
 #endif
 #endif
 
+#ifdef ANARI_USD_ENABLE_MPI
+#include "UsdBridgeZmqBroker.h"
+#endif
+
 extern "C"
 {
 #ifdef _WIN32
@@ -316,9 +320,13 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
   private:
   #ifdef ANARI_USD_ENABLE_MPI
-  int mpiRank = 0;
-  int mpiSize = 1;
-  bool mpiAvailable = false;
+    int mpiRank = 0;
+    int mpiSize = 1;
+    bool mpiAvailable = false;
+
+    // ZMQ communication
+    std::unique_ptr<usd_bridge::ZmqBroker> zmqBroker_;
+    std::unique_ptr<usd_bridge::ZmqWorker> zmqWorker_;
   #endif
 
 };

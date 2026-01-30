@@ -320,7 +320,7 @@ void UsdDevice::initializeBridge()
     }
   }
 
-#ifdef ANARIUSDENABLEMPI
+#ifdef ANARI_USD_ENABLE_MPI
   // Read MPI rank from environment variables
   const char* slurmprocid = getenv("SLURM_PROCID");
   const char* slurmntasks = getenv("SLURM_NTASKS");
@@ -345,10 +345,39 @@ void UsdDevice::initializeBridge()
     mpiAvailable = true;
   }
 
-  // REMOVE OR COMMENT OUT THESE LINES:
-  // if (mpiAvailable && mpiSize > 1)
-  //   internals->outputLocation += "/rank" + std::to_string(mpiRank);
+  if (mpiAvailable && mpiSize > 1) {
+    if (mpiRank == 0) {
+      // Initialize broker on rank 0
+      zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+      if (!zmqBroker_->Initialize(mpiSize - 1)) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Failed to initialize ZMQ broker on rank 0");
+        return;
+      }
+
+      // Print connected workers
+      const auto& workers = zmqBroker_->GetConnectedWorkers();
+      for (const auto& worker : workers) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                     ANARI_STATUS_NO_ERROR,
+                     "Worker rank %d connected from %s (%s)",
+                     worker.rank, worker.hostname.c_str(),
+                     worker.ib_address.c_str());
+      }
+    } else {
+      // Initialize worker on rank 1-N
+      zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
+      if (!zmqWorker_->Connect()) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Failed to connect to broker on rank %d", mpiRank);
+        return;
+      }
+    }
+  }
 #endif
+
 
   // Only create directories if saving is enabled
   if(internals->enableSaving)
@@ -356,7 +385,7 @@ void UsdDevice::initializeBridge()
     // Add MPI-aware directory creation with barrier
     std::error_code ec;
     
-#ifdef ANARIUSDENABLEMPI
+#ifdef ANARI_USD_ENABLE_MPI
     if (mpiAvailable) {
       // Only rank 0 creates the directories
       if (mpiRank == 0) {
