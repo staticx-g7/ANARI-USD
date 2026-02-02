@@ -384,7 +384,7 @@ void UsdDevice::initializeBridge()
   {
     // Add MPI-aware directory creation with barrier
     std::error_code ec;
-    
+
 #ifdef ANARI_USD_ENABLE_MPI
     if (mpiAvailable) {
       // Only rank 0 creates the directories
@@ -392,32 +392,32 @@ void UsdDevice::initializeBridge()
         std::filesystem::create_directories(internals->outputLocation, ec);
         if (ec) {
           std::stringstream ss;
-          ss << "Failed to create USD output directory: " << internals->outputLocation 
+          ss << "Failed to create USD output directory: " << internals->outputLocation
              << " Error: " << ec.message();
-          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
                        ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
           bridgeInitAttempt = true;
           return;
         }
       }
-      
+
       // Simple barrier: other ranks wait briefly for rank 0 to create directory
       // This is crude but avoids MPI dependencies
       if (mpiRank != 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100 * (mpiRank / 4 + 1)));
-        
+
         // Verify directory exists
         int retries = 10;
         while (retries > 0 && !std::filesystem::exists(internals->outputLocation)) {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
           retries--;
         }
-        
+
         if (!std::filesystem::exists(internals->outputLocation)) {
           std::stringstream ss;
-          ss << "Rank " << mpiRank << ": USD output directory not found: " 
+          ss << "Rank " << mpiRank << ": USD output directory not found: "
              << internals->outputLocation;
-          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
                        ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
           bridgeInitAttempt = true;
           return;
@@ -428,9 +428,9 @@ void UsdDevice::initializeBridge()
       std::filesystem::create_directories(internals->outputLocation, ec);
       if (ec) {
         std::stringstream ss;
-        ss << "Failed to create USD output directory: " << internals->outputLocation 
+        ss << "Failed to create USD output directory: " << internals->outputLocation
              << " Error: " << ec.message();
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
                      ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
         bridgeInitAttempt = true;
         return;
@@ -441,10 +441,10 @@ void UsdDevice::initializeBridge()
     std::filesystem::create_directories(internals->outputLocation, ec);
     if (ec) {
       std::stringstream ss;
-      ss << "Failed to create USD output directory: " << internals->outputLocation 
+      ss << "Failed to create USD output directory: " << internals->outputLocation
            << " Error: " << ec.message() << "\n"
            << "On compute nodes, set ANARI_USD_SERIALIZE_LOCATION to a shared filesystem path.";
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, 
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
                    ANARI_STATUS_UNKNOWN_ERROR, ss.str().c_str());
       bridgeInitAttempt = true;
       return;
@@ -1189,5 +1189,4 @@ bool UsdDevice::isRawAllocated(const void* ptr) const
   return isAllocated(ptr, allocatedRawMemory);
 }
 #endif
-
 

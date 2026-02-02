@@ -41,11 +41,11 @@ private:
     std::unique_ptr<zmq::context_t> context_;
     std::unique_ptr<zmq::socket_t> router_;  // Port worker_port_ - for workers (DEALER)
     std::unique_ptr<zmq::socket_t> rep_;     // Port client_port_ - for laptop clients (REQ)
-    
+
     int worker_port_;
     int client_port_;
     bool initialized_;
-    
+
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
 };

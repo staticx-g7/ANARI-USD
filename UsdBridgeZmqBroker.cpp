@@ -3,17 +3,16 @@
 
 #ifdef ANARI_USD_ENABLE_MPI
 
+#include <mpi.h>
 #include <zmq.hpp>
 #include <iostream>
 #include <sstream>
-#include <fstream>
 #include <thread>
 #include <chrono>
 #include <cstring>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <netdb.h>
 #include <unistd.h>
 
 namespace usd_bridge {
@@ -61,7 +60,42 @@ std::string GetInfiniBandIPImpl() {
 }
 
 // ============================================================================
-// ZmqBroker Implementation (Rank 0)
+// MPI-Based Broker Discovery
+// ============================================================================
+
+/**
+ * Broadcast rank 0's InfiniBand address to all ranks via MPI.
+ * Returns: "ip:port" string for all ranks to connect to.
+ */
+std::string BroadcastBrokerAddress(int rank, int port) {
+    char broker_address[256];
+    memset(broker_address, 0, sizeof(broker_address));
+
+    if (rank == 0) {
+        // Rank 0: detect IB IP and format address
+        std::string ib_ip = GetInfiniBandIPImpl();
+        std::stringstream ss;
+        ss << ib_ip << ":" << port;
+        std::string addr = ss.str();
+        strncpy(broker_address, addr.c_str(), sizeof(broker_address) - 1);
+
+        std::cout << "[Rank 0 MPI Broker] Broadcasting InfiniBand address: "
+                  << broker_address << std::endl;
+    }
+
+    // MPI_Bcast: rank 0 sends, all others receive
+    MPI_Bcast(broker_address, sizeof(broker_address), MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    if (rank != 0) {
+        std::cout << "[Worker Rank " << rank << "] Received broker address via MPI: "
+                  << broker_address << std::endl;
+    }
+
+    return std::string(broker_address);
+}
+
+// ============================================================================
+// ZmqBroker Implementation (Rank 0) - MPI Version
 // ============================================================================
 
 ZmqBroker::ZmqBroker(int workerPort, int clientPort)
@@ -86,17 +120,30 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
     if (initialized_) return true;
 
     try {
-        // Clean up stale files
-        std::remove("zmq_rank0_ip.txt");
+        // Get MPI rank
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-        std::string ib_ip = GetInfiniBandIP();
+        if (rank != 0) {
+            std::cerr << "[ZmqBroker] ERROR: Initialize() called on non-zero rank!" << std::endl;
+            return false;
+        }
+
+        // Broadcast broker address to all workers via MPI
+        std::string broadcast_addr = BroadcastBrokerAddress(rank, worker_port_);
+
+        // Extract just the IP part for binding
+        size_t colon_pos = broadcast_addr.find(':');
+        std::string ib_ip = (colon_pos != std::string::npos)
+            ? broadcast_addr.substr(0, colon_pos)
+            : broadcast_addr;
 
         // ========== BIND ROUTER SOCKET (for workers) ==========
         std::stringstream router_bind_addr;
         router_bind_addr << "tcp://" << ib_ip << ":" << worker_port_;
 
-        std::cout << "[Rank 0 Broker] InfiniBand IP detected: " << ib_ip << std::endl;
-        std::cout << "[Rank 0 Broker] Binding ROUTER (workers) to " << router_bind_addr.str() << std::endl;
+        std::cout << "[Rank 0 MPI Broker] InfiniBand IP detected: " << ib_ip << std::endl;
+        std::cout << "[Rank 0 MPI Broker] Binding ROUTER (workers) to " << router_bind_addr.str() << std::endl;
 
         router_->bind(router_bind_addr.str());
         int linger = 0;
@@ -106,19 +153,10 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         std::stringstream rep_bind_addr;
         rep_bind_addr << "tcp://" << ib_ip << ":" << client_port_;
 
-        std::cout << "[Rank 0 Broker] Binding REP (laptop client) to " << rep_bind_addr.str() << std::endl;
+        std::cout << "[Rank 0 MPI Broker] Binding REP (laptop client) to " << rep_bind_addr.str() << std::endl;
 
         rep_->bind(rep_bind_addr.str());
         rep_->set(zmq::sockopt::linger, linger);
-
-        // Write broker address to file for workers
-        std::ofstream ip_file("zmq_rank0_ip.txt");
-        if (ip_file.is_open()) {
-            ip_file << ib_ip << ":" << worker_port_ << std::endl;
-            ip_file.close();
-            std::cout << "[Rank 0 Broker] Wrote InfiniBand address to zmq_rank0_ip.txt: "
-                      << ib_ip << ":" << worker_port_ << std::endl;
-        }
 
         // Print SSH tunnel command
         std::cout << std::endl;
@@ -130,7 +168,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         std::cout << " george2@jureca04.fz-juelich.de" << std::endl;
         std::cout << std::endl;
 
-        std::cout << "[Rank 0 Broker] Waiting for " << expectedWorkers
+        std::cout << "[Rank 0 MPI Broker] Waiting for " << expectedWorkers
                   << " workers to connect..." << std::endl;
 
         // ========== WAIT FOR WORKERS TO CONNECT ==========
@@ -142,7 +180,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
                 std::chrono::steady_clock::now() - start_time).count();
 
             if (elapsed > timeout_seconds) {
-                std::cerr << "[Rank 0 Broker] Timeout waiting for workers. Only "
+                std::cerr << "[Rank 0 MPI Broker] Timeout waiting for workers. Only "
                           << workers_.size() << "/" << expectedWorkers << " connected." << std::endl;
                 return false;
             }
@@ -181,7 +219,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
                 workers_.push_back(worker);
                 worker_map_[worker.identity] = worker.rank;
 
-                std::cout << "[Rank 0 Broker] Worker rank " << worker.rank
+                std::cout << "[Rank 0 MPI Broker] Worker rank " << worker.rank
                           << " connected from " << worker.hostname
                           << " (" << worker.ib_address << ") - "
                           << workers_.size() << "/" << expectedWorkers << std::endl;
@@ -194,9 +232,9 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         }
 
         initialized_ = true;
-        std::cout << "[Rank 0 Broker] All " << expectedWorkers
+        std::cout << "[Rank 0 MPI Broker] All " << expectedWorkers
                   << " workers connected successfully!" << std::endl;
-        std::cout << "[Rank 0 Broker] Broker ready on ROUTER:" << worker_port_
+        std::cout << "[Rank 0 MPI Broker] Broker ready on ROUTER:" << worker_port_
                   << " and REP:" << client_port_ << std::endl;
 
         // ========== MAIN MESSAGE LOOP - Handle BOTH workers and laptop client ==========
@@ -214,7 +252,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
                 rep_->recv(request);
 
                 std::string message(static_cast<const char*>(request.data()), request.size());
-                std::cout << "[Rank 0 Broker] GUI requested: " << message << std::endl;
+                std::cout << "[Rank 0 MPI Broker] GUI requested: " << message << std::endl;
 
                 // Build worker list response
                 std::stringstream response;
@@ -228,7 +266,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
                 }
 
                 std::string reply = response.str();
-                std::cout << "[Rank 0 Broker] Sending worker list to GUI: " << reply << std::endl;
+                std::cout << "[Rank 0 MPI Broker] Sending worker list to GUI: " << reply << std::endl;
                 rep_->send(zmq::message_t(reply.data(), reply.size()), zmq::send_flags::none);
             }
 
@@ -239,7 +277,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 
                 if (ReceiveFromWorker(workerId, data)) {
                     std::string message(data.begin(), data.end());
-                    std::cout << "[Rank 0 Broker] Received from worker: " << message << std::endl;
+                    std::cout << "[Rank 0 MPI Broker] Received from worker: " << message << std::endl;
                     // Handle worker message as needed
                 }
             }
@@ -248,7 +286,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         return true;
 
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] ZMQ Error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] ZMQ Error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -265,7 +303,7 @@ bool ZmqBroker::SendToWorker(const std::string& workerId, const void* data, size
 
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] Send to worker error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] Send to worker error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -278,7 +316,7 @@ bool ZmqBroker::SendToClient(const std::string& clientId, const void* data, size
         rep_->send(payload, zmq::send_flags::none);
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] Send to client error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] Send to client error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -307,7 +345,7 @@ bool ZmqBroker::ReceiveFromWorker(std::string& workerId, std::vector<uint8_t>& d
 
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] Receive from worker error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] Receive from worker error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -320,7 +358,7 @@ bool ZmqBroker::ReceiveFromClient(std::string& message) {
         message = std::string(static_cast<const char*>(request.data()), request.size());
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] Receive from client error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] Receive from client error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -330,14 +368,14 @@ bool ZmqBroker::ReplyToClient(const std::string& reply) {
         rep_->send(zmq::message_t(reply.data(), reply.size()), zmq::send_flags::none);
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Rank 0 Broker] Reply to client error: " << e.what() << std::endl;
+        std::cerr << "[Rank 0 MPI Broker] Reply to client error: " << e.what() << std::endl;
         return false;
     }
 }
 
 void ZmqBroker::Shutdown() {
     if (initialized_) {
-        std::cout << "[Rank 0 Broker] Shutting down..." << std::endl;
+        std::cout << "[Rank 0 MPI Broker] Shutting down..." << std::endl;
         router_->close();
         rep_->close();
         context_->close();
@@ -346,7 +384,7 @@ void ZmqBroker::Shutdown() {
 }
 
 // ============================================================================
-// ZmqWorker Implementation (Rank 1-N)
+// ZmqWorker Implementation (Rank 1-N) - MPI Version
 // ============================================================================
 
 ZmqWorker::ZmqWorker(const std::string& brokerAddress, int rank)
@@ -367,131 +405,28 @@ std::string ZmqWorker::GetInfiniBandIP() {
 }
 
 std::string ZmqWorker::ResolveRank0Address() {
-    std::cout << "[Worker Rank " << rank_ << "] Resolving rank 0 address..." << std::endl;
-
-    // Method 1: Read from file (most reliable)
-    std::ifstream ip_file("zmq_rank0_ip.txt");
-    if (ip_file.is_open()) {
-        std::string ip_port;
-        std::getline(ip_file, ip_port);
-        ip_file.close();
-
-        if (!ip_port.empty()) {
-            std::cout << "[Worker Rank " << rank_ << "] Read rank 0 address from file: "
-                      << ip_port << std::endl;
-            return ip_port;
-        }
-    }
-
-    // Method 2: Parse SLURM_NODELIST
-    const char* nodelist_env = getenv("SLURM_NODELIST");
-    if (nodelist_env) {
-        std::string nodelist(nodelist_env);
-        std::cout << "[Worker Rank " << rank_ << "] Parsing SLURM_NODELIST: " << nodelist << std::endl;
-
-        if (nodelist.find('[') == std::string::npos) {
-            std::string first_node = nodelist.substr(0, nodelist.find(','));
-            return first_node;
-        }
-
-        size_t bracket_start = nodelist.find('[');
-        size_t bracket_end = nodelist.find(']');
-
-        if (bracket_start != std::string::npos && bracket_end != std::string::npos) {
-            std::string prefix = nodelist.substr(0, bracket_start);
-            std::string node_spec = nodelist.substr(bracket_start + 1, bracket_end - bracket_start - 1);
-
-            std::cout << "[Worker Rank " << rank_ << "] Prefix: '" << prefix
-                      << "', Node spec: '" << node_spec << "'" << std::endl;
-
-            size_t comma_pos = node_spec.find(',');
-            std::string first_spec = (comma_pos != std::string::npos)
-                ? node_spec.substr(0, comma_pos)
-                : node_spec;
-
-            std::cout << "[Worker Rank " << rank_ << "] First spec: '" << first_spec << "'" << std::endl;
-
-            size_t dash_pos = first_spec.find('-');
-            if (dash_pos != std::string::npos) {
-                std::string first_id = first_spec.substr(0, dash_pos);
-                std::string rank0_hostname = prefix + first_id;
-
-                std::cout << "[Worker Rank " << rank_ << "] Parsed rank 0 hostname: "
-                          << rank0_hostname << std::endl;
-
-                struct hostent* he = gethostbyname(rank0_hostname.c_str());
-                if (he != nullptr && he->h_addr_list[0] != nullptr) {
-                    struct in_addr** addr_list = (struct in_addr**)he->h_addr_list;
-                    std::string resolved_ip = inet_ntoa(*addr_list[0]);
-
-                    std::cout << "[Worker Rank " << rank_ << "] Resolved " << rank0_hostname
-                              << " to IP: " << resolved_ip << std::endl;
-
-                    return resolved_ip;
-                }
-            } else {
-                std::string rank0_hostname = prefix + first_spec;
-                std::cout << "[Worker Rank " << rank_ << "] Single node: " << rank0_hostname << std::endl;
-                return rank0_hostname;
-            }
-        }
-    }
-
-    // Method 3: Fallback
-    std::cout << "[Worker Rank " << rank_ << "] Falling back to broker address: "
-              << broker_address_ << std::endl;
-    return broker_address_;
+    // MPI-based discovery: broadcast already happened during MPI initialization
+    // Just receive the address via MPI_Bcast
+    std::string addr = BroadcastBrokerAddress(rank_, 5555);
+    std::cout << "[Worker Rank " << rank_ << "] Resolved rank 0 address via MPI: "
+              << addr << std::endl;
+    return addr;
 }
 
 bool ZmqWorker::Connect() {
     if (connected_) return true;
 
     try {
-        std::string rank0_host;
-        int retries = 200;  // ~20 seconds with 100ms sleep
+        // Get broker address via MPI broadcast
+        std::string rank0_address = ResolveRank0Address();
 
-        std::cout << "[Worker Rank " << rank_ << "] Attempting to discover rank 0 address..." << std::endl;
-
-        while (retries > 0) {
-            rank0_host = ResolveRank0Address();
-
-            // Check if valid
-            if (!rank0_host.empty() && rank0_host != "127.0.0.1" && rank0_host != "0.0.0.0") {
-                std::cout << "[Worker Rank " << rank_ << "] Found rank 0 address: " << rank0_host << std::endl;
-                break;
-            }
-
-            if (retries > 0) {
-                std::cout << "[Worker Rank " << rank_ << "] Rank 0 address not ready, retrying... "
-                          << "(attempts left: " << retries << ")" << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                retries--;
-            }
-        }
-
-        if (rank0_host.empty() || rank0_host == "127.0.0.1" || rank0_host == "0.0.0.0") {
-            std::cerr << "[Worker Rank " << rank_ << "] ERROR: Could not discover rank 0 address!" << std::endl;
+        if (rank0_address.empty() || rank0_address == "0.0.0.0:5555") {
+            std::cerr << "[Worker Rank " << rank_ << "] ERROR: Invalid broker address from MPI!" << std::endl;
             return false;
         }
 
         // Build connection address
-        std::string connect_addr;
-        size_t colon_pos = rank0_host.rfind(':');
-
-        if (colon_pos != std::string::npos) {
-            connect_addr = "tcp://" + rank0_host;
-        } else {
-            std::string port = "5555";
-            const char* port_env = getenv("ANARI_USD_ZMQ_PORT");
-            if (port_env) {
-                port = port_env;
-            }
-
-            std::stringstream ss;
-            ss << "tcp://" << rank0_host << ":" << port;
-            connect_addr = ss.str();
-        }
-
+        std::string connect_addr = "tcp://" + rank0_address;
         std::cout << "[Worker Rank " << rank_ << "] Connecting to broker at " << connect_addr << std::endl;
 
         dealer_->connect(connect_addr);
@@ -524,7 +459,7 @@ bool ZmqWorker::Connect() {
 
         if (ack == "ACK") {
             connected_ = true;
-            std::cout << "[Worker Rank " << rank_ << "] Connected to broker successfully!" << std::endl;
+            std::cout << "[Worker Rank " << rank_ << "] Connected to broker successfully via MPI discovery!" << std::endl;
             return true;
         }
 
