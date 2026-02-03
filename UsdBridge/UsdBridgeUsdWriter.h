@@ -165,6 +165,7 @@ public:
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
   void RecalculateAllMemoryUsage(); // Recalculate memory for all tracked stages
+  void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage); // Made public for UsdBridge.cpp access
 
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
   friend void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
@@ -231,9 +232,6 @@ protected:
     UsdStageRefPtr stage; // Keep reference to stage for recalculation
   };
   std::vector<StageMemoryInfo> MemoryTracking;
-  
-  // Helper to estimate stage memory usage and log it
-  void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
 };
 
 void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 

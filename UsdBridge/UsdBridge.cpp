@@ -914,6 +914,15 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     geomStage->Save();
+  else
+  {
+    // Re-track the clip stage in memory after geometry data has been written
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 

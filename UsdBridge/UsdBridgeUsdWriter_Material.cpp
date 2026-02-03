@@ -5,6 +5,7 @@
 
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeUsdWriter_Arrays.h"
+#include "UsdBridgeMemoryStore.h"
 #include "stb_image_write.h"
 
 #include <limits>
@@ -1062,6 +1063,8 @@ void UsdBridgeUsdWriter::UpdateUsdMaterialManifest(const UsdBridgePrimCache* cac
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
 void UsdBridgeUsdWriter::UpdateUsdSamplerManifest(const UsdBridgePrimCache* cacheEntry, const UsdBridgeSamplerData& samplerData)
@@ -1073,6 +1076,8 @@ void UsdBridgeUsdWriter::UpdateUsdSamplerManifest(const UsdBridgePrimCache* cach
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 #endif
 
@@ -1335,18 +1340,15 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
 
       if(numComponents <= 4 && convertedSamplerData)
       {
-        // Only write texture files if saving is enabled and either:
-        // - Not in selective mode, OR
-        // - In selective mode (which includes textures)
-        if(this->EnableSaving)
-        {
-          StbWriteOutput writeOutput;
-
-          stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
+        // Always generate PNG data in memory
+        StbWriteOutput writeOutput;
+        stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
           static_cast<int>(samplerData.ImageDims[0]), static_cast<int>(samplerData.ImageDims[1]),
           numComponents, convertedSamplerData, convertedSamplerStride);
-
-          // Filename, relative from connection working dir
+        
+        if(this->EnableSaving)
+        {
+          // Write texture files to disk
           std::string wdRelFilename(SessionDirectory + imgFileName);
           Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
           
@@ -1355,11 +1357,17 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
         }
         else
         {
-          // In memory-only mode, log the texture size
-          StbWriteOutput writeOutput;
-          stbi_write_png_to_func(StbWriteToBuffer, &writeOutput,
-          static_cast<int>(samplerData.ImageDims[0]), static_cast<int>(samplerData.ImageDims[1]),
-          numComponents, convertedSamplerData, convertedSamplerStride);
+          // Store texture in memory for ZMQ streaming
+          if(g_rankMemoryStore != nullptr && writeOutput.imageData != nullptr)
+          {
+            std::string memFilename = SessionDirectory + imgFileName;
+            g_rankMemoryStore->StoreFile(
+              memFilename,
+              writeOutput.imageData,
+              writeOutput.imageSize,
+              "image/png"
+            );
+          }
           
           UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
             "In-memory texture '" << imgFileName << "': ~" << (writeOutput.imageSize / (1024.0 * 1024.0)) << " MB");

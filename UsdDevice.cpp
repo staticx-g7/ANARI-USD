@@ -18,6 +18,7 @@
 #include "UsdLight.h"
 #include "UsdCamera.h"
 #include "UsdDeviceQueries.h"
+#include "UsdBridge/UsdBridgeMemoryStore.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -27,6 +28,8 @@
 #include <algorithm>
 #include <limits>
 #include <filesystem>
+#include <thread>
+#include <atomic>
 #include <system_error>
 #include <thread>
 #include <chrono>
@@ -122,6 +125,16 @@ UsdDevice::UsdDevice(ANARILibrary library)
 
 UsdDevice::~UsdDevice()
 {
+  // Stop file serving thread before cleanup
+  #ifdef ANARI_USD_ENABLE_MPI
+  if (fileServingActive_) {
+    fileServingActive_ = false;
+    if (fileServingThread_.joinable()) {
+      fileServingThread_.join();
+    }
+  }
+  #endif
+
   // Make sure no more references are held before cleaning up the device (and checking for memleaks)
   clearCommitList(); 
 
@@ -130,6 +143,9 @@ UsdDevice::~UsdDevice()
   clearResourceStringList(); // Do the same for resource string references
 
   //internals->bridge->SaveScene(); //Uncomment to test cleanup of usd files.
+  
+  // Cleanup memory store
+  CleanupMemoryStore();
 
 #ifdef CHECK_MEMLEAKS
   if(!allocatedObjects.empty() || !allocatedStrings.empty() || !allocatedRawMemory.empty())
@@ -348,8 +364,9 @@ void UsdDevice::initializeBridge()
   if (mpiAvailable && mpiSize > 1) {
     if (mpiRank == 0) {
       // Initialize broker on rank 0
+      // Wait for ranks 1-(N-1) to connect (rank 0 will connect after broker starts)
       zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
-      if (!zmqBroker_->Initialize(mpiSize - 1)) {
+      if (!zmqBroker_->Initialize(mpiSize - 1)) {  // Dynamic: waits for all ranks except rank 0
         reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
                      ANARI_STATUS_UNKNOWN_ERROR,
                      "Failed to initialize ZMQ broker on rank 0");
@@ -365,6 +382,18 @@ void UsdDevice::initializeBridge()
                      worker.rank, worker.hostname.c_str(),
                      worker.ib_address.c_str());
       }
+      
+      // ========== Rank 0 serves files DIRECTLY (no ZeroMQ loopback) ==========
+      // The broker's MessageLoopThread will handle rank 0 file requests by
+      // accessing g_rankMemoryStore directly, avoiding complex ZeroMQ loopback
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank 0: Broker started. Rank 0 files served directly (no worker connection needed)");
+      
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank 0: Ready to render geometry AND serve files to laptop!");
+      
     } else {
       // Initialize worker on rank 1-N
       zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
@@ -374,7 +403,20 @@ void UsdDevice::initializeBridge()
                      "Failed to connect to broker on rank %d", mpiRank);
         return;
       }
+      
+      // Start background file serving thread
+      fileServingActive_ = true;
+      fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank %d: Started background file serving thread", mpiRank);
     }
+    
+    // Initialize memory store for this rank (for memory-only mode)
+    InitializeMemoryStore(mpiRank);
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Memory store initialized for rank %d", mpiRank);
   }
 #endif
 
@@ -721,7 +763,210 @@ void UsdDevice::renderFrame(ANARIFrame frame)
 
   if(frame)
     AnariToUsdObjectPtr(frame)->saveUsd(this);
+
+#ifdef ANARI_USD_ENABLE_MPI
+  // Serve file requests from laptop client
+  if (zmqWorker_ && zmqWorker_->IsConnected()) {
+    ServeFileRequests();
+  }
+#endif
 }
+
+#ifdef ANARI_USD_ENABLE_MPI
+void UsdDevice::ServeFileRequests()
+{
+  using namespace usd_bridge;
+  
+  // DEBUG: Print on first call to show ServeFileRequests is active
+  static bool first_call = true;
+  if (first_call) {
+    first_call = false;
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "[DEBUG] Rank %d: ServeFileRequests() is ACTIVE", mpiRank);
+    
+    // DEBUG: List all files in memory store
+    if (g_rankMemoryStore) {
+      auto files = g_rankMemoryStore->ListFiles();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "[DEBUG] Rank %d: MemoryStore contains %zu files:", mpiRank, files.size());
+      for (const auto& filename : files) {
+        const auto* entry = g_rankMemoryStore->GetFile(filename);
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                     ANARI_STATUS_NO_ERROR,
+                     "[DEBUG]   - %s (%zu bytes, %s)", 
+                     filename.c_str(), entry->size(), entry->mime_type.c_str());
+      }
+    }
+  }
+  
+  ZmqFileRequest request;
+  
+  // Non-blocking check for file requests (process multiple requests if available)
+  while (zmqWorker_->CheckForFileRequest(request, false)) {
+    // DEBUG: Print when request arrives
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "[DEBUG] Rank %d: Received request type %u for '%s' (req_id=%u)", 
+                 mpiRank, request.message_type, request.filename, request.request_id);
+    
+    // Validate request
+    if (request.magic != USD_FILE_MAGIC) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+                   ANARI_STATUS_INVALID_OPERATION,
+                   "Rank %d: Received invalid file request (bad magic)", mpiRank);
+      continue;
+    }
+    
+    // Handle REQ_LIST_FILES - send list of all files in memory
+    if (request.message_type == static_cast<uint32_t>(usd_bridge::ZmqMessageType::REQ_LIST_FILES)) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "[DEBUG] Rank %d: Handling REQ_LIST_FILES request", mpiRank);
+      
+      auto files = g_rankMemoryStore->ListFiles();
+      
+      // Build file list response as JSON string
+      std::stringstream jsonResponse;
+      jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
+      bool first = true;
+      for (const auto& filename : files) {
+        const auto* entry = g_rankMemoryStore->GetFile(filename);
+        if (!first) jsonResponse << ",";
+        jsonResponse << "{\"name\":\"" << filename << "\","
+                     << "\"size\":" << entry->size() << ","
+                     << "\"mime\":\"" << entry->mime_type << "\"}";
+        first = false;
+      }
+      jsonResponse << "]}";
+      
+      std::string jsonStr = jsonResponse.str();
+      
+      // Send as a "file" with special name "__file_list__"
+      bool chunkSent = zmqWorker_->SendFileChunk(
+            request.request_id,
+            "__file_list__.json",
+            jsonStr.data(),
+            jsonStr.size(),
+            jsonStr.size(),
+            0);
+      
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "[DEBUG] Rank %d: SendFileChunk returned %s", 
+                   mpiRank, chunkSent ? "TRUE" : "FALSE");
+      
+      if (!chunkSent) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Rank %d: Failed to send file list chunk", mpiRank);
+      }
+      
+      // ALWAYS send completion (even if chunk failed, for protocol consistency)
+      bool completeSent = zmqWorker_->SendFileComplete(request.request_id, "__file_list__.json", jsonStr.size());
+      
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "[DEBUG] Rank %d: SendFileComplete returned %s", 
+                   mpiRank, completeSent ? "TRUE" : "FALSE");
+      
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank %d: Sent file list (%zu files) - chunk:%s complete:%s", 
+                   mpiRank, files.size(), 
+                   chunkSent ? "OK" : "FAIL",
+                   completeSent ? "OK" : "FAIL");
+      continue;
+    }
+    
+    // Handle REQ_GET_FILE - send specific file
+    
+    // Look up file in memory store
+    const auto* fileEntry = g_rankMemoryStore->GetFile(request.filename);
+    
+    if (!fileEntry) {
+      // DEBUG: Print what files ARE available
+      auto files = g_rankMemoryStore->ListFiles();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+                   ANARI_STATUS_NO_ERROR,
+                   "[DEBUG] Rank %d: File '%s' NOT FOUND. Available files:", 
+                   mpiRank, request.filename);
+      for (const auto& filename : files) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                     ANARI_STATUS_NO_ERROR,
+                     "[DEBUG]   - %s", filename.c_str());
+      }
+      
+      // File not found - send error response
+      zmqWorker_->SendNoFile(request.request_id, request.filename);
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank %d: File not found: %s", mpiRank, request.filename);
+      continue;
+    }
+    
+    // Determine chunk size (use requested or default)
+    size_t chunkSize = request.chunk_size > 0 ? request.chunk_size : DEFAULT_CHUNK_SIZE;
+    
+    // Send file in chunks
+    size_t offset = 0;
+    size_t totalSize = fileEntry->data.size();
+    
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Rank %d: Sending file %s (%zu bytes) in %zu-byte chunks",
+                 mpiRank, request.filename, totalSize, chunkSize);
+    
+    while (offset < totalSize) {
+      size_t sendSize = std::min(chunkSize, totalSize - offset);
+      
+      if (!zmqWorker_->SendFileChunk(
+            request.request_id,
+            request.filename,
+            fileEntry->data.data() + offset,
+            sendSize,
+            totalSize,
+            offset)) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Rank %d: Failed to send file chunk for %s at offset %zu",
+                     mpiRank, request.filename, offset);
+        break;
+      }
+      
+      offset += sendSize;
+    }
+    
+    // Send completion message
+    if (offset == totalSize) {
+      zmqWorker_->SendFileComplete(request.request_id, request.filename, totalSize);
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank %d: Successfully sent file %s", mpiRank, request.filename);
+    }
+  }
+}
+
+void UsdDevice::FileServingThreadLoop()
+{
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+               ANARI_STATUS_NO_ERROR,
+               "[THREAD] Rank %d: File serving thread started", mpiRank);
+  
+  while (fileServingActive_) {
+    // Continuously serve file requests
+    ServeFileRequests();
+    
+    // Small sleep to avoid burning CPU (10ms)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+               ANARI_STATUS_NO_ERROR,
+               "[THREAD] Rank %d: File serving thread stopped", mpiRank);
+}
+#endif
 
 const char* UsdDevice::makeUniqueName(const char* name)
 {

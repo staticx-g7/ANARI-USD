@@ -1,7 +1,7 @@
 message( "-------------------- Begin UsdBridge CmakeLists.txt ----------------------------------------")
 
 if (WIN32)
-cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
+  cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -84,7 +84,7 @@ endif()
 
 # Search in config mode
 find_package(pxr REQUIRED
-  PATHS ${USD_ROOT_DIR_CURRENT})
+        PATHS ${USD_ROOT_DIR_CURRENT})
 
 if(NOT (USD_ROOT_DIR_DEBUG STREQUAL USD_ROOT_DIR_RELEASE))
   set(USD_DEBUG_TARGET_CMAKE "${USD_ROOT_DIR_DEBUG}/cmake/pxrTargets-debug.cmake")
@@ -104,9 +104,9 @@ message(STATUS "USD_TARGETS: ${USD_TARGETS}")
 if(NOT WIN32)
   set(CXX11_COMPILE_OFF OFF)
   check_file_and_substring(
-    "${USD_ROOT_DIR_CURRENT}/BUILD_INFO/CMakeCache.txt"
-    "-D_GLIBCXX_USE_CXX11_ABI=0"
-    CXX11_COMPILE_OFF)
+          "${USD_ROOT_DIR_CURRENT}/BUILD_INFO/CMakeCache.txt"
+          "-D_GLIBCXX_USE_CXX11_ABI=0"
+          CXX11_COMPILE_OFF)
 
   if(${CXX11_COMPILE_OFF})
     set(USE_CXX11_ABI_DEFAULT OFF)
@@ -130,50 +130,52 @@ add_subdirectory(Connection)
 add_subdirectory(Volume)
 
 set(USDBRIDGE_SOURCES
-  UsdBridge.cpp
-  UsdBridgeCaches.cpp
-  UsdBridgeUsdWriter.cpp
-  UsdBridgeUsdWriter_Geometry.cpp
-  UsdBridgeUsdWriter_Material.cpp
-  UsdBridgeUsdWriter_Volume.cpp
-  UsdBridgeTimeEvaluator.cpp
-  UsdBridgeRt.cpp
-  UsdBridgeDiagnosticMgrDelegate.cpp
-  UsdBridge.h
-  UsdBridgeCaches.h
-  UsdBridgeUsdWriter.h
-  UsdBridgeUsdWriter_Common.h
-  UsdBridgeUsdWriter_Arrays.h
-  UsdBridgeTimeEvaluator.h
-  UsdBridgeRt.h
-  UsdBridgeDiagnosticMgrDelegate.h
-  usd.h
-  ${USDBRIDGE_MDL_SOURCES}
+        UsdBridge.cpp
+        UsdBridgeCaches.cpp
+        UsdBridgeUsdWriter.cpp
+        UsdBridgeUsdWriter_Geometry.cpp
+        UsdBridgeUsdWriter_Material.cpp
+        UsdBridgeUsdWriter_Volume.cpp
+        UsdBridgeTimeEvaluator.cpp
+        UsdBridgeRt.cpp
+        UsdBridgeDiagnosticMgrDelegate.cpp
+        UsdBridgeMemoryStore.cpp
+        UsdBridge.h
+        UsdBridgeCaches.h
+        UsdBridgeUsdWriter.h
+        UsdBridgeUsdWriter_Common.h
+        UsdBridgeUsdWriter_Arrays.h
+        UsdBridgeTimeEvaluator.h
+        UsdBridgeRt.h
+        UsdBridgeDiagnosticMgrDelegate.h
+        UsdBridgeMemoryStore.h
+        usd.h
+        ${USDBRIDGE_MDL_SOURCES}
 )
 
 add_library(UsdBridge STATIC ${USDBRIDGE_SOURCES})
 
 if (WIN32)
   set_source_files_properties(
-    ${CMAKE_CURRENT_LIST_DIR}/UsdBridgeRt.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/UsdBridgeUsdWriter_Geometry.cpp
-    PROPERTIES COMPILE_FLAGS /bigobj)
+          ${CMAKE_CURRENT_LIST_DIR}/UsdBridgeRt.cpp
+          ${CMAKE_CURRENT_LIST_DIR}/UsdBridgeUsdWriter_Geometry.cpp
+          PROPERTIES COMPILE_FLAGS /bigobj)
 endif()
 
 # Includes
 
 target_include_directories(UsdBridge
-  PUBLIC
-    ${CMAKE_CURRENT_LIST_DIR}
-  PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}/Mdl
-    ${Boost_SEP_INCLUDE_DIR}
-  )
+        PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}
+        PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/Mdl
+        ${Boost_SEP_INCLUDE_DIR}
+)
 
 # Defs
 
 target_compile_definitions(UsdBridge
-	PRIVATE ${USD_DEVICE_TIME_DEFS})
+        PRIVATE ${USD_DEVICE_TIME_DEFS})
 
 # Platform-dependent operations
 
@@ -190,7 +192,7 @@ if (WIN32)
   endif()
   # Combination of boost and python causes pragma linking issues for both libraries.
   message(STATUS "Python link dirs: ${USD_PYTHON_LINK_DIRS}")
-  # Make sure to set link dirs public, since this is a static lib, so the dynamic boost libs will propagate to the parent project. 
+  # Make sure to set link dirs public, since this is a static lib, so the dynamic boost libs will propagate to the parent project.
   target_link_directories(UsdBridge PUBLIC "${USD_PYTHON_LINK_DIRS}" "${USD_LIB_DIR}")
 else()
   set(PLATFORM_LIBS pthread dl stdc++fs)
@@ -203,14 +205,14 @@ endif()
 # Linking
 
 target_link_libraries(UsdBridge
-  PUBLIC  
-    UsdBridge_Common
-  PRIVATE
-    stb_image
-    UsdBridge_Volume
-    UsdBridge_Connect
-    ${USD_TARGETS}
-    ${USD_PYTHON_TARGETS}
+        PUBLIC
+        UsdBridge_Common
+        PRIVATE
+        stb_image
+        UsdBridge_Volume
+        UsdBridge_Connect
+        ${USD_TARGETS}
+        ${USD_PYTHON_TARGETS}
 )
 
 # USDRT/CarbSDK
@@ -222,14 +224,14 @@ if(${USD_DEVICE_USE_USDRT})
   cmake_path(GET CUDA_INCLUDE_DIR PARENT_PATH CUDA_BASE_DIR)
   cmake_path(GET CUDA_BASE_DIR PARENT_PATH CUDA_BASE_DIR_PARENT)
   target_include_directories(UsdBridge
-    PRIVATE
-      ${USDRT_INCLUDE_DIR}
-      "${USDRT_INCLUDE_DIR}/usdrt_only"
-      "${GSL_INCLUDE_DIR}"
-      "${PYBIND_INCLUDE_DIR}"
-      "${CUDA_INCLUDE_DIR}"
-      "${CUDA_BASE_DIR_PARENT}"
-      ${CARBSDK_INCLUDE_DIR}
+          PRIVATE
+          ${USDRT_INCLUDE_DIR}
+          "${USDRT_INCLUDE_DIR}/usdrt_only"
+          "${GSL_INCLUDE_DIR}"
+          "${PYBIND_INCLUDE_DIR}"
+          "${CUDA_INCLUDE_DIR}"
+          "${CUDA_BASE_DIR_PARENT}"
+          ${CARBSDK_INCLUDE_DIR}
   )
   if (WIN32)
     set(CARB_LIB "${CARBSDK_BIN_DIR}/carb${CMAKE_STATIC_LIBRARY_SUFFIX}")
@@ -259,14 +261,14 @@ if(${INSTALL_USD_DEPS})
 
   #Install USD
   install(
-    DIRECTORY "${USD_LIB_DIR}/"
-    DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-    PATTERN "*${CMAKE_STATIC_LIBRARY_SUFFIX}" EXCLUDE
-    PATTERN "cmake" EXCLUDE)
+          DIRECTORY "${USD_LIB_DIR}/"
+          DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+          PATTERN "*${CMAKE_STATIC_LIBRARY_SUFFIX}" EXCLUDE
+          PATTERN "cmake" EXCLUDE)
   install(
-    DIRECTORY "$<$<NOT:$<CONFIG:Debug>>:${USD_ROOT_DIR_RELEASE}/bin/>$<$<CONFIG:Debug>:${USD_ROOT_DIR_DEBUG}/bin/>"
-    DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-    FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*")
+          DIRECTORY "$<$<NOT:$<CONFIG:Debug>>:${USD_ROOT_DIR_RELEASE}/bin/>$<$<CONFIG:Debug>:${USD_ROOT_DIR_DEBUG}/bin/>"
+          DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+          FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*")
 
   #Install Python
   message(STATUS "Python runtime library dirs: ${PY_SHARED_LIB_DIR}")
@@ -274,48 +276,47 @@ if(${INSTALL_USD_DEPS})
     file(GLOB PYTHON_RUNTIME_LIBRARIES "${PY_SHARED_LIB_DIR}/python*${CMAKE_SHARED_LIBRARY_SUFFIX}*")
   else()
     file(GLOB PYTHON_RUNTIME_LIBRARIES
-      "${PY_SHARED_LIB_DIR}/*libffi.so*"
-      "${PY_SHARED_LIB_DIR}/*libpython*.so*")
+            "${PY_SHARED_LIB_DIR}/*libffi.so*"
+            "${PY_SHARED_LIB_DIR}/*libpython*.so*")
   endif()
   message(STATUS "Found Python Runtime Libs: ${PYTHON_RUNTIME_LIBRARIES}")
   install(
-      FILES ${PYTHON_RUNTIME_LIBRARIES}
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR})
+          FILES ${PYTHON_RUNTIME_LIBRARIES}
+          DESTINATION ${PLATFORM_INSTALL_LIBDIR})
 
   #Install CarbSdk
   if(${USD_DEVICE_USE_USDRT})
     install(
-      DIRECTORY "${USDRT_BIN_DIR}/"
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-      FILES_MATCHING
-      PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*"
-      PATTERN "*.pdb"
-      REGEX "${USDRT_BIN_DIR}(/[^/]*)+/[^/]*$") # Any file that's not in the root of the bin dir will match
+            DIRECTORY "${USDRT_BIN_DIR}/"
+            DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+            FILES_MATCHING
+            PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*"
+            PATTERN "*.pdb"
+            REGEX "${USDRT_BIN_DIR}(/[^/]*)+/[^/]*$") # Any file that's not in the root of the bin dir will match
     install(
-      DIRECTORY "${CARBSDK_BIN_DIR}/"
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-      FILES_MATCHING
-      PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*"
-      PATTERN "*.pdb"
-      REGEX "${CARBSDK_BIN_DIR}(/[^/]*)+/[^/]*$")
+            DIRECTORY "${CARBSDK_BIN_DIR}/"
+            DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+            FILES_MATCHING
+            PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}*"
+            PATTERN "*.pdb"
+            REGEX "${CARBSDK_BIN_DIR}(/[^/]*)+/[^/]*$")
     install(
-      DIRECTORY "${RTXPLUGINS_BIN_DIR}/"
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-      FILES_MATCHING
-      REGEX "${RTXPLUGINS_BIN_DIR}/plugins/omni.usd/[^/]*$")
+            DIRECTORY "${RTXPLUGINS_BIN_DIR}/"
+            DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+            FILES_MATCHING
+            REGEX "${RTXPLUGINS_BIN_DIR}/plugins/omni.usd/[^/]*$")
     install(
-      DIRECTORY "${RTXPLUGINS_BIN_DIR}/"
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-      FILES_MATCHING
-      REGEX "${RTXPLUGINS_BIN_DIR}/plugins/omni.usd/[^/]*$")
+            DIRECTORY "${RTXPLUGINS_BIN_DIR}/"
+            DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+            FILES_MATCHING
+            REGEX "${RTXPLUGINS_BIN_DIR}/plugins/omni.usd/[^/]*$")
     install(
-      DIRECTORY "${CUDAToolkit_ROOT}/../${PLATFORM_INSTALL_LIBDIR}"
-      DESTINATION ${PLATFORM_INSTALL_LIBDIR}
-      FILES_MATCHING
-      REGEX "/cudart[0-9_]*${CMAKE_SHARED_LIBRARY_SUFFIX}$")
+            DIRECTORY "${CUDAToolkit_ROOT}/../${PLATFORM_INSTALL_LIBDIR}"
+            DESTINATION ${PLATFORM_INSTALL_LIBDIR}
+            FILES_MATCHING
+            REGEX "/cudart[0-9_]*${CMAKE_SHARED_LIBRARY_SUFFIX}$")
   endif()
 endif()
 
 message( "-------------------- End UsdBridge CmakeLists.txt ----------------------------------------")
-
 

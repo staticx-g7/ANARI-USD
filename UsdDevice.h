@@ -19,6 +19,8 @@
 #endif
 
 #ifdef ANARI_USD_ENABLE_MPI
+#include <thread>
+#include <atomic>
 #include "UsdBridgeZmqBroker.h"
 #endif
 
@@ -327,6 +329,14 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     // ZMQ communication
     std::unique_ptr<usd_bridge::ZmqBroker> zmqBroker_;
     std::unique_ptr<usd_bridge::ZmqWorker> zmqWorker_;
+    
+    // File serving for workers
+    void ServeFileRequests();
+    
+    // Background file serving thread
+    std::thread fileServingThread_;
+    std::atomic<bool> fileServingActive_{false};
+    void FileServingThreadLoop();
   #endif
 
 };

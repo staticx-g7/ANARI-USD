@@ -5,6 +5,7 @@
 
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeUsdWriter_Arrays.h"
+#include "UsdBridgeMemoryStore.h"
 
 namespace
 {
@@ -110,6 +111,8 @@ void UsdBridgeUsdWriter::UpdateUsdVolumeManifest(const UsdBridgePrimCache* cache
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 #endif
 
@@ -148,7 +151,31 @@ void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgeP
   // Flush stream out to storage
   const char* volumeStreamData; size_t volumeStreamDataSize;
   VolumeWriter->GetSerializedVolumeData(volumeStreamData, volumeStreamDataSize);
-  Connect->WriteFile(volumeStreamData, volumeStreamDataSize, wdRelVolPath.c_str(), true);
+  
+  if(this->EnableSaving)
+  {
+    // Write to disk
+    Connect->WriteFile(volumeStreamData, volumeStreamDataSize, wdRelVolPath.c_str(), true);
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+      "Saved volume: " << relVolPath << " (" << (volumeStreamDataSize / (1024.0 * 1024.0)) << " MB)");
+  }
+  else
+  {
+    // Store in memory for ZMQ streaming
+    if(g_rankMemoryStore != nullptr && volumeStreamData != nullptr && volumeStreamDataSize > 0)
+    {
+      g_rankMemoryStore->StoreFile(
+        wdRelVolPath,
+        volumeStreamData,
+        volumeStreamDataSize,
+        "application/vdb"
+      );
+    }
+    
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+      "In-memory volume '" << relVolPath << "': ~" << (volumeStreamDataSize / (1024.0 * 1024.0)) << " MB");
+  }
+  
   // Record file write for timestep
   cacheEntry->AddResourceKey(UsdBridgeResourceKey(nullptr, timeStep));
 }

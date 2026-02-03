@@ -6,6 +6,7 @@
 #include "UsdBridgeMdlStrings.h"
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
+#include "UsdBridgeMemoryStore.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -437,6 +438,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     
   // Estimate memory usage by flattening the stage and checking layer size
   size_t estimatedBytes = 0;
+  std::string fullUsdContent; // Complete USD file content
   
   // Get all layers in the stage
   auto layers = stage->GetUsedLayers();
@@ -448,7 +450,28 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       std::string layerStr;
       layer->ExportToString(&layerStr);
       estimatedBytes += layerStr.size();
+      fullUsdContent += layerStr; // Accumulate all layers
     }
+  }
+  
+  // Store in memory file store for ZMQ streaming
+  if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
+  {
+    // Determine the filename based on stage name
+    std::string filename;
+    if(stageName == "FullScene") {
+      filename = this->SceneFileName;
+    } else {
+      // For other stages, construct filename from SessionDirectory + stageName
+      filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+    }
+    
+    g_rankMemoryStore->StoreFile(
+      filename,
+      fullUsdContent.data(),
+      fullUsdContent.size(),
+      "text/plain"
+    );
   }
   
   // Add to tracking

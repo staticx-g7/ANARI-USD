@@ -6,9 +6,68 @@
 #include <vector>
 #include <map>
 #include <cstdint>
+#include <mutex>
+#include <thread>
+#include <atomic>
 #include <zmq.hpp>
 
 namespace usd_bridge {
+
+// Constants
+constexpr uint32_t USD_FILE_MAGIC = 0x55534446;  // "USDF"
+constexpr size_t DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;  // 4 MB
+
+// ZMQ Message Types
+enum class ZmqMessageType : uint32_t {
+    // Worker registration/heartbeat
+    WORKER_READY = 1,
+    WORKER_HEARTBEAT = 2,
+    BROKER_ACK = 10,
+    
+    // File request/response (Laptop ↔ Broker ↔ Workers)
+    REQ_LIST_FILES = 100,      // Request list of files from a rank
+    REQ_GET_FILE = 101,        // Request specific file from a rank
+    REQ_GET_FRAME = 102,       // Request all files for a frame number
+    
+    RESP_FILE_LIST = 200,      // Response with list of files
+    RESP_FILE_CHUNK = 201,     // File data chunk
+    RESP_FILE_COMPLETE = 202,  // File transmission complete
+    RESP_NO_FILE = 203,        // File not found
+    RESP_ERROR = 204           // Error occurred
+};
+
+// File request message (Laptop → Broker → Worker)
+struct __attribute__((packed)) ZmqFileRequest {
+    uint32_t magic;            // 0x55534446 ("USDF")
+    uint32_t message_type;     // ZmqMessageType
+    uint32_t request_id;       // Unique request ID
+    int32_t target_rank;       // Which rank to request from (-1 = all ranks)
+    char filename[256];        // Relative path (e.g., "clips/geom_r1_0.0.usda")
+    uint32_t chunk_size;       // Preferred chunk size (0 = default 4MB)
+};
+
+// File chunk response (Worker → Broker → Laptop)
+struct __attribute__((packed)) ZmqFileChunk {
+    uint32_t magic;            // 0x55534446
+    uint32_t message_type;     // RESP_FILE_CHUNK
+    uint32_t request_id;       // Match with request
+    int32_t source_rank;       // Which rank sent this
+    char filename[256];        // Filename being transmitted
+    uint64_t file_size;        // Total file size
+    uint64_t chunk_offset;     // Offset of this chunk
+    uint32_t chunk_size;       // Size of this chunk
+    // Followed by chunk_size bytes of data
+};
+
+// File complete message (Worker → Broker → Laptop)
+struct __attribute__((packed)) ZmqFileComplete {
+    uint32_t magic;            // 0x55534446
+    uint32_t message_type;     // RESP_FILE_COMPLETE
+    uint32_t request_id;
+    int32_t source_rank;
+    char filename[256];
+    uint64_t total_size;
+};
 
 struct WorkerInfo {
     std::string identity;
@@ -30,17 +89,21 @@ public:
     bool SendToClient(const std::string& clientId, const void* data, size_t size);
     bool BroadcastToWorkers(const void* data, size_t size);
     bool ReceiveFromWorker(std::string& workerId, std::vector<uint8_t>& data);
-    bool ReceiveFromClient(std::string& message);
-    bool ReplyToClient(const std::string& reply);
+    // Legacy methods - not used in DEALER-ROUTER architecture
+    // bool ReceiveFromClient(std::string& message);
+    // bool ReplyToClient(const std::string& reply);
 
     std::string GetInfiniBandIP();
     bool IsInitialized() const { return initialized_; }
     const std::vector<WorkerInfo>& GetConnectedWorkers() const { return workers_; }
 
 private:
+    void MessageLoopThread();  // Background thread for message routing
+    void SSHReminderThread();  // Periodic SSH command reminder
+
     std::unique_ptr<zmq::context_t> context_;
-    std::unique_ptr<zmq::socket_t> router_;  // Port worker_port_ - for workers (DEALER)
-    std::unique_ptr<zmq::socket_t> rep_;     // Port client_port_ - for laptop clients (REQ)
+    std::unique_ptr<zmq::socket_t> router_;        // Port worker_port_ - for workers (DEALER)
+    std::unique_ptr<zmq::socket_t> client_router_; // Port client_port_ - for laptop clients (DEALER)
 
     int worker_port_;
     int client_port_;
@@ -48,6 +111,14 @@ private:
 
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
+    std::map<std::string, std::string> client_map_; // Track connected laptop clients
+    
+    // Thread management
+    std::thread message_loop_thread_;
+    std::atomic<bool> message_loop_active_{false};
+    std::thread ssh_reminder_thread_;
+    std::atomic<bool> ssh_reminder_active_{false};
+    std::string broker_ip_;  // Store broker IP for SSH reminder
 };
 
 class ZmqWorker {
@@ -60,6 +131,14 @@ public:
 
     bool ReceiveTask(std::vector<uint8_t>& data);
     bool SendResult(const void* data, size_t size);
+    
+    // File request handling
+    bool CheckForFileRequest(ZmqFileRequest& request, bool blocking = false);
+    bool SendFileChunk(uint32_t requestId, const std::string& filename, 
+                       const void* data, size_t dataSize,
+                       uint64_t totalSize, uint64_t offset);
+    bool SendFileComplete(uint32_t requestId, const std::string& filename, uint64_t totalSize);
+    bool SendNoFile(uint32_t requestId, const std::string& filename);
 
     std::string GetInfiniBandIP();
     bool IsConnected() const { return connected_; }
@@ -72,6 +151,9 @@ private:
     std::string broker_address_;
     int rank_;
     bool connected_;
+    
+    // Thread safety for socket operations
+    std::mutex socket_mutex_;
 };
 
 } // namespace usd_bridge
