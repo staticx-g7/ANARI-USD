@@ -362,39 +362,32 @@ void UsdDevice::initializeBridge()
   }
 
   if (mpiAvailable && mpiSize > 1) {
-    if (mpiRank == 0) {
+    if (mpiRank == 0)
+    {
       // Initialize broker on rank 0
-      // Wait for ranks 1-(N-1) to connect (rank 0 will connect after broker starts)
+      // Wait for ranks 1-N to connect (rank 0 does NOT connect as a worker)
       zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
-      if (!zmqBroker_->Initialize(mpiSize - 1)) {  // Dynamic: waits for all ranks except rank 0
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
-                     ANARI_STATUS_UNKNOWN_ERROR,
-                     "Failed to initialize ZMQ broker on rank 0");
+      if (!zmqBroker_->Initialize(mpiSize - 1))  // Wait for ranks 1-15 only
+      {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+            "Failed to initialize ZMQ broker on rank 0");
         return;
       }
 
       // Print connected workers
       const auto& workers = zmqBroker_->GetConnectedWorkers();
-      for (const auto& worker : workers) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
-                     ANARI_STATUS_NO_ERROR,
-                     "Worker rank %d connected from %s (%s)",
-                     worker.rank, worker.hostname.c_str(),
-                     worker.ib_address.c_str());
+      for (const auto& worker : workers)
+      {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+            "Worker rank %d connected from %s (%s)",
+            worker.rank, worker.hostname.c_str(), worker.ib_address.c_str());
       }
-      
-      // ========== Rank 0 serves files DIRECTLY (no ZeroMQ loopback) ==========
-      // The broker's MessageLoopThread will handle rank 0 file requests by
-      // accessing g_rankMemoryStore directly, avoiding complex ZeroMQ loopback
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
-                   ANARI_STATUS_NO_ERROR,
-                   "Rank 0: Broker started. Rank 0 files served directly (no worker connection needed)");
-      
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
-                   ANARI_STATUS_NO_ERROR,
-                   "Rank 0: Ready to render geometry AND serve files to laptop!");
-      
-    } else {
+
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Rank 0: Broker started. Rank 0 renders AND serves files directly from memory store.");
+    }
+
+    else {
       // Initialize worker on rank 1-N
       zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
       if (!zmqWorker_->Connect()) {
