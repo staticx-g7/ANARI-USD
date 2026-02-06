@@ -543,6 +543,59 @@ void ZmqBroker::MessageLoopThread() {
                     }
                 }
 
+                // Handle property query requests (binary format)
+                if (request.size() >= sizeof(ZmqPropertyResponse) - 256) {  // Minimum size check
+                    ZmqPropertyResponse* propReq = reinterpret_cast<ZmqPropertyResponse*>(request.data());
+
+                    if (propReq->magic == USD_FILE_MAGIC &&
+                        propReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_PROPERTY)) {
+
+                        std::cout << "[Rank 0 MPI Broker] Property request from laptop: request_id="
+                                  << propReq->request_id << std::endl;
+
+                        // Parse property name from string_value
+                        std::string propertyName(propReq->string_value);
+
+                        // Get property value
+                        ZmqPropertyResponse response;
+                        memset(&response, 0, sizeof(response));
+                        response.magic = USD_FILE_MAGIC;
+                        response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_PROPERTY);
+                        response.request_id = propReq->request_id;
+
+                        int32_t intValue = 0;
+                        if (GetPropertyAsInt32(propertyName, intValue)) {
+                            response.property_type = 0;  // int32
+                            response.int_value = intValue;
+                            std::cout << "[Rank 0 MPI Broker] Property " << propertyName
+                                      << " = " << intValue << std::endl;
+                        } else {
+                            // Try as string property
+                            std::string strValue;
+                            if (GetPropertyAsString(propertyName, strValue)) {
+                                response.property_type = 1;  // string
+                                strncpy(response.string_value, strValue.c_str(),
+                                        sizeof(response.string_value) - 1);
+                                std::cout << "[Rank 0 MPI Broker] Property " << propertyName
+                                          << " = \"" << strValue << "\"" << std::endl;
+                            } else {
+                                // Property not found
+                                response.property_type = -1;  // error
+                                std::cerr << "[Rank 0 MPI Broker] Unknown property: "
+                                          << propertyName << std::endl;
+                            }
+                        }
+
+                        // Send response
+                        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                        client_router_->send(zmq::message_t(&response, sizeof(response)),
+                                            zmq::send_flags::none);
+
+                        continue;
+                    }
+                }
+
                 // Handle simple string requests (legacy worker list query)
                 std::string message(static_cast<const char*>(request.data()), request.size());
                 std::cout << "[Rank 0 MPI Broker] Laptop requested: " << message << std::endl;
@@ -857,6 +910,45 @@ void ZmqBroker::Shutdown() {
         context_->close();
         initialized_ = false;
     }
+}
+
+// ============================================================================
+// Property Query Methods
+// ============================================================================
+
+bool ZmqBroker::GetPropertyAsInt32(const std::string& propertyName, int32_t& value) {
+    if (propertyName == "workerCount") {
+        // Count only non-zero ranks (actual workers)
+        int32_t count = 0;
+        for (const auto& worker : workers_) {
+            if (worker.rank != 0) count++;
+        }
+        value = count;
+        return true;
+    } else if (propertyName == "mpiSize") {
+        value = static_cast<int32_t>(workers_.size());
+        return true;
+    } else if (propertyName == "mpiRank") {
+        // Broker is always rank 0
+        value = 0;
+        return true;
+    }
+    return false;
+}
+
+bool ZmqBroker::GetPropertyAsString(const std::string& propertyName, std::string& value) {
+    if (propertyName == "workerList") {
+        std::stringstream ss;
+        for (size_t i = 0; i < workers_.size(); ++i) {
+            if (i > 0) ss << ";";
+            ss << workers_[i].rank << ":"
+               << workers_[i].hostname << ":"
+               << workers_[i].ib_address;
+        }
+        value = ss.str();
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================

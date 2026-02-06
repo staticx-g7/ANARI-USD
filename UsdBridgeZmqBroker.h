@@ -37,7 +37,11 @@ enum class ZmqMessageType : uint32_t {
 
     // Push notifications (Worker → Broker → Laptop)
     NOTIFY_FILE_UPDATE = 300,  // Notification that a file has been updated
-    NOTIFY_COMMIT_COMPLETE = 301  // Notification that scene commit is complete
+    NOTIFY_COMMIT_COMPLETE = 301,  // Notification that scene commit is complete
+
+    // Property query (Laptop → Broker)
+    REQ_GET_PROPERTY = 400,    // Request a property value
+    RESP_PROPERTY = 401        // Response with property value
 };
 
 // File request message (Laptop → Broker → Worker)
@@ -83,6 +87,16 @@ struct __attribute__((packed)) ZmqFileNotification {
     uint64_t timestamp;        // Unix timestamp of update
 };
 
+// Property query response (Broker → Laptop)
+struct __attribute__((packed)) ZmqPropertyResponse {
+    uint32_t magic;            // 0x55534446
+    uint32_t message_type;     // RESP_PROPERTY
+    uint32_t request_id;       // Match with request
+    int32_t property_type;     // 0=int32, 1=string
+    int32_t int_value;         // For integer properties
+    char string_value[256];    // For string properties (null-terminated)
+};
+
 struct WorkerInfo {
     std::string identity;
     int rank;
@@ -113,6 +127,10 @@ public:
     std::string GetInfiniBandIP();
     bool IsInitialized() const { return initialized_; }
     const std::vector<WorkerInfo>& GetConnectedWorkers() const { return workers_; }
+
+    // Property query methods
+    bool GetPropertyAsInt32(const std::string& propertyName, int32_t& value);
+    bool GetPropertyAsString(const std::string& propertyName, std::string& value);
 
 private:
     void MessageLoopThread();  // Background thread for message routing

@@ -1186,6 +1186,56 @@ int UsdDevice::getProperty(ANARIObject object,
       writeToVoidP(mem, anari::usd::query_extensions());
       return 1;
     }
+    else if (strEquals(name, "workerCount") && type == ANARI_INT32)
+    {
+      int32_t workerCount = 0;
+#ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable && mpiRank == 0 && zmqBroker_)
+      {
+        // On rank 0, return the number of connected workers
+        workerCount = static_cast<int32_t>(zmqBroker_->GetConnectedWorkers().size());
+      }
+      else if (mpiAvailable && mpiSize > 1)
+      {
+        // On worker ranks, return 0 (they are workers, not the broker)
+        workerCount = 0;
+      }
+      else
+      {
+        // Non-MPI mode
+        workerCount = 0;
+      }
+#else
+      // Non-MPI build
+      workerCount = 0;
+#endif
+      writeToVoidP(mem, workerCount);
+      return 1;
+    }
+    else if (strEquals(name, "mpiSize") && type == ANARI_INT32)
+    {
+      int32_t mpiSizeValue = 1;
+#ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable)
+      {
+        mpiSizeValue = mpiSize;
+      }
+#endif
+      writeToVoidP(mem, mpiSizeValue);
+      return 1;
+    }
+    else if (strEquals(name, "mpiRank") && type == ANARI_INT32)
+    {
+      int32_t mpiRankValue = 0;
+#ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable)
+      {
+        mpiRankValue = mpiRank;
+      }
+#endif
+      writeToVoidP(mem, mpiRankValue);
+      return 1;
+    }
   }
   else if(object)
     return AnariToUsdObjectPtr(object)->getProperty(name, type, mem, size, this);
