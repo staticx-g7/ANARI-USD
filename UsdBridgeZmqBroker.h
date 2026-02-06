@@ -23,17 +23,21 @@ enum class ZmqMessageType : uint32_t {
     WORKER_READY = 1,
     WORKER_HEARTBEAT = 2,
     BROKER_ACK = 10,
-    
+
     // File request/response (Laptop ↔ Broker ↔ Workers)
     REQ_LIST_FILES = 100,      // Request list of files from a rank
     REQ_GET_FILE = 101,        // Request specific file from a rank
     REQ_GET_FRAME = 102,       // Request all files for a frame number
-    
+
     RESP_FILE_LIST = 200,      // Response with list of files
     RESP_FILE_CHUNK = 201,     // File data chunk
     RESP_FILE_COMPLETE = 202,  // File transmission complete
     RESP_NO_FILE = 203,        // File not found
-    RESP_ERROR = 204           // Error occurred
+    RESP_ERROR = 204,          // Error occurred
+
+    // Push notifications (Worker → Broker → Laptop)
+    NOTIFY_FILE_UPDATE = 300,  // Notification that a file has been updated
+    NOTIFY_COMMIT_COMPLETE = 301  // Notification that scene commit is complete
 };
 
 // File request message (Laptop → Broker → Worker)
@@ -69,6 +73,16 @@ struct __attribute__((packed)) ZmqFileComplete {
     uint64_t total_size;
 };
 
+// Notification message (Worker → Broker → Laptop)
+struct __attribute__((packed)) ZmqFileNotification {
+    uint32_t magic;            // 0x55534446
+    uint32_t message_type;     // NOTIFY_FILE_UPDATE or NOTIFY_COMMIT_COMPLETE
+    int32_t source_rank;       // Which rank sent this
+    char filename[256];        // Filename that was updated
+    uint64_t file_size;        // Current file size
+    uint64_t timestamp;        // Unix timestamp of update
+};
+
 struct WorkerInfo {
     std::string identity;
     int rank;
@@ -93,6 +107,9 @@ public:
     // bool ReceiveFromClient(std::string& message);
     // bool ReplyToClient(const std::string& reply);
 
+    // Notification forwarding (Worker → Laptop)
+    bool ForwardNotificationToClient(const ZmqFileNotification& notification);
+
     std::string GetInfiniBandIP();
     bool IsInitialized() const { return initialized_; }
     const std::vector<WorkerInfo>& GetConnectedWorkers() const { return workers_; }
@@ -112,7 +129,7 @@ private:
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
     std::map<std::string, std::string> client_map_; // Track connected laptop clients
-    
+
     // Thread management
     std::thread message_loop_thread_;
     std::atomic<bool> message_loop_active_{false};
@@ -131,14 +148,18 @@ public:
 
     bool ReceiveTask(std::vector<uint8_t>& data);
     bool SendResult(const void* data, size_t size);
-    
+
     // File request handling
     bool CheckForFileRequest(ZmqFileRequest& request, bool blocking = false);
-    bool SendFileChunk(uint32_t requestId, const std::string& filename, 
+    bool SendFileChunk(uint32_t requestId, const std::string& filename,
                        const void* data, size_t dataSize,
                        uint64_t totalSize, uint64_t offset);
     bool SendFileComplete(uint32_t requestId, const std::string& filename, uint64_t totalSize);
     bool SendNoFile(uint32_t requestId, const std::string& filename);
+
+    // Push notification handling
+    bool SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp);
+    bool SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp);
 
     std::string GetInfiniBandIP();
     bool IsConnected() const { return connected_; }

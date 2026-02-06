@@ -318,23 +318,23 @@ void ZmqBroker::MessageLoopThread() {
                 // Check if this is a file request (structured binary message)
                 if (request.size() >= sizeof(ZmqFileRequest)) {
                     ZmqFileRequest* fileReq = static_cast<ZmqFileRequest*>(request.data());
-                    
-                    if (fileReq->magic == USD_FILE_MAGIC && 
+
+                    if (fileReq->magic == USD_FILE_MAGIC &&
                         (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE) ||
                          fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES))) {
-                        
+
                         std::cout << "[Rank 0 MPI Broker] ";
                         if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
-                            std::cout << "File list request from laptop client " 
+                            std::cout << "File list request from laptop client "
                                       << client_id.substr(0, 8) << "...: "
                                       << "rank " << fileReq->target_rank << std::endl;
                         } else {
-                            std::cout << "File request from laptop client " 
+                            std::cout << "File request from laptop client "
                                       << client_id.substr(0, 8) << "...: "
                                       << fileReq->filename << " (rank " << fileReq->target_rank << ")"
                                       << std::endl;
                         }
-                        
+
                         // Store client identity for response routing
                         std::string request_key = std::to_string(fileReq->request_id);
                         client_map_[request_key] = client_id;
@@ -542,7 +542,7 @@ void ZmqBroker::MessageLoopThread() {
                         continue;
                     }
                 }
-                
+
                 // Handle simple string requests (legacy worker list query)
                 std::string message(static_cast<const char*>(request.data()), request.size());
                 std::cout << "[Rank 0 MPI Broker] Laptop requested: " << message << std::endl;
@@ -560,7 +560,7 @@ void ZmqBroker::MessageLoopThread() {
 
                 std::string reply = response.str();
                 std::cout << "[Rank 0 MPI Broker] Sending worker list to laptop: " << reply << std::endl;
-                
+
                 client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
                 client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
                 client_router_->send(zmq::message_t(reply.data(), reply.size()), zmq::send_flags::none);
@@ -572,65 +572,87 @@ void ZmqBroker::MessageLoopThread() {
                 std::vector<uint8_t> data;
 
                 if (ReceiveFromWorker(workerId, data)) {
+                    // Check if this is a notification message (NOTIFY_FILE_UPDATE or NOTIFY_COMMIT_COMPLETE)
+                    if (data.size() >= sizeof(ZmqFileNotification)) {
+                        ZmqFileNotification* notification = reinterpret_cast<ZmqFileNotification*>(data.data());
+
+                        if (notification->magic == USD_FILE_MAGIC &&
+                            (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE) ||
+                             notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE))) {
+
+                            std::string notif_type = (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE))
+                                ? "FILE_UPDATE" : "COMMIT_COMPLETE";
+
+                            std::cout << "[Rank 0 MPI Broker] Received " << notif_type
+                                      << " notification from rank " << notification->source_rank
+                                      << ": " << notification->filename << std::endl;
+
+                            // Forward notification to all connected laptop clients
+                            ForwardNotificationToClient(*notification);
+
+                            continue;
+                        }
+                    }
+
                     // Check if this is a file response (file chunk, completion, or error)
                     // Use smaller struct size since ZmqFileComplete (280) < ZmqFileChunk (292)
                     if (data.size() >= sizeof(ZmqFileComplete)) {
                         ZmqFileChunk* chunk = reinterpret_cast<ZmqFileChunk*>(data.data());
-                        
-                        if (chunk->magic == USD_FILE_MAGIC && 
+
+                        if (chunk->magic == USD_FILE_MAGIC &&
                             (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK) ||
                              chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE) ||
                              chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE) ||
                              chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_ERROR))) {
-                            
+
                             // Find client identity using request_id
                             std::string request_key = std::to_string(chunk->request_id);
                             auto client_it = client_map_.find(request_key);
-                            
+
                             if (client_it == client_map_.end()) {
                                 std::cerr << "[Rank 0 MPI Broker] WARNING: No client found for request "
                                           << chunk->request_id << std::endl;
                                 continue;
                             }
-                            
+
                             std::string client_id = client_it->second;
-                            
+
                             // Log what we're forwarding
                             if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK)) {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding file chunk from rank " 
-                                          << chunk->source_rank << " to client: " << chunk->filename 
-                                          << " (" << chunk->chunk_size << " bytes at offset " 
+                                std::cout << "[Rank 0 MPI Broker] Forwarding file chunk from rank "
+                                          << chunk->source_rank << " to client: " << chunk->filename
+                                          << " (" << chunk->chunk_size << " bytes at offset "
                                           << chunk->chunk_offset << "/" << chunk->file_size << ")" << std::endl;
                             } else if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE)) {
                                 ZmqFileComplete* complete = reinterpret_cast<ZmqFileComplete*>(data.data());
-                                std::cout << "[Rank 0 MPI Broker] Forwarding file completion from rank " 
-                                          << complete->source_rank << " to client: " << complete->filename 
+                                std::cout << "[Rank 0 MPI Broker] Forwarding file completion from rank "
+                                          << complete->source_rank << " to client: " << complete->filename
                                           << " (" << complete->total_size << " bytes total)" << std::endl;
-                                
+
                                 // Clean up client mapping after file completion
                                 client_map_.erase(request_key);
                             } else if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE)) {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding 'file not found' from rank " 
+                                std::cout << "[Rank 0 MPI Broker] Forwarding 'file not found' from rank "
                                           << chunk->source_rank << " to client: " << chunk->filename << std::endl;
                                 client_map_.erase(request_key);
                             } else {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding error from rank " 
+                                std::cout << "[Rank 0 MPI Broker] Forwarding error from rank "
                                           << chunk->source_rank << " to client" << std::endl;
                                 client_map_.erase(request_key);
                             }
-                            
+
                             // Forward to laptop client via CLIENT ROUTER
                             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
                             client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
                             client_router_->send(zmq::message_t(data.data(), data.size()), zmq::send_flags::none);
-                            
+
                             continue;
                         }
                     }
-                    
+
                     // Handle other worker messages (READY for late-joining workers like rank 0)
                     std::string message(data.begin(), data.end());
-                    
+
                     if (message.find("READY") == 0) {
                         // Parse: "READY|rank|hostname|ip"
                         std::stringstream ss(message);
@@ -639,9 +661,9 @@ void ZmqBroker::MessageLoopThread() {
                         std::getline(ss, rank_str, '|');
                         std::getline(ss, hostname, '|');
                         std::getline(ss, ip, '|');
-                        
+
                         int rank = std::stoi(rank_str);
-                        
+
                         // Check if worker already registered
                         bool already_registered = false;
                         for (const auto& w : workers_) {
@@ -650,7 +672,7 @@ void ZmqBroker::MessageLoopThread() {
                                 break;
                             }
                         }
-                        
+
                         if (!already_registered) {
                             WorkerInfo worker;
                             worker.identity = workerId;
@@ -658,21 +680,21 @@ void ZmqBroker::MessageLoopThread() {
                             worker.hostname = hostname;
                             worker.ib_address = ip;
                             worker.ready = true;
-                            
+
                             workers_.push_back(worker);
                             worker_map_[worker.identity] = worker.rank;
-                            
+
                             std::cout << "[Rank 0 MPI Broker THREAD] Late-joining worker rank " << worker.rank
                                       << " connected from " << worker.hostname
                                       << " (" << worker.ib_address << ") - Total workers: "
                                       << workers_.size() << std::endl;
-                            
+
                             // Send ACK
                             router_->send(zmq::buffer(workerId), zmq::send_flags::sndmore);
                             router_->send(zmq::message_t(), zmq::send_flags::sndmore);
                             router_->send(zmq::message_t("ACK", 3), zmq::send_flags::none);
                         } else {
-                            std::cout << "[Rank 0 MPI Broker THREAD] Worker rank " << rank 
+                            std::cout << "[Rank 0 MPI Broker THREAD] Worker rank " << rank
                                       << " already registered, ignoring duplicate READY" << std::endl;
                         }
                     } else {
@@ -681,7 +703,7 @@ void ZmqBroker::MessageLoopThread() {
                 }
             }
         }
-        
+
         std::cout << "[Rank 0 MPI Broker THREAD] Message loop thread stopped cleanly" << std::endl;
 
     } catch (const zmq::error_t& e) {
@@ -691,18 +713,18 @@ void ZmqBroker::MessageLoopThread() {
 
 void ZmqBroker::SSHReminderThread() {
     std::cout << "[Rank 0 SSH REMINDER] Thread started - will print SSH command every 60 seconds" << std::endl;
-    
+
     int reminder_count = 0;
     while (ssh_reminder_active_) {
         // Wait 60 seconds (check every second to allow fast shutdown)
         for (int i = 0; i < 60 && ssh_reminder_active_; ++i) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        
+
         if (!ssh_reminder_active_) break;
-        
+
         reminder_count++;
-        
+
         // Print the SSH tunnel command
         std::cout << std::endl;
         std::cout << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
@@ -718,7 +740,7 @@ void ZmqBroker::SSHReminderThread() {
         std::cout << "          python3 usd_stream_client.py --discover 0 1 2 3 --download-all" << std::endl;
         std::cout << std::endl;
     }
-    
+
     std::cout << "[Rank 0 SSH REMINDER] Thread stopped" << std::endl;
 }
 
@@ -745,7 +767,7 @@ bool ZmqBroker::SendToClient(const std::string& clientId, const void* data, size
         zmq::message_t identity(clientId.data(), clientId.size());
         zmq::message_t empty;
         zmq::message_t payload(data, size);
-        
+
         client_router_->send(identity, zmq::send_flags::sndmore);
         client_router_->send(empty, zmq::send_flags::sndmore);
         client_router_->send(payload, zmq::send_flags::none);
@@ -815,21 +837,21 @@ bool ZmqBroker::ReplyToClient(const std::string& reply) {
 void ZmqBroker::Shutdown() {
     if (initialized_) {
         std::cout << "[Rank 0 MPI Broker] Shutting down..." << std::endl;
-        
+
         // Stop SSH reminder thread
         ssh_reminder_active_ = false;
         if (ssh_reminder_thread_.joinable()) {
             ssh_reminder_thread_.join();
             std::cout << "[Rank 0 MPI Broker] SSH reminder thread stopped" << std::endl;
         }
-        
+
         // Stop message loop thread
         message_loop_active_ = false;
         if (message_loop_thread_.joinable()) {
             message_loop_thread_.join();
             std::cout << "[Rank 0 MPI Broker] Message loop thread stopped" << std::endl;
         }
-        
+
         router_->close();
         client_router_->close();
         context_->close();
@@ -871,7 +893,7 @@ bool ZmqWorker::Connect() {
     if (connected_) return true;
 
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         // Get broker address via MPI broadcast
         std::string rank0_address = ResolveRank0Address();
@@ -929,7 +951,7 @@ bool ZmqWorker::Connect() {
 
 bool ZmqWorker::ReceiveTask(std::vector<uint8_t>& data) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         zmq::message_t empty, payload;
 
@@ -948,7 +970,7 @@ bool ZmqWorker::ReceiveTask(std::vector<uint8_t>& data) {
 
 bool ZmqWorker::SendResult(const void* data, size_t size) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         zmq::message_t empty;
         zmq::message_t payload(data, size);
@@ -965,7 +987,7 @@ bool ZmqWorker::SendResult(const void* data, size_t size) {
 
 void ZmqWorker::Disconnect() {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     if (connected_) {
         std::cout << "[Worker Rank " << rank_ << "] Disconnecting..." << std::endl;
         dealer_->close();
@@ -980,41 +1002,41 @@ void ZmqWorker::Disconnect() {
 
 bool ZmqWorker::CheckForFileRequest(ZmqFileRequest& request, bool blocking) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         zmq::message_t empty, payload;
-        
+
         auto flags = blocking ? zmq::recv_flags::none : zmq::recv_flags::dontwait;
-        
+
         auto result = dealer_->recv(empty, flags);
         if (!result) {
             return false;  // No message available
         }
-        
+
         // DEBUG: Message received
         std::cout << "[DEBUG Worker Rank " << rank_ << "] Received message on DEALER socket" << std::endl;
-        
+
         result = dealer_->recv(payload, zmq::recv_flags::none);
         if (!result || payload.size() < sizeof(ZmqFileRequest)) {
-            std::cerr << "[Worker Rank " << rank_ << "] Invalid payload size: " << payload.size() 
+            std::cerr << "[Worker Rank " << rank_ << "] Invalid payload size: " << payload.size()
                       << " (expected at least " << sizeof(ZmqFileRequest) << ")" << std::endl;
             return false;
         }
-        
+
         memcpy(&request, payload.data(), sizeof(ZmqFileRequest));
-        
+
         // Validate message
         if (request.magic != USD_FILE_MAGIC) {
-            std::cerr << "[Worker Rank " << rank_ << "] Invalid file request magic: 0x" 
-                      << std::hex << request.magic << " (expected 0x" << USD_FILE_MAGIC << ")" 
+            std::cerr << "[Worker Rank " << rank_ << "] Invalid file request magic: 0x"
+                      << std::hex << request.magic << " (expected 0x" << USD_FILE_MAGIC << ")"
                       << std::dec << std::endl;
             return false;
         }
-        
+
         // DEBUG: Valid request received
-        std::cout << "[DEBUG Worker Rank " << rank_ << "] Valid file request: " 
+        std::cout << "[DEBUG Worker Rank " << rank_ << "] Valid file request: "
                   << request.filename << " (req_id=" << request.request_id << ")" << std::endl;
-        
+
         return true;
     } catch (const zmq::error_t& e) {
         if (e.num() != EAGAIN) {
@@ -1028,7 +1050,7 @@ bool ZmqWorker::SendFileChunk(uint32_t requestId, const std::string& filename,
                                const void* data, size_t dataSize,
                                uint64_t totalSize, uint64_t offset) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         // Prepare header
         ZmqFileChunk header;
@@ -1041,23 +1063,23 @@ bool ZmqWorker::SendFileChunk(uint32_t requestId, const std::string& filename,
         header.file_size = totalSize;
         header.chunk_offset = offset;
         header.chunk_size = static_cast<uint32_t>(dataSize);
-        
+
         // Allocate message: header + data
         size_t totalMsgSize = sizeof(header) + dataSize;
         zmq::message_t message(totalMsgSize);
-        
+
         // Copy header and data
         memcpy(message.data(), &header, sizeof(header));
         memcpy(static_cast<uint8_t*>(message.data()) + sizeof(header), data, dataSize);
-        
+
         // Send: empty delimiter + payload
         zmq::message_t empty;
         dealer_->send(empty, zmq::send_flags::sndmore);
         dealer_->send(message, zmq::send_flags::none);
-        
-        std::cout << "[Worker Rank " << rank_ << "] Sent file chunk: " << filename 
+
+        std::cout << "[Worker Rank " << rank_ << "] Sent file chunk: " << filename
                   << " [" << offset << "-" << (offset + dataSize) << " / " << totalSize << "]" << std::endl;
-        
+
         return true;
     } catch (const zmq::error_t& e) {
         std::cerr << "[Worker Rank " << rank_ << "] SendFileChunk error: " << e.what() << std::endl;
@@ -1067,7 +1089,7 @@ bool ZmqWorker::SendFileChunk(uint32_t requestId, const std::string& filename,
 
 bool ZmqWorker::SendFileComplete(uint32_t requestId, const std::string& filename, uint64_t totalSize) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         ZmqFileComplete msg;
         msg.magic = USD_FILE_MAGIC;
@@ -1077,16 +1099,16 @@ bool ZmqWorker::SendFileComplete(uint32_t requestId, const std::string& filename
         strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
         msg.filename[sizeof(msg.filename) - 1] = '\0';
         msg.total_size = totalSize;
-        
+
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));
-        
+
         dealer_->send(empty, zmq::send_flags::sndmore);
         dealer_->send(payload, zmq::send_flags::none);
-        
-        std::cout << "[Worker Rank " << rank_ << "] Sent file complete: " << filename 
+
+        std::cout << "[Worker Rank " << rank_ << "] Sent file complete: " << filename
                   << " (" << (totalSize / 1024.0) << " KB)" << std::endl;
-        
+
         return true;
     } catch (const zmq::error_t& e) {
         std::cerr << "[Worker Rank " << rank_ << "] SendFileComplete error: " << e.what() << std::endl;
@@ -1096,7 +1118,7 @@ bool ZmqWorker::SendFileComplete(uint32_t requestId, const std::string& filename
 
 bool ZmqWorker::SendNoFile(uint32_t requestId, const std::string& filename) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
-    
+
     try {
         ZmqFileComplete msg;  // Reuse struct, set size to 0
         msg.magic = USD_FILE_MAGIC;
@@ -1106,20 +1128,106 @@ bool ZmqWorker::SendNoFile(uint32_t requestId, const std::string& filename) {
         strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
         msg.filename[sizeof(msg.filename) - 1] = '\0';
         msg.total_size = 0;
-        
+
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));
-        
+
         dealer_->send(empty, zmq::send_flags::sndmore);
         dealer_->send(payload, zmq::send_flags::none);
-        
+
         std::cout << "[Worker Rank " << rank_ << "] File not found: " << filename << std::endl;
-        
+
         return true;
     } catch (const zmq::error_t& e) {
         std::cerr << "[Worker Rank " << rank_ << "] SendNoFile error: " << e.what() << std::endl;
         return false;
     }
+}
+
+// ============================================================================
+// Push Notification Methods
+// ============================================================================
+
+bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp) {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+
+    try {
+        ZmqFileNotification msg;
+        msg.magic = USD_FILE_MAGIC;
+        msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE);
+        msg.source_rank = rank_;
+        strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
+        msg.filename[sizeof(msg.filename) - 1] = '\0';
+        msg.file_size = fileSize;
+        msg.timestamp = timestamp;
+
+        zmq::message_t empty;
+        zmq::message_t payload(&msg, sizeof(msg));
+
+        dealer_->send(empty, zmq::send_flags::sndmore);
+        dealer_->send(payload, zmq::send_flags::none);
+
+        std::cout << "[Worker Rank " << rank_ << "] Sent file notification: " << filename
+                  << " (" << fileSize << " bytes)" << std::endl;
+
+        return true;
+    } catch (const zmq::error_t& e) {
+        std::cerr << "[Worker Rank " << rank_ << "] SendFileNotification error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp) {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+
+    try {
+        ZmqFileNotification msg;
+        msg.magic = USD_FILE_MAGIC;
+        msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE);
+        msg.source_rank = rank_;
+        strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
+        msg.filename[sizeof(msg.filename) - 1] = '\0';
+        msg.file_size = fileSize;
+        msg.timestamp = timestamp;
+
+        zmq::message_t empty;
+        zmq::message_t payload(&msg, sizeof(msg));
+
+        dealer_->send(empty, zmq::send_flags::sndmore);
+        dealer_->send(payload, zmq::send_flags::none);
+
+        std::cout << "[Worker Rank " << rank_ << "] Sent commit notification: " << filename
+                  << " (" << fileSize << " bytes)" << std::endl;
+
+        return true;
+    } catch (const zmq::error_t& e) {
+        std::cerr << "[Worker Rank " << rank_ << "] SendCommitNotification error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ZmqBroker::ForwardNotificationToClient(const ZmqFileNotification& notification) {
+    // Forward notification to all connected laptop clients
+    // For now, broadcast to all clients (could be made more selective)
+    bool success = true;
+
+    for (const auto& client_pair : client_map_) {
+        const std::string& client_id = client_pair.second;
+
+        try {
+            client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(&notification, sizeof(notification)), zmq::send_flags::none);
+
+            std::cout << "[Rank 0 MPI Broker] Forwarded notification to client: "
+                      << notification.filename << " (rank " << notification.source_rank << ")" << std::endl;
+        } catch (const zmq::error_t& e) {
+            std::cerr << "[Rank 0 MPI Broker] ForwardNotificationToClient error: " << e.what() << std::endl;
+            success = false;
+        }
+    }
+
+    return success;
 }
 
 } // namespace usd_bridge

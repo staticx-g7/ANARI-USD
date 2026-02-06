@@ -337,6 +337,10 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     std::thread fileServingThread_;
     std::atomic<bool> fileServingActive_{false};
     void FileServingThreadLoop();
+
+    // Push notification support
+    uint32_t frameCounter_{0};
+    void NotifyFrameReady(double timestep);
   #endif
 
 };
