@@ -837,6 +837,15 @@ void UsdDevice::ServeFileRequests()
       jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
       bool first = true;
       for (const auto& filename : files) {
+        // Filter out .usda.usda files (duplicate extensions)
+        if (filename.find(".usda.usda") != std::string::npos) {
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+                       ANARI_STATUS_NO_ERROR,
+                       "[DEBUG] Rank %d: Skipping duplicate extension file: %s",
+                       mpiRank, filename.c_str());
+          continue;
+        }
+        
         const auto* entry = g_rankMemoryStore->GetFile(filename);
         if (!first) jsonResponse << ",";
         jsonResponse << "{\"name\":\"" << filename << "\","

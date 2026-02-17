@@ -463,7 +463,21 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename = this->SceneFileName;
     } else {
       // For other stages, construct filename from SessionDirectory + stageName
-      filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+      // Check if stageName already ends with .usd or .usda extension
+      if (stageName.length() >= 4) {
+        std::string ext4 = stageName.substr(stageName.length() - 4);
+        std::string ext5 = stageName.substr(stageName.length() - 5);
+        if (ext4 == ".usd" || ext5 == ".usda") {
+          // Already has extension, don't add another
+          filename = stageName;
+        } else {
+          // Add appropriate extension
+          filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+        }
+      } else {
+        // Too short to have extension, add it
+        filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+      }
     }
     
     g_rankMemoryStore->StoreFile(
@@ -686,7 +700,7 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
       // Track memory if not saving
       if(!this->EnableSaving)
       {
-        std::string stageName = cacheEntry->Name.GetString() + fullNamePostfix;
+        std::string stageName = folder + cacheEntry->Name.GetString() + fullNamePostfix;
         const_cast<UsdBridgeUsdWriter*>(this)->TrackStageMemory(stageName, primClipStage);
       }
     }

@@ -23,6 +23,34 @@ namespace usd_bridge {
 // Helper Functions
 // ============================================================================
 
+// Simple JSON array concatenation helper
+static std::string ExtractJsonArray(const std::string& json) {
+    // Find the opening bracket of the files array
+    size_t start = json.find("\"files\":[");
+    if (start == std::string::npos) {
+        return "";
+    }
+    start = json.find('[', start);
+    if (start == std::string::npos) {
+        return "";
+    }
+    
+    // Find matching closing bracket
+    int bracket_count = 1;
+    size_t end = start + 1;
+    for (; end < json.size() && bracket_count > 0; ++end) {
+        if (json[end] == '[') bracket_count++;
+        else if (json[end] == ']') bracket_count--;
+    }
+    
+    if (bracket_count != 0) {
+        return "";
+    }
+    
+    // Extract array content (without the outer brackets)
+    return json.substr(start + 1, end - start - 2);
+}
+
 std::string GetInfiniBandIPImpl() {
     struct ifaddrs *ifaddr, *ifa;
     std::string ib_ip;
@@ -339,7 +367,84 @@ void ZmqBroker::MessageLoopThread() {
                         std::string request_key = std::to_string(fileReq->request_id);
                         client_map_[request_key] = client_id;
 
+                        // Track broadcast file list requests for aggregation
+                        if (fileReq->target_rank == -1 &&
+                            fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
+                            // Initialize aggregation for this request
+                            std::cout << "[Rank 0 MPI Broker] Setting up aggregation for broadcast file list request ID "
+                                      << fileReq->request_id << std::endl;
+                        }
+
                         // Route request to appropriate worker
+                        if (fileReq->target_rank == -1)
+                        {
+                            // BROADCAST: Send request to ALL workers (ranks 0-15)
+                            std::cout << "Rank 0 (MPI Broker): Broadcasting file request to ALL workers (rank -1) - Processing rank 0 locally" << std::endl;
+                            
+                            // Forward request to workers 1-15 via ZMQ
+                            for (const auto& worker : workers_)
+                            {
+                                if (worker.rank == 0) continue; // Skip rank 0 (handled locally)
+                                router_->send(zmq::buffer(worker.identity), zmq::send_flags::sndmore);
+                                router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                router_->send(zmq::message_t(request.data(), request.size()), zmq::send_flags::none);
+                            }
+                            
+                            // Process rank 0's file list locally (immediate response)
+                            if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES) && g_rankMemoryStore) {
+                                std::cout << "[Rank 0 MPI Broker] Processing rank 0 file list for broadcast request ID " << fileReq->request_id << std::endl;
+                                
+                                // Get rank 0's files
+                                auto files = g_rankMemoryStore[0].ListFiles();
+                                
+                                // Build JSON response
+                                std::stringstream jsonResponse;
+                                jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
+                                bool first = true;
+                                for (const auto& filename : files) {
+                                    // Filter out .usda.usda files (duplicate extensions)
+                                    if (filename.find(".usda.usda") != std::string::npos) {
+                                        std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file: " << filename << std::endl;
+                                        continue;
+                                    }
+                                    
+                                    const auto& entry = g_rankMemoryStore[0].GetFile(filename);
+                                    if (!first) jsonResponse << ",";
+                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
+                                    first = false;
+                                }
+                                jsonResponse << "]}";
+                                
+                                std::string jsonStr = jsonResponse.str();
+                                
+                                // Send as file chunk response
+                                ZmqFileChunk response;
+                                memset(&response, 0, sizeof(response));
+                                response.magic = USD_FILE_MAGIC;
+                                response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
+                                response.request_id = fileReq->request_id;
+                                response.source_rank = 0;
+                                strncpy(response.filename, "__file_list__.json", sizeof(response.filename) - 1);
+                                response.file_size = jsonStr.size();
+                                response.chunk_offset = 0;
+                                response.chunk_size = jsonStr.size();
+                                
+                                // Allocate combined message
+                                size_t totalSize = sizeof(response) + jsonStr.size();
+                                std::vector<uint8_t> msgData(totalSize);
+                                memcpy(msgData.data(), &response, sizeof(response));
+                                memcpy(msgData.data() + sizeof(response), jsonStr.data(), jsonStr.size());
+                                
+                                // Send to client
+                                client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+                                
+                                std::cout << "[Rank 0 MPI Broker] Sent rank 0 file list (" << files.size() << " files) for broadcast request" << std::endl;
+                            }
+                            continue; // Done with broadcast
+                        }
+                        
                         if (fileReq->target_rank >= 0)
                         {
                             // Special case: Rank 0 file requests are served DIRECTLY by broker from memory
@@ -369,6 +474,12 @@ void ZmqBroker::MessageLoopThread() {
                                         bool first = true;
                                         for (const auto& filename : files)
                                         {
+                                            // Filter out .usda.usda files (duplicate extensions)
+                                            if (filename.find(".usda.usda") != std::string::npos) {
+                                                std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file in direct request: " << filename << std::endl;
+                                                continue;
+                                            }
+                                            
                                             const auto& entry = g_rankMemoryStore[0].GetFile(filename);
                                             if (!first) jsonResponse << ",";
                                             jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
@@ -544,24 +655,24 @@ void ZmqBroker::MessageLoopThread() {
                 }
 
                 // Handle property query requests (binary format)
-                if (request.size() >= sizeof(ZmqPropertyResponse) - 256) {  // Minimum size check
-                    ZmqPropertyResponse* propReq = reinterpret_cast<ZmqPropertyResponse*>(request.data());
+                if (request.size() >= sizeof(ZmqFileRequest) - 256) {  // Minimum size check
+                    ZmqFileRequest* fileReq = reinterpret_cast<ZmqFileRequest*>(request.data());
 
-                    if (propReq->magic == USD_FILE_MAGIC &&
-                        propReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_PROPERTY)) {
+                    if (fileReq->magic == USD_FILE_MAGIC &&
+                        fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_PROPERTY)) {
 
                         std::cout << "[Rank 0 MPI Broker] Property request from laptop: request_id="
-                                  << propReq->request_id << std::endl;
+                                  << fileReq->request_id << std::endl;
 
-                        // Parse property name from string_value
-                        std::string propertyName(propReq->string_value);
+                        // Parse property name from filename field (correct location)
+                        std::string propertyName(fileReq->filename);
 
                         // Get property value
                         ZmqPropertyResponse response;
                         memset(&response, 0, sizeof(response));
                         response.magic = USD_FILE_MAGIC;
                         response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_PROPERTY);
-                        response.request_id = propReq->request_id;
+                        response.request_id = fileReq->request_id;
 
                         int32_t intValue = 0;
                         if (GetPropertyAsInt32(propertyName, intValue)) {
@@ -682,8 +793,16 @@ void ZmqBroker::MessageLoopThread() {
                                           << complete->source_rank << " to client: " << complete->filename
                                           << " (" << complete->total_size << " bytes total)" << std::endl;
 
-                                // Clean up client mapping after file completion
-                                client_map_.erase(request_key);
+                                // For file list responses, track broadcast completion
+                                if (strcmp(complete->filename, "__file_list__.json") == 0) {
+                                    // Log that we're keeping mapping for other workers
+                                    std::cout << "[Rank 0 MPI Broker] Keeping client mapping for broadcast file list request "
+                                              << complete->request_id << " (rank " << complete->source_rank << " responded)" << std::endl;
+                                    // Don't erase - keep for other workers' responses
+                                } else {
+                                    // Normal file: clean up mapping
+                                    client_map_.erase(request_key);
+                                }
                             } else if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE)) {
                                 std::cout << "[Rank 0 MPI Broker] Forwarding 'file not found' from rank "
                                           << chunk->source_rank << " to client: " << chunk->filename << std::endl;
@@ -924,9 +1043,13 @@ bool ZmqBroker::GetPropertyAsInt32(const std::string& propertyName, int32_t& val
             if (worker.rank != 0) count++;
         }
         value = count;
+        std::cout << "[Rank 0 MPI Broker] Property workerCount = " << value 
+                  << " (non-zero workers, total MPI size would be " << (value + 1) << " including rank 0)" << std::endl;
         return true;
     } else if (propertyName == "mpiSize") {
         value = static_cast<int32_t>(workers_.size());
+        std::cout << "[Rank 0 MPI Broker] Property mpiSize = " << value 
+                  << " (total workers including rank 0)" << std::endl;
         return true;
     } else if (propertyName == "mpiRank") {
         // Broker is always rank 0
