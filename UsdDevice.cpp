@@ -362,6 +362,7 @@ void UsdDevice::initializeBridge()
   }
 
   if (mpiAvailable && mpiSize > 1) {
+    // MPI mode with multiple ranks
     if (mpiRank == 0)
     {
       // Initialize broker on rank 0
@@ -386,7 +387,6 @@ void UsdDevice::initializeBridge()
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
           "Rank 0: Broker started. Rank 0 renders AND serves files directly from memory store.");
     }
-
     else {
       // Initialize worker on rank 1-N
       zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
@@ -411,6 +411,49 @@ void UsdDevice::initializeBridge()
                  ANARI_STATUS_NO_ERROR,
                  "Memory store initialized for rank %d", mpiRank);
   }
+  else {
+    // Single MPI rank or non-MPI mode: Start ZMQ broker for local file serving
+    zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+    if (!zmqBroker_->Initialize(0))  // No external workers to wait for
+    {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+          "Failed to initialize ZMQ broker");
+      return;
+    }
+    
+    if (mpiAvailable) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Single-rank MPI ZMQ broker started (rank %d). Files will be served via %s:5556",
+          mpiRank, mpiRank == 0 ? "InfiniBand IP" : "localhost");
+    } else {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Non-MPI ZMQ broker started. Files will be served via localhost:5556. Access via SSH tunnel to port 5556 if remote.");
+    }
+    
+    // Initialize memory store for rank 0
+    InitializeMemoryStore(0);
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Memory store initialized for local file serving");
+  }
+#else
+  // Non-MPI build: Always start ZMQ broker for local file serving
+  zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+  if (!zmqBroker_->Initialize(0))  // No external workers to wait for
+  {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+        "Failed to initialize ZMQ broker");
+    return;
+  }
+  
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "Non-MPI ZMQ broker started. Files will be served via localhost:5556. Access via SSH tunnel to port 5556 if remote.");
+  
+  // Initialize memory store for rank 0
+  InitializeMemoryStore(0);
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+               ANARI_STATUS_NO_ERROR,
+               "Memory store initialized for local file serving");
 #endif
 
 
@@ -774,12 +817,21 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   if (zmqWorker_ && zmqWorker_->IsConnected()) {
     ServeFileRequests();
   }
+#else
+  // Non-MPI mode: Serve requests from the local broker (acting as the sole worker thread equivalent)
+  if (zmqBroker_) {
+    ServeFileRequests();
+  }
 #endif
 }
 
-#ifdef ANARI_USD_ENABLE_MPI
 void UsdDevice::ServeFileRequests()
 {
+#ifdef ANARI_USD_ENABLE_MPI
+  if (mpiAvailable && mpiRank == 0) return; // Rank 0 handles requests directly in ZmqBroker
+  if (!zmqWorker_) return;
+#endif
+
   using namespace usd_bridge;
 
   // DEBUG: Print on first call to show ServeFileRequests is active
@@ -980,7 +1032,6 @@ void UsdDevice::FileServingThreadLoop()
                ANARI_STATUS_NO_ERROR,
                "[THREAD] Rank %d: File serving thread stopped", mpiRank);
 }
-#endif
 
 const char* UsdDevice::makeUniqueName(const char* name)
 {

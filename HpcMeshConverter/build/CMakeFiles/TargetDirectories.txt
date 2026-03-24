@@ -1,0 +1,3 @@
+D:/JSC_Github/jusync/HpcMeshConverter/build/CMakeFiles/HpcMeshConverter.dir
+D:/JSC_Github/jusync/HpcMeshConverter/build/CMakeFiles/ALL_BUILD.dir
+D:/JSC_Github/jusync/HpcMeshConverter/build/CMakeFiles/ZERO_CHECK.dir
