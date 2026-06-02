@@ -325,6 +325,7 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     int mpiRank = 0;
     int mpiSize = 1;
     bool mpiAvailable = false;
+    bool mpiInitializedByUs_{false}; // Track if we initialized MPI in standalone mode
 
     // ZMQ communication
     std::unique_ptr<usd_bridge::ZmqBroker> zmqBroker_;
@@ -344,4 +345,5 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
   #endif
 
 };
+
 
