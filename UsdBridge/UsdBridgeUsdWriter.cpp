@@ -1341,9 +1341,8 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, const Us
 {
   if (!stage) return;
 
-  std::ostringstream oss;
-  stage->GetRootLayer()->Export(oss);
-  std::string content = oss.str();
+  std::string content;
+  stage->GetRootLayer()->ExportToString(&content);
 
   size_t totalSize = content.size();
 
