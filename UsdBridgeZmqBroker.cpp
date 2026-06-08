@@ -178,29 +178,25 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             return false;
         }
 
-        // Check if we're in "MPI but 0 workers" mode (essentially non-MPI mode)
-        bool isSingleRankMode = (expectedWorkers == 0);
+        // Always use InfiniBand IP in MPI mode (even single-rank)
         std::string ib_ip;  // Declare here so it's available in both branches
+        bool isSingleRankMode = (expectedWorkers == 0);
         
+        // Broadcast broker address to all workers via MPI (or just detect IB IP for single-rank)
+        std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
+
+        // Extract just the IP part for binding
+        size_t colon_pos = broadcast_addr.find(':');
+        ib_ip = (colon_pos != std::string::npos)
+            ? broadcast_addr.substr(0, colon_pos)
+            : broadcast_addr;
+
+        // Store broker IP for SSH reminder thread
+        broker_ip_ = ib_ip;
+
         if (isSingleRankMode) {
-            // Single rank mode: use localhost for simpler SSH tunneling
-            ib_ip = "127.0.0.1";
-            broker_ip_ = ib_ip;
-            std::cout << "[Rank 0 MPI Broker] Single-rank mode detected - using localhost IP: " << ib_ip << std::endl;
+            std::cout << "[Rank 0 MPI Broker] Single-rank mode - using IB IP: " << ib_ip << std::endl;
         } else {
-            // Multi-rank MPI mode: use InfiniBand IP
-            // Broadcast broker address to all workers via MPI
-            std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
-
-            // Extract just the IP part for binding
-            size_t colon_pos = broadcast_addr.find(':');
-            ib_ip = (colon_pos != std::string::npos)
-                ? broadcast_addr.substr(0, colon_pos)
-                : broadcast_addr;
-
-            // Store broker IP for SSH reminder thread
-            broker_ip_ = ib_ip;
-
             std::cout << "[Rank 0 MPI Broker] InfiniBand IP detected: " << ib_ip << std::endl;
         }
 #else

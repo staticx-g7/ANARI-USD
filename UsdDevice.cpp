@@ -447,6 +447,23 @@ void UsdDevice::initializeBridge()
                  ANARI_STATUS_NO_ERROR,
                  "Memory store initialized for rank %d", mpiRank);
   }
+  else if (mpiAvailable) {
+    // Single-rank MPI: still use IB IP for broker
+    zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+    if (!zmqBroker_->Initialize(0)) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
+          "Failed to initialize ZMQ broker, continuing without ZMQ");
+      zmqBroker_.reset();
+    }
+    else {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Single-rank MPI ZMQ broker started (rank %d, using IB IP)", mpiRank);
+    }
+    InitializeMemoryStore(mpiRank);
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Memory store initialized for rank %d", mpiRank);
+  }
   else {
     zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
     if (!zmqBroker_->Initialize(0)) {
@@ -455,13 +472,8 @@ void UsdDevice::initializeBridge()
       zmqBroker_.reset();
     }
     else {
-      if (mpiAvailable) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-            "Single-rank MPI ZMQ broker started (rank %d)", mpiRank);
-      } else {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-            "Non-MPI ZMQ broker started");
-      }
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Non-MPI ZMQ broker started");
     }
     InitializeMemoryStore(0);
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
