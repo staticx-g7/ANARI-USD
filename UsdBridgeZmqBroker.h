@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -146,7 +147,8 @@ private:
 
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
-    std::map<std::string, std::string> client_map_; // Track connected laptop clients
+    std::map<std::string, std::string> client_map_; // request_id -> client_id for response routing
+    std::set<std::string> client_ids_;              // Unique client identities for notifications
 
     // Thread management
     std::thread message_loop_thread_;

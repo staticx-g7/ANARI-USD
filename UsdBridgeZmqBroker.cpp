@@ -477,6 +477,7 @@ void ZmqBroker::MessageLoopThread() {
                         // Store client identity for response routing
                         std::string request_key = std::to_string(fileReq->request_id);
                         client_map_[request_key] = client_id;
+                        client_ids_.insert(client_id);
                         
                         // Get rank 0's files
                         // NOTE: g_rankMemoryStore is a single pointer, not an array
@@ -571,6 +572,7 @@ void ZmqBroker::MessageLoopThread() {
                         // Store client identity for response routing
                         std::string request_key = std::to_string(fileReq->request_id);
                         client_map_[request_key] = client_id;
+                        client_ids_.insert(client_id);
 
                         // Track broadcast file list requests for aggregation
                         if (fileReq->target_rank == -1 &&
@@ -1673,12 +1675,10 @@ bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fil
 }
 
 bool ZmqBroker::ForwardNotificationToClient(const ZmqFileNotification& notification) {
-    // Forward notification to all connected laptop clients
-    // For now, broadcast to all clients (could be made more selective)
+    // Forward notification to all connected laptop clients (unique identities only)
     bool success = true;
 
-    for (const auto& client_pair : client_map_) {
-        const std::string& client_id = client_pair.second;
+    for (const auto& client_id : client_ids_) {
 
         try {
             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
