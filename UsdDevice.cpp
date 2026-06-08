@@ -783,7 +783,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   // Send commit notification to laptop client
   #ifdef ANARI_USD_ENABLE_MPI
   if (zmqWorker_ && zmqWorker_->IsConnected() && frame) {
-    const char* frameFilename = "scene.usda";
+    const char* frameFilename = "FullScene.usda";
     auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
     uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
