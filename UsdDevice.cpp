@@ -780,15 +780,32 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     frameObjPtr->renderFrame(this);
   }
 
-  // Send commit notification to laptop client
+  // Send commit notification to laptop client (only from rank 0 to avoid duplicates)
   #ifdef ANARI_USD_ENABLE_MPI
   if (zmqWorker_ && zmqWorker_->IsConnected() && frame) {
-    const char* frameFilename = "FullScene.usda";
-    auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
-    uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-    zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp);
+
+    // Only rank 0 sends the commit notification to avoid 16 duplicates
+    if (mpiRank == 0) {
+      const char* frameFilename = "FullScene.usda";
+      auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
+      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
+      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp);
+    }
+
+    // Also notify about individual clip files that changed on this rank
+    if (g_rankMemoryStore) {
+      auto clipFiles = g_rankMemoryStore->ListFiles();
+      for (const auto& name : clipFiles) {
+        if (name.find("clips/") == 0) {
+          auto* entry = g_rankMemoryStore->GetFile(name);
+          if (entry) {
+            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp);
+          }
+        }
+      }
+    }
   }
 
   // Serve file requests from laptop client
