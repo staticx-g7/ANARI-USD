@@ -13,6 +13,7 @@
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
 
 #define PROCESS_PREFIX
 
@@ -1434,21 +1435,30 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(!stage)
     return;
 
-  // Export the resolved stage (includes all runtime attribute values, time samples, etc.)
-  // stage->Export() captures what ParaView renders, not just authored layer data
+  // Export the stage to a temp file then read back — captures all authored + time-sampled data
+  // UsdStage::Export() takes a filename, not a string pointer
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
 
-  if(stage->Export(&fullUsdContent))
+  std::string tmpPath = "/tmp/usd_export_" + std::to_string(std::hash<std::string>{}(stageName)) + ".usda";
+  if(stage->Export(tmpPath, true))
   {
-    estimatedBytes = fullUsdContent.size();
+    std::ifstream ifs(tmpPath, std::ios::binary);
+    if(ifs)
+    {
+      fullUsdContent.assign((std::istreambuf_iterator<char>(ifs)),
+                            std::istreambuf_iterator<char>());
+      estimatedBytes = fullUsdContent.size();
+      ifs.close();
+    }
+    std::remove(tmpPath.c_str());
   }
 
   // Store in memory file store for ZMQ streaming
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
     // Determine the filename based on stage name
-    // NOTE: stage->Export() produces ASCII, so always use .usda extension
+    // NOTE: Export produces ASCII .usda, so always use .usda extension
     std::string filename;
     if(stageName == "FullScene") {
       filename = this->SceneFileName;
@@ -1528,17 +1538,26 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       size_t estimatedBytes = 0;
       std::string fullUsdContent;
 
-      // Export the resolved stage (includes all runtime attribute values)
-      if(info.stage->Export(&fullUsdContent))
+      // Export stage to temp file then read back — captures all authored + time-sampled data
+      std::string tmpPath = "/tmp/usd_recalc_" + std::to_string(std::hash<std::string>{}(info.name)) + ".usda";
+      if(info.stage->Export(tmpPath, true))
       {
-        estimatedBytes = fullUsdContent.size();
+        std::ifstream ifs(tmpPath, std::ios::binary);
+        if(ifs)
+        {
+          fullUsdContent.assign((std::istreambuf_iterator<char>(ifs)),
+                                std::istreambuf_iterator<char>());
+          estimatedBytes = fullUsdContent.size();
+          ifs.close();
+        }
+        std::remove(tmpPath.c_str());
       }
 
       // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
 
       // Re-store updated file content to memory store
-      // NOTE: stage->Export() produces ASCII, so always use .usda extension
+      // NOTE: Export produces ASCII, so always use .usda extension
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
         std::string filename;
