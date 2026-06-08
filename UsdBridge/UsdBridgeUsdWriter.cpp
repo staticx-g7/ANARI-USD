@@ -339,16 +339,20 @@ bool UsdBridgeUsdWriter::InitializeSession()
 
   bool valid = true;
 
-  valid = CreateDirectories();
-
-  valid = valid && VolumeWriter->Initialize(this->LogObject);
+  // Only create directories if we're actually saving to disk
+  if(this->EnableSaving)
+  {
+    valid = CreateDirectories();
 
 #ifdef CUSTOM_PBR_MDL
-  if(Settings.EnableMdlShader)
-  {
-    valid = valid && CreateMdlFiles();
-  }
+    if(Settings.EnableMdlShader)
+    {
+      valid = valid && CreateMdlFiles();
+    }
 #endif
+  }
+
+  valid = valid && VolumeWriter->Initialize(this->LogObject);
 
   return valid;
 }

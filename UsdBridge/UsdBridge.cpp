@@ -280,11 +280,11 @@ bool HasNullHandles(const HandleType* handles, uint64_t numHandles)
   return false;
 }
 
-UsdBridge::UsdBridge(const UsdBridgeSettings& settings) 
+UsdBridge::UsdBridge(const UsdBridgeSettings& settings)
   : Internals(new UsdBridgeInternals(settings))
+  , EnableSaving(false)
   , SessionValid(false)
 {
-  SetEnableSaving(true);
 }
 
 void UsdBridge::SetExternalSceneStage(SceneStagePtr sceneStage)

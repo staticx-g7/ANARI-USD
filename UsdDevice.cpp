@@ -360,9 +360,16 @@ void UsdDevice::initializeBridge()
 
   if (internals->outputLocation.empty())
   {
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT,
-      "Usd Device parameter 'usd::serialize.location' not set, defaulting to './'");
-    internals->outputLocation = "./";
+    if(internals->enableSaving)
+    {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT,
+        "Usd Device parameter 'usd::serialize.location' not set, defaulting to './'");
+      internals->outputLocation = "./";
+    }
+    else
+    {
+      internals->outputLocation = "memory://";
+    }
   }
 
   if(internals->mpiController)
