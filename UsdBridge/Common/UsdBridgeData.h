@@ -367,7 +367,7 @@ struct UsdBridgeSettings
   const char* HostName = nullptr;           // Name of the remote server
   const char* OutputPath = nullptr;         // Directory for output (on server if HostName is not empty)
   bool CreateNewSession = true;             // Find a new session directory on creation of the bridge, or re-use the last opened one (leave contents intact).
-  bool BinaryOutput = false;                // Select usda or usd output.
+   bool BinaryOutput = true;                // Select usda or usd output.
 
   // USD conversion options
   bool EnablePreviewSurfaceShader = true;   // Output the preview surface shader for materials

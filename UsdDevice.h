@@ -43,7 +43,7 @@ struct UsdDeviceData
   UsdSharedString* hostName = nullptr;
   UsdSharedString* outputPath = nullptr;
   bool createNewSession = false;
-  bool outputBinary = false;
+  bool outputBinary = true;
   bool writeAtCommit = false;
 
   double timeStep = 0.0;
