@@ -1341,10 +1341,7 @@ void UsdDevice::ServeFileRequests()
       std::stringstream jsonResponse;
       jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
       bool first = true;
-      for (const auto& filename : files) {
-        if (filename.size() > 6 && filename.substr(filename.size() - 6) == ".usda") {
-          continue;
-        }
+       for (const auto& filename : files) {
         if (!first) jsonResponse << ",";
         jsonResponse << "\"" << filename << "\"";
         first = false;
