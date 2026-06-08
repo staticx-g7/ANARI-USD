@@ -1381,7 +1381,7 @@ void UsdDevice::ServeFileRequests()
     while (offset < totalSize) {
       size_t sendSize = std::min(chunkSize, totalSize - offset);
       zmqWorker_->SendFileChunk(request.request_id, request.filename,
-          fileEntry->data.data() + offset, sendSize, offset, totalSize);
+          fileEntry->data.data() + offset, sendSize, totalSize, offset);
       offset += sendSize;
     }
 
