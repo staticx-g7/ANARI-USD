@@ -6,6 +6,7 @@
 #include "UsdDataArray.h"
 #include "UsdDevice.h"
 #include "UsdBridgeUtils.h"
+#include "UsdBridgeMemoryStore.h"
 #include "anari/frontend/type_utility.h"
 
 #include <cmath>
@@ -1377,6 +1378,10 @@ bool UsdGeometry::commitTemplate(UsdDevice* device)
   {
     isNew = usdBridge->CreateGeometry(debugName, usdHandle, geomData);
   }
+
+  // Force update in memory-only mode: Catalyst may update geometry data in-place
+  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
+  if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
   {
