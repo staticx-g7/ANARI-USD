@@ -1343,7 +1343,16 @@ void UsdDevice::ServeFileRequests()
       bool first = true;
        for (const auto& filename : files) {
         if (!first) jsonResponse << ",";
-        jsonResponse << "\"" << filename << "\"";
+        uint64_t fsize = 0;
+        const char* mime = "application/octet-stream";
+        if (g_rankMemoryStore) {
+          auto* entry = g_rankMemoryStore->GetFile(filename);
+          if (entry) {
+            fsize = entry->size();
+            mime = entry->mime_type.c_str();
+          }
+        }
+        jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << fsize << ",\"mime\":\"" << mime << "\"}";
         first = false;
       }
       jsonResponse << "]}";
