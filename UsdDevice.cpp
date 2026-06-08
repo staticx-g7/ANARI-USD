@@ -1342,6 +1342,7 @@ void UsdDevice::ServeFileRequests()
       jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
       bool first = true;
        for (const auto& filename : files) {
+        if (filename.find(".usda.usda") != std::string::npos) continue;
         if (!first) jsonResponse << ",";
         uint64_t fsize = 0;
         const char* mime = "application/octet-stream";
@@ -1358,7 +1359,7 @@ void UsdDevice::ServeFileRequests()
       jsonResponse << "]}";
       std::string jsonStr = jsonResponse.str();
       zmqWorker_->SendFileChunk(request.request_id, "__file_list__.json",
-          jsonStr.data(), jsonStr.size(), 0, jsonStr.size());
+          jsonStr.data(), jsonStr.size(), jsonStr.size(), 0);
       zmqWorker_->SendFileComplete(request.request_id, "__file_list__.json", jsonStr.size());
       continue;
     }
