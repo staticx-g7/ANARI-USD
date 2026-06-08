@@ -13,7 +13,6 @@
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
-#include <fstream>
 
 #define PROCESS_PREFIX
 
@@ -1435,29 +1434,21 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(!stage)
     return;
 
-  // Export the stage to a temp file then read back — captures all authored + time-sampled data
-  // UsdStage::Export() takes a filename, not a string pointer
+  // Export authored root layer — captures time-sampled data Catalyst writes in-place
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
 
-  std::string tmpPath = "/tmp/usd_export_" + std::to_string(std::hash<std::string>{}(stageName)) + ".usd";
-  if(stage->Export(tmpPath, true))
+  auto rootLayer = stage->GetRootLayer();
+  if(rootLayer)
   {
-    std::ifstream ifs(tmpPath, std::ios::binary);
-    if(ifs)
-    {
-      fullUsdContent.assign((std::istreambuf_iterator<char>(ifs)),
-                            std::istreambuf_iterator<char>());
-      estimatedBytes = fullUsdContent.size();
-      ifs.close();
-    }
-    std::remove(tmpPath.c_str());
+    fullUsdContent = rootLayer->ExportToString();
+    estimatedBytes = fullUsdContent.size();
   }
 
   // Store in memory file store for ZMQ streaming
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
-    // Determine the filename based on stage name — keep .usd binary extension
+    // Determine the filename based on stage name
     std::string filename;
     if(stageName == "FullScene") {
       filename = this->SceneFileName;
@@ -1466,11 +1457,11 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       if (filename.length() >= 4) {
         std::string ext4 = filename.substr(filename.length() - 4);
         std::string ext5 = filename.substr(filename.length() - 5);
-        if (ext4 != ".usd" && ext5 != ".usda") {
-          filename += ".usd";
+        if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda") {
+          filename += ".usda";
         }
       } else {
-        filename += ".usd";
+        filename += ".usda";
       }
     }
 
@@ -1478,7 +1469,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename,
       fullUsdContent.data(),
       fullUsdContent.size(),
-      "application/octet-stream"
+      "text/plain"
     );
 
     std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
@@ -1511,7 +1502,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
   std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
 
-  // Recalculate memory usage for all tracked stages and re-store updated content
+  // Re-export authored layers — captures time-sampled data Catalyst writes in-place
   for(auto& info : MemoryTracking)
   {
     if(info.stage)
@@ -1519,25 +1510,17 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       size_t estimatedBytes = 0;
       std::string fullUsdContent;
 
-      // Export stage to temp file then read back — captures all authored + time-sampled data
-      std::string tmpPath = "/tmp/usd_recalc_" + std::to_string(std::hash<std::string>{}(info.name)) + ".usd";
-      if(info.stage->Export(tmpPath, true))
+      auto rootLayer = info.stage->GetRootLayer();
+      if(rootLayer)
       {
-        std::ifstream ifs(tmpPath, std::ios::binary);
-        if(ifs)
-        {
-          fullUsdContent.assign((std::istreambuf_iterator<char>(ifs)),
-                                std::istreambuf_iterator<char>());
-          estimatedBytes = fullUsdContent.size();
-          ifs.close();
-        }
-        std::remove(tmpPath.c_str());
+        fullUsdContent = rootLayer->ExportToString();
+        estimatedBytes = fullUsdContent.size();
       }
 
       // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
 
-      // Re-store updated file content to memory store — keep .usd binary
+      // Re-store updated file content to memory store
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
         std::string filename;
@@ -1548,11 +1531,11 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
           if (filename.length() >= 4) {
             std::string ext4 = filename.substr(filename.length() - 4);
             std::string ext5 = filename.substr(filename.length() - 5);
-            if (ext4 != ".usd" && ext5 != ".usda") {
-              filename += ".usd";
+            if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda") {
+              filename += ".usda";
             }
           } else {
-            filename += ".usd";
+            filename += ".usda";
           }
         }
 
@@ -1560,7 +1543,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
           filename,
           fullUsdContent.data(),
           fullUsdContent.size(),
-          "application/octet-stream"
+          "text/plain"
         );
 
         std::cout << "[RecalculateAllMemoryUsage] Re-stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
