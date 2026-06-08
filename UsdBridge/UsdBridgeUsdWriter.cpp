@@ -1441,7 +1441,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   auto rootLayer = stage->GetRootLayer();
   if(rootLayer)
   {
-    fullUsdContent = rootLayer->ExportToString();
+    rootLayer->ExportToString(&fullUsdContent);
     estimatedBytes = fullUsdContent.size();
   }
 
@@ -1513,7 +1513,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       auto rootLayer = info.stage->GetRootLayer();
       if(rootLayer)
       {
-        fullUsdContent = rootLayer->ExportToString();
+        rootLayer->ExportToString(&fullUsdContent);
         estimatedBytes = fullUsdContent.size();
       }
 
