@@ -12,6 +12,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 #include "UsdBridgeVolumeWriter.h"
 #include "UsdBridgeConnection.h"
 #include "UsdBridgeTimeEvaluator.h"
+#include "UsdBridgeMemoryStore.h"
 
 #include <memory>
 #include <functional>
