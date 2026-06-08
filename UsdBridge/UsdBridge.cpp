@@ -1019,7 +1019,12 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
     auto it = cache->ClipStages.find(timeStep);
     if(it != cache->ClipStages.end())
     {
+      std::cout << "[SetGeometryData] Tracking clip stage '" << it->second.first << "' for timestep " << timeStep << std::endl;
       BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+    else
+    {
+      std::cerr << "[SetGeometryData] ERROR: Clip stage not found for timestep " << timeStep << std::endl;
     }
   }
 #endif

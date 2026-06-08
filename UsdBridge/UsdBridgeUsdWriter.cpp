@@ -1483,6 +1483,8 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       fullUsdContent.size(),
       "text/plain"
     );
+
+    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
   }
 
   // Add to tracking
@@ -1510,6 +1512,8 @@ size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
 
 void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
+  std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
+
   // Recalculate memory usage for all tracked stages and re-store updated content
   for(auto& info : MemoryTracking)
   {
@@ -1559,6 +1563,8 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
           fullUsdContent.size(),
           "text/plain"
         );
+
+        std::cout << "[RecalculateAllMemoryUsage] Re-stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
       }
     }
   }
