@@ -24,7 +24,7 @@ enum class ZmqMessageType : uint32_t {
     WORKER_HEARTBEAT = 2,
     BROKER_ACK = 10,
 
-    // File request/response (Laptop ??? Broker ??? Workers)
+    // File request/response (Laptop ↔ Broker ↔ Workers)
     REQ_LIST_FILES = 100,      // Request list of files from a rank
     REQ_GET_FILE = 101,        // Request specific file from a rank
     REQ_GET_FRAME = 102,       // Request all files for a frame number
@@ -35,16 +35,16 @@ enum class ZmqMessageType : uint32_t {
     RESP_NO_FILE = 203,        // File not found
     RESP_ERROR = 204,          // Error occurred
 
-    // Push notifications (Worker ??? Broker ??? Laptop)
+    // Push notifications (Worker → Broker → Laptop)
     NOTIFY_FILE_UPDATE = 300,  // Notification that a file has been updated
     NOTIFY_COMMIT_COMPLETE = 301,  // Notification that scene commit is complete
 
-    // Property query (Laptop ??? Broker)
+    // Property query (Laptop → Broker)
     REQ_GET_PROPERTY = 400,    // Request a property value
     RESP_PROPERTY = 401        // Response with property value
 };
 
-// File request message (Laptop ??? Broker ??? Worker)
+// File request message (Laptop → Broker → Worker)
 struct __attribute__((packed)) ZmqFileRequest {
     uint32_t magic;            // 0x55534446 ("USDF")
     uint32_t message_type;     // ZmqMessageType
@@ -54,7 +54,7 @@ struct __attribute__((packed)) ZmqFileRequest {
     uint32_t chunk_size;       // Preferred chunk size (0 = default 4MB)
 };
 
-// File chunk response (Worker ??? Broker ??? Laptop)
+// File chunk response (Worker → Broker → Laptop)
 struct __attribute__((packed)) ZmqFileChunk {
     uint32_t magic;            // 0x55534446
     uint32_t message_type;     // RESP_FILE_CHUNK
@@ -67,7 +67,7 @@ struct __attribute__((packed)) ZmqFileChunk {
     // Followed by chunk_size bytes of data
 };
 
-// File complete message (Worker ??? Broker ??? Laptop)
+// File complete message (Worker → Broker → Laptop)
 struct __attribute__((packed)) ZmqFileComplete {
     uint32_t magic;            // 0x55534446
     uint32_t message_type;     // RESP_FILE_COMPLETE
@@ -77,7 +77,7 @@ struct __attribute__((packed)) ZmqFileComplete {
     uint64_t total_size;
 };
 
-// Notification message (Worker ??? Broker ??? Laptop)
+// Notification message (Worker → Broker → Laptop)
 struct __attribute__((packed)) ZmqFileNotification {
     uint32_t magic;            // 0x55534446
     uint32_t message_type;     // NOTIFY_FILE_UPDATE or NOTIFY_COMMIT_COMPLETE
@@ -87,7 +87,7 @@ struct __attribute__((packed)) ZmqFileNotification {
     uint64_t timestamp;        // Unix timestamp of update
 };
 
-// Property query response (Broker ??? Laptop)
+// Property query response (Broker → Laptop)
 struct __attribute__((packed)) ZmqPropertyResponse {
     uint32_t magic;            // 0x55534446
     uint32_t message_type;     // RESP_PROPERTY
@@ -121,7 +121,7 @@ public:
     // bool ReceiveFromClient(std::string& message);
     // bool ReplyToClient(const std::string& reply);
 
-    // Notification forwarding (Worker ??? Laptop)
+    // Notification forwarding (Worker → Laptop)
     bool ForwardNotificationToClient(const ZmqFileNotification& notification);
 
     std::string GetInfiniBandIP();
@@ -147,17 +147,6 @@ private:
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
     std::map<std::string, std::string> client_map_; // Track connected laptop clients
-
-    // File list aggregation for broadcast requests
-    struct FileListAggregation {
-        std::string client_id;
-        uint32_t request_id;
-        int expected_ranks;
-        std::map<int, std::string> rank_file_lists; // rank -> JSON file list
-        std::chrono::steady_clock::time_point start_time;
-    };
-    std::map<uint32_t, FileListAggregation> pending_aggregations_;
-    std::mutex aggregation_mutex_;
 
     // Thread management
     std::thread message_loop_thread_;

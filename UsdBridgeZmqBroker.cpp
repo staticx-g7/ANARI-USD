@@ -178,25 +178,29 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             return false;
         }
 
-        // Always use InfiniBand IP in MPI mode (even single-rank)
-        std::string ib_ip;  // Declare here so it's available in both branches
+        // Check if we're in "MPI but 0 workers" mode (essentially non-MPI mode)
         bool isSingleRankMode = (expectedWorkers == 0);
+        std::string ib_ip;  // Declare here so it's available in both branches
         
-        // Broadcast broker address to all workers via MPI (or just detect IB IP for single-rank)
-        std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
-
-        // Extract just the IP part for binding
-        size_t colon_pos = broadcast_addr.find(':');
-        ib_ip = (colon_pos != std::string::npos)
-            ? broadcast_addr.substr(0, colon_pos)
-            : broadcast_addr;
-
-        // Store broker IP for SSH reminder thread
-        broker_ip_ = ib_ip;
-
         if (isSingleRankMode) {
-            std::cout << "[Rank 0 MPI Broker] Single-rank mode - using IB IP: " << ib_ip << std::endl;
+            // Single rank mode: use localhost for simpler SSH tunneling
+            ib_ip = "127.0.0.1";
+            broker_ip_ = ib_ip;
+            std::cout << "[Rank 0 MPI Broker] Single-rank mode detected - using localhost IP: " << ib_ip << std::endl;
         } else {
+            // Multi-rank MPI mode: use InfiniBand IP
+            // Broadcast broker address to all workers via MPI
+            std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
+
+            // Extract just the IP part for binding
+            size_t colon_pos = broadcast_addr.find(':');
+            ib_ip = (colon_pos != std::string::npos)
+                ? broadcast_addr.substr(0, colon_pos)
+                : broadcast_addr;
+
+            // Store broker IP for SSH reminder thread
+            broker_ip_ = ib_ip;
+
             std::cout << "[Rank 0 MPI Broker] InfiniBand IP detected: " << ib_ip << std::endl;
         }
 #else
@@ -243,9 +247,9 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 
         // Print connection information
         std::cout << std::endl;
-        std::cout << "??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????" << std::endl;
-        std::cout << "??? ZMQ BROKER CONNECTION INFORMATION                                             ???" << std::endl;
-        std::cout << "??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????" << std::endl;
+        std::cout << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cout << "║ ZMQ BROKER CONNECTION INFORMATION                                             ║" << std::endl;
+        std::cout << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
         
 #ifdef ANARI_USD_ENABLE_MPI
         if (expectedWorkers > 0) {
@@ -568,11 +572,19 @@ void ZmqBroker::MessageLoopThread() {
                         std::string request_key = std::to_string(fileReq->request_id);
                         client_map_[request_key] = client_id;
 
+                        // Track broadcast file list requests for aggregation
+                        if (fileReq->target_rank == -1 &&
+                            fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
+                            // Initialize aggregation for this request
+                            std::cout << "[Rank 0 MPI Broker] Setting up aggregation for broadcast file list request ID "
+                                      << fileReq->request_id << std::endl;
+                        }
+
                         // Route request to appropriate worker
                         if (fileReq->target_rank == -1)
                         {
                             // BROADCAST: Send request to ALL workers (ranks 0-15)
-                            std::cout << "Rank 0 (MPI Broker): Broadcasting file request to ALL workers (rank -1)" << std::endl;
+                            std::cout << "Rank 0 (MPI Broker): Broadcasting file request to ALL workers (rank -1) - Processing rank 0 locally" << std::endl;
                             
                             // Forward request to workers 1-15 via ZMQ
                             for (const auto& worker : workers_)
@@ -583,38 +595,73 @@ void ZmqBroker::MessageLoopThread() {
                                 router_->send(zmq::message_t(request.data(), request.size()), zmq::send_flags::none);
                             }
                             
-                            // Initialize aggregation for broadcast file list requests
-                            if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
-                                std::lock_guard<std::mutex> lock(aggregation_mutex_);
-                                pending_aggregations_[fileReq->request_id] = {
-                                    client_id,
-                                    fileReq->request_id,
-                                    static_cast<int>(workers_.size()),
-                                    {},
-                                    std::chrono::steady_clock::now()
-                                };
+                            // Process rank 0's file list locally (immediate response)
+                            if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES) && g_rankMemoryStore) {
+                                std::cout << "[Rank 0 MPI Broker] Processing rank 0 file list for broadcast request ID " << fileReq->request_id << std::endl;
                                 
-                                // Add rank 0's file list to aggregation immediately
-                                if (g_rankMemoryStore) {
-                                    auto files = g_rankMemoryStore->ListFiles();
-                                    std::stringstream jsonResponse;
-                                    jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
-                                    bool first = true;
-                                    for (const auto& filename : files) {
-                                        const auto& entry = g_rankMemoryStore->GetFile(filename);
-                                        if (!first) jsonResponse << ",";
-                                        jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
-                                        first = false;
+                                // Get rank 0's files
+                                auto files = g_rankMemoryStore->ListFiles();
+                                
+                                // Build JSON response
+                                std::stringstream jsonResponse;
+                                jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
+                                bool first = true;
+                                for (const auto& filename : files) {
+                                    // Filter out .usda.usda files (duplicate extensions)
+                                    if (filename.find(".usda.usda") != std::string::npos) {
+                                        std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file: " << filename << std::endl;
+                                        continue;
                                     }
-                                    jsonResponse << "]}";
-                                    pending_aggregations_[fileReq->request_id].rank_file_lists[0] = jsonResponse.str();
-                                    std::cout << "[Rank 0 MPI Broker] Added rank 0 file list (" << files.size() << " files) to aggregation" << std::endl;
+                                    
+                                    const auto& entry = g_rankMemoryStore->GetFile(filename);
+                                    if (!first) jsonResponse << ",";
+                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
+                                    first = false;
                                 }
+                                jsonResponse << "]}";
                                 
-                                std::cout << "[Rank 0 MPI Broker] Aggregating file lists for request " << fileReq->request_id 
-                                          << " (expecting " << workers_.size() << " ranks)" << std::endl;
+                                std::string jsonStr = jsonResponse.str();
+                                
+                                        // Send as file chunk response
+                                        ZmqFileChunk response;
+                                        memset(&response, 0, sizeof(response));
+                                        response.magic = USD_FILE_MAGIC;
+                                        response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
+                                        response.request_id = fileReq->request_id;
+                                        response.source_rank = 0;
+                                        strncpy(response.filename, "__file_list__.json", sizeof(response.filename) - 1);
+                                        response.file_size = jsonStr.size();
+                                        response.chunk_offset = 0;
+                                        response.chunk_size = jsonStr.size();
+                                        
+                                        // Allocate combined message
+                                        size_t totalSize = sizeof(response) + jsonStr.size();
+                                        std::vector<uint8_t> msgData(totalSize);
+                                        memcpy(msgData.data(), &response, sizeof(response));
+                                        memcpy(msgData.data() + sizeof(response), jsonStr.data(), jsonStr.size());
+                                        
+                                        // Send to client
+                                        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                        client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+
+                                        // Ensure we notify the client that this rank is done
+                                        ZmqFileComplete complete;
+                                        memset(&complete, 0, sizeof(complete));
+                                        complete.magic = USD_FILE_MAGIC;
+                                        complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
+                                        complete.request_id = fileReq->request_id;
+                                        complete.source_rank = 0;
+                                        strncpy(complete.filename, "__file_list__.json", sizeof(complete.filename) - 1);
+                                        complete.total_size = jsonStr.size();
+
+                                        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                        client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+                                        
+                                        std::cout << "[Rank 0 MPI Broker] Sent rank 0 file list (" << files.size() << " files) for broadcast request" << std::endl;
                             }
-                            continue; // Wait for aggregation
+                            continue; // Done with broadcast
                         }
                         
                         if (fileReq->target_rank >= 0)
@@ -953,102 +1000,6 @@ void ZmqBroker::MessageLoopThread() {
 
                             std::string client_id = client_it->second;
 
-                            // Check if this is a file list response that needs aggregation
-                            if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK) &&
-                                strcmp(chunk->filename, "__file_list__.json") == 0) {
-                                std::lock_guard<std::mutex> lock(aggregation_mutex_);
-                                auto agg_it = pending_aggregations_.find(chunk->request_id);
-                                if (agg_it != pending_aggregations_.end()) {
-                                    // Extract JSON data from chunk
-                                    const uint8_t* json_data = data.data() + sizeof(ZmqFileChunk);
-                                    size_t json_size = chunk->chunk_size;
-                                    std::string json_str(reinterpret_cast<const char*>(json_data), json_size);
-                                    
-                                    // Store this rank's file list
-                                    agg_it->second.rank_file_lists[chunk->source_rank] = json_str;
-                                    std::cout << "[Rank 0 MPI Broker] Aggregated file list from rank " 
-                                              << chunk->source_rank << " (" << agg_it->second.rank_file_lists.size() 
-                                              << "/" << agg_it->second.expected_ranks << " ranks)" << std::endl;
-                                    
-                                    // Check if all ranks have responded
-                                    if (agg_it->second.rank_file_lists.size() >= static_cast<size_t>(agg_it->second.expected_ranks)) {
-                                        // All ranks responded - build aggregated response
-                                        std::cout << "[Rank 0 MPI Broker] All ranks responded - sending aggregated file list" << std::endl;
-                                        
-                                        // Combine all file lists into a single JSON array
-                                        std::stringstream aggregatedJson;
-                                        aggregatedJson << "[";
-                                        bool first = true;
-                                        for (const auto& rank_entry : agg_it->second.rank_file_lists) {
-                                            // Extract the files array from each rank's JSON
-                                            std::string rank_json = rank_entry.second;
-                                            size_t files_start = rank_json.find("\"files\":[");
-                                            if (files_start != std::string::npos) {
-                                                size_t arr_start = rank_json.find('[', files_start);
-                                                if (arr_start != std::string::npos) {
-                                                    int bracket_count = 1;
-                                                    size_t arr_end = arr_start + 1;
-                                                    for (; arr_end < rank_json.size() && bracket_count > 0; ++arr_end) {
-                                                        if (rank_json[arr_end] == '[') bracket_count++;
-                                                        else if (rank_json[arr_end] == ']') bracket_count--;
-                                                    }
-                                                    std::string files_array = rank_json.substr(arr_start + 1, arr_end - arr_start - 2);
-                                                    if (!files_array.empty()) {
-                                                        if (!first) aggregatedJson << ",";
-                                                        aggregatedJson << files_array;
-                                                        first = false;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        aggregatedJson << "]";
-                                        
-                                        // Send aggregated response to client
-                                        ZmqFileChunk response;
-                                        memset(&response, 0, sizeof(response));
-                                        response.magic = USD_FILE_MAGIC;
-                                        response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
-                                        response.request_id = chunk->request_id;
-                                        response.source_rank = -1; // Aggregated from all ranks
-                                        strncpy(response.filename, "__file_list__.json", sizeof(response.filename) - 1);
-                                        response.file_size = aggregatedJson.str().size();
-                                        response.chunk_offset = 0;
-                                        response.chunk_size = aggregatedJson.str().size();
-                                        
-                                        size_t totalSize = sizeof(response) + aggregatedJson.str().size();
-                                        std::vector<uint8_t> msgData(totalSize);
-                                        memcpy(msgData.data(), &response, sizeof(response));
-                                        memcpy(msgData.data() + sizeof(response), aggregatedJson.str().data(), aggregatedJson.str().size());
-                                        
-                                        client_router_->send(zmq::buffer(agg_it->second.client_id), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
-                                        
-                                        // Send completion
-                                        ZmqFileComplete complete;
-                                        memset(&complete, 0, sizeof(complete));
-                                        complete.magic = USD_FILE_MAGIC;
-                                        complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
-                                        complete.request_id = chunk->request_id;
-                                        complete.source_rank = -1;
-                                        strncpy(complete.filename, "__file_list__.json", sizeof(complete.filename) - 1);
-                                        complete.total_size = aggregatedJson.str().size();
-                                        
-                                        client_router_->send(zmq::buffer(agg_it->second.client_id), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
-                                        
-                                        std::cout << "[Rank 0 MPI Broker] Sent aggregated file list (" 
-                                                  << aggregatedJson.str().size() << " bytes) to client" << std::endl;
-                                        
-                                        // Clean up
-                                        pending_aggregations_.erase(agg_it);
-                                        client_map_.erase(request_key);
-                                    }
-                                    continue; // Don't forward individual response
-                                }
-                            }
-
                             // Log what we're forwarding
                             if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK)) {
                                 std::cout << "[Rank 0 MPI Broker] Forwarding file chunk from rank "
@@ -1167,11 +1118,11 @@ void ZmqBroker::SSHReminderThread() {
 
         // Print the SSH tunnel command
         std::cout << std::endl;
-        std::cout << "??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????" << std::endl;
-        std::cout << "??? SSH TUNNEL REMINDER #" << std::left << std::setw(58) << reminder_count << "???" << std::endl;
-        std::cout << "??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????" << std::endl;
-        std::cout << "??? Run this command on your laptop to connect:                                   ???" << std::endl;
-        std::cout << "??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????" << std::endl;
+        std::cout << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cout << "║ SSH TUNNEL REMINDER #" << std::left << std::setw(58) << reminder_count << "║" << std::endl;
+        std::cout << "╠════════════════════════════════════════════════════════════════════════════════╣" << std::endl;
+        std::cout << "║ Run this command on your laptop to connect:                                   ║" << std::endl;
+        std::cout << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
         
 #ifdef ANARI_USD_ENABLE_MPI
         if (workers_.size() > 1) {
