@@ -1434,33 +1434,25 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(!stage)
     return;
 
-  // Estimate memory usage by flattening the stage and checking layer size
+  // Export the resolved stage (includes all runtime attribute values, time samples, etc.)
+  // stage->Export() captures what ParaView renders, not just authored layer data
   size_t estimatedBytes = 0;
-  std::string fullUsdContent; // Complete USD file content
+  std::string fullUsdContent;
 
-  // Get all layers in the stage
-  auto layers = stage->GetUsedLayers();
-  for(const auto& layer : layers)
+  if(stage->Export(&fullUsdContent))
   {
-    if(layer)
-    {
-      // Export to string to estimate memory
-      std::string layerStr;
-      layer->ExportToString(&layerStr);
-      estimatedBytes += layerStr.size();
-      fullUsdContent += layerStr; // Accumulate all layers
-    }
+    estimatedBytes = fullUsdContent.size();
   }
 
   // Store in memory file store for ZMQ streaming
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
     // Determine the filename based on stage name
-    // NOTE: ExportToString always produces ASCII, so always use .usda extension
+    // NOTE: stage->Export() produces ASCII, so always use .usda extension
     std::string filename;
     if(stageName == "FullScene") {
       filename = this->SceneFileName;
-      // Force .usda extension since ExportToString produces ASCII
+      // Force .usda extension since Export produces ASCII
       if (filename.length() >= 4) {
         std::string ext4 = filename.substr(filename.length() - 4);
         if (ext4 == ".usd") {
@@ -1482,7 +1474,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
             filename = stageName;
           }
         } else {
-          // Add .usda extension (ExportToString produces ASCII)
+          // Add .usda extension (Export produces ASCII)
           filename = stageName + ".usda";
         }
       } else {
@@ -1536,30 +1528,23 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       size_t estimatedBytes = 0;
       std::string fullUsdContent;
 
-      // Get all layers in the stage
-      auto layers = info.stage->GetUsedLayers();
-      for(const auto& layer : layers)
+      // Export the resolved stage (includes all runtime attribute values)
+      if(info.stage->Export(&fullUsdContent))
       {
-        if(layer)
-        {
-          std::string layerStr;
-          layer->ExportToString(&layerStr);
-          estimatedBytes += layerStr.size();
-          fullUsdContent += layerStr;
-        }
+        estimatedBytes = fullUsdContent.size();
       }
 
       // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
 
       // Re-store updated file content to memory store
-      // NOTE: ExportToString always produces ASCII, so always use .usda extension
+      // NOTE: stage->Export() produces ASCII, so always use .usda extension
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
         std::string filename;
         if(info.name == "FullScene") {
           filename = this->SceneFileName;
-          // Force .usda extension since ExportToString produces ASCII
+          // Force .usda extension since Export produces ASCII
           if (filename.length() >= 4) {
             std::string ext4 = filename.substr(filename.length() - 4);
             if (ext4 == ".usd") {
