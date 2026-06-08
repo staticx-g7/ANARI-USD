@@ -9,6 +9,7 @@
 #include "UsdRenderManager.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 #include "Common/UsdBridgeParallelController.h"	
+#include "Common/UsdBridgeUtils.h"
 
 #include <string>
 #include <memory>
