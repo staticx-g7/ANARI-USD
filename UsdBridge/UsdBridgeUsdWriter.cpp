@@ -1474,12 +1474,13 @@ size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
 
 void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
-  // Recalculate memory usage for all tracked stages
+  // Recalculate memory usage for all tracked stages and re-store updated content
   for(auto& info : MemoryTracking)
   {
     if(info.stage)
     {
       size_t estimatedBytes = 0;
+      std::string fullUsdContent;
 
       // Get all layers in the stage
       auto layers = info.stage->GetUsedLayers();
@@ -1487,15 +1488,42 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       {
         if(layer)
         {
-          // Export to string to estimate memory
           std::string layerStr;
           layer->ExportToString(&layerStr);
           estimatedBytes += layerStr.size();
+          fullUsdContent += layerStr;
         }
       }
 
       // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
+
+      // Re-store updated file content to memory store
+      if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
+      {
+        std::string filename;
+        if(info.name == "FullScene") {
+          filename = this->SceneFileName;
+        } else {
+          filename = info.name;
+          if (filename.length() >= 4) {
+            std::string ext4 = filename.substr(filename.length() - 4);
+            std::string ext5 = filename.substr(filename.length() - 5);
+            if (ext4 != ".usd" && ext5 != ".usda") {
+              filename += (this->Settings.BinaryOutput ? ".usd" : ".usda");
+            }
+          } else {
+            filename += (this->Settings.BinaryOutput ? ".usd" : ".usda");
+          }
+        }
+
+        g_rankMemoryStore->StoreFile(
+          filename,
+          fullUsdContent.data(),
+          fullUsdContent.size(),
+          "text/plain"
+        );
+      }
     }
   }
 }
