@@ -148,6 +148,17 @@ private:
     std::map<std::string, int> worker_map_;
     std::map<std::string, std::string> client_map_; // Track connected laptop clients
 
+    // File list aggregation for broadcast requests
+    struct FileListAggregation {
+        std::string client_id;
+        uint32_t request_id;
+        int expected_ranks;
+        std::map<int, std::string> rank_file_lists; // rank -> JSON file list
+        std::chrono::steady_clock::time_point start_time;
+    };
+    std::map<uint32_t, FileListAggregation> pending_aggregations_;
+    std::mutex aggregation_mutex_;
+
     // Thread management
     std::thread message_loop_thread_;
     std::atomic<bool> message_loop_active_{false};
