@@ -408,28 +408,33 @@ void UsdDevice::initializeBridge()
     if (mpiRank == 0) {
       zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
       if (!zmqBroker_->Initialize(mpiSize - 1)) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
-            "Failed to initialize ZMQ broker on rank 0");
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
+            "Failed to initialize ZMQ broker on rank 0, continuing without ZMQ");
+        zmqBroker_.reset();
       }
-      const auto& workers = zmqBroker_->GetConnectedWorkers();
-      for (const auto& worker : workers) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-            "Rank 0: Worker %d connected from %s", worker.rank, worker.hostname.c_str());
+      else {
+        const auto& workers = zmqBroker_->GetConnectedWorkers();
+        for (const auto& worker : workers) {
+          reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+              "Rank 0: Worker %d connected from %s", worker.rank, worker.hostname.c_str());
+        }
       }
     }
     else {
       zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
       if (!zmqWorker_->Connect()) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
                      ANARI_STATUS_UNKNOWN_ERROR,
-                     "Failed to connect to broker on rank %d", mpiRank);
-        return;
+                     "Failed to connect to broker on rank %d, continuing without ZMQ", mpiRank);
+        zmqWorker_.reset();
       }
-      fileServingActive_ = true;
-      fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
-                   ANARI_STATUS_NO_ERROR,
-                   "Rank %d: Started background file serving thread", mpiRank);
+      else {
+        fileServingActive_ = true;
+        fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                     ANARI_STATUS_NO_ERROR,
+                     "Rank %d: Started background file serving thread", mpiRank);
+      }
     }
     InitializeMemoryStore(mpiRank);
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
@@ -439,15 +444,18 @@ void UsdDevice::initializeBridge()
   else {
     zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
     if (!zmqBroker_->Initialize(0)) {
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
-          "Failed to initialize ZMQ broker");
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
+          "Failed to initialize ZMQ broker, continuing without ZMQ");
+      zmqBroker_.reset();
     }
-    if (mpiAvailable) {
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-          "Single-rank MPI ZMQ broker started (rank %d)", mpiRank);
-    } else {
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-          "Non-MPI ZMQ broker started");
+    else {
+      if (mpiAvailable) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+            "Single-rank MPI ZMQ broker started (rank %d)", mpiRank);
+      } else {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+            "Non-MPI ZMQ broker started");
+      }
     }
     InitializeMemoryStore(0);
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
@@ -457,8 +465,13 @@ void UsdDevice::initializeBridge()
   #else
   zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
   if (!zmqBroker_->Initialize(0)) {
-    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
-        "Failed to initialize ZMQ broker");
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
+        "Failed to initialize ZMQ broker, continuing without ZMQ");
+    zmqBroker_.reset();
+  }
+  else {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+        "Non-MPI ZMQ broker started");
   }
   InitializeMemoryStore(0);
   reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,

@@ -171,7 +171,7 @@ public:
   void SetSelectiveFileSaving(bool selectiveFileSaving);
   bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
 
-  void TrackStageMemory(const std::string& stageName, const UsdStageRefPtr& stage);
+  void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
   void RecalculateAllMemoryUsage();
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
@@ -239,7 +239,8 @@ protected:
 
   struct StageMemoryInfo {
     std::string name;
-    size_t size;
+    size_t estimatedBytes;
+    UsdStageRefPtr stage; // Keep reference to stage for recalculation
   };
   std::vector<StageMemoryInfo> MemoryTracking;
 };

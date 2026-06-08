@@ -417,12 +417,24 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
   }
 #endif
 
-  const char* absSceneFile = Connect->GetUrl(this->SceneFileName.c_str());
-  if (!this->SceneStage && !Settings.CreateNewSession)
-      this->SceneStage = UsdStage::Open(absSceneFile);
+  // Create in-memory stage if not saving, otherwise use file-backed stage
   if (!this->SceneStage)
-    this->SceneStage = UsdStage::CreateNew(absSceneFile);
-  
+  {
+    if(this->EnableSaving)
+    {
+      const char* absSceneFile = Connect->GetUrl(this->SceneFileName.c_str());
+      if (!Settings.CreateNewSession)
+        this->SceneStage = UsdStage::Open(absSceneFile);
+      if (!this->SceneStage)
+        this->SceneStage = UsdStage::CreateNew(absSceneFile);
+    }
+    else
+    {
+      // Create in-memory stage
+      this->SceneStage = UsdStage::CreateInMemory();
+    }
+  }
+
   if (!this->SceneStage)
   {
     UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR, "Scene UsdStage cannot be created or opened. Maybe a filesystem issue?");
@@ -463,7 +475,10 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
     EndTime = this->SceneStage->GetEndTimeCode();
   }
 
-  this->SaveScene();
+  if(this->EnableSaving)
+    this->SceneStage->Save();
+  else
+    this->TrackStageMemory("FullScene", this->SceneStage);
 
   return true;
 }
@@ -509,22 +524,37 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
 
   cacheEntry->ManifestStage.first = constring::manifestFolder + std::string(name) + primPostfix + (binary ? ".usd" : ".usda");
 
-  std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + cacheEntry->ManifestStage.first).c_str());
+  if(this->EnableSaving)
+  {
+    std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + cacheEntry->ManifestStage.first).c_str());
 
-  UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
-  cacheEntry->ManifestStage.second = UsdStage::CreateNew(absoluteFileName);
-  UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
+    UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
+    cacheEntry->ManifestStage.second = UsdStage::CreateNew(absoluteFileName);
+    UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
 
-  if (!cacheEntry->ManifestStage.second)
-    cacheEntry->ManifestStage.second = UsdStage::Open(absoluteFileName);
+    if (!cacheEntry->ManifestStage.second)
+      cacheEntry->ManifestStage.second = UsdStage::Open(absoluteFileName);
+  }
+  else
+  {
+    // Create in-memory stage
+    cacheEntry->ManifestStage.second = UsdStage::CreateInMemory();
+  }
 
   assert(cacheEntry->ManifestStage.second);
 
   cacheEntry->ManifestStage.second->DefinePrim(SdfPath(this->RootClassName));
+
+  if(!this->EnableSaving)
+    this->TrackStageMemory(std::string(name) + primPostfix + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
 void UsdBridgeUsdWriter::RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry)
 {
+  // Only remove files if we were actually saving them
+  if(!this->EnableSaving)
+    return;
+
   // May be superfluous
   if(cacheEntry->ManifestStage.second)
   {
@@ -570,22 +600,43 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
       fullNamePostfix += std::to_string(timeStep); 
     }
     std::string relativeFileName = folder + cacheEntry->Name.GetString() + fullNamePostfix + (binary ? ".usd" : ".usda");
-    std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + relativeFileName).c_str());
 
-    UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
-    UsdStageRefPtr primClipStage = UsdStage::CreateNew(absoluteFileName);
-    UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
+    UsdStageRefPtr primClipStage;
 
-    exists = !primClipStage;
-
-    SdfPath rootPrimPath(this->RootClassName);
-    if (exists)
+    if(this->EnableSaving)
     {
-      primClipStage = UsdStage::Open(absoluteFileName); //Could happen if written folder is reused 
-      assert(primClipStage->GetPrimAtPath(rootPrimPath));
+      std::string absoluteFileName = Connect->GetUrl((this->SessionDirectory + relativeFileName).c_str());
+
+      UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(false);
+      primClipStage = UsdStage::CreateNew(absoluteFileName);
+      UsdBridgeDiagnosticMgrDelegate::SetOutputEnabled(true);
+
+      exists = !primClipStage;
+
+      SdfPath rootPrimPath(this->RootClassName);
+      if (exists)
+      {
+        primClipStage = UsdStage::Open(absoluteFileName); //Could happen if written folder is reused 
+        assert(primClipStage->GetPrimAtPath(rootPrimPath));
+      }
+      else
+        primClipStage->DefinePrim(rootPrimPath);
     }
     else
+    {
+      // Create in-memory stage
+      primClipStage = UsdStage::CreateInMemory();
+      exists = false;
+      SdfPath rootPrimPath(this->RootClassName);
       primClipStage->DefinePrim(rootPrimPath);
+
+      // Track memory if not saving
+      if(!this->EnableSaving)
+      {
+        std::string stageName = folder + cacheEntry->Name.GetString() + fullNamePostfix;
+        const_cast<UsdBridgeUsdWriter*>(this)->TrackStageMemory(stageName, primClipStage);
+      }
+    }
 
     it = cacheEntry->ClipStages.emplace(timeStep, UsdStagePair(std::move(relativeFileName), primClipStage)).first;
   }
@@ -1337,37 +1388,110 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
   keys.resize(0);
 }
 
-void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, const UsdStageRefPtr& stage)
+void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage)
 {
-  if (!stage) return;
+  if(!stage)
+    return;
 
-  std::string content;
-  stage->GetRootLayer()->ExportToString(&content);
+  // Estimate memory usage by flattening the stage and checking layer size
+  size_t estimatedBytes = 0;
+  std::string fullUsdContent; // Complete USD file content
 
-  size_t totalSize = content.size();
-
-  MemoryTracking.push_back({stageName, totalSize});
-
-  if (g_rankMemoryStore) {
-    g_rankMemoryStore->StoreFile(stageName, content);
+  // Get all layers in the stage
+  auto layers = stage->GetUsedLayers();
+  for(const auto& layer : layers)
+  {
+    if(layer)
+    {
+      // Export to string to estimate memory
+      std::string layerStr;
+      layer->ExportToString(&layerStr);
+      estimatedBytes += layerStr.size();
+      fullUsdContent += layerStr; // Accumulate all layers
+    }
   }
-}
 
-void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
-{
-  MemoryTracking.clear();
+  // Store in memory file store for ZMQ streaming
+  if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
+  {
+    // Determine the filename based on stage name
+    std::string filename;
+    if(stageName == "FullScene") {
+      filename = this->SceneFileName;
+    } else {
+      // For other stages, construct filename from SessionDirectory + stageName
+      // Check if stageName already ends with .usd or .usda extension
+      if (stageName.length() >= 4) {
+        std::string ext4 = stageName.substr(stageName.length() - 4);
+        std::string ext5 = stageName.substr(stageName.length() - 5);
+        if (ext4 == ".usd" || ext5 == ".usda") {
+          // Already has extension, don't add another
+          filename = stageName;
+        } else {
+          // Add appropriate extension
+          filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+        }
+      } else {
+        // Too short to have extension, add it
+        filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+      }
+    }
 
-  // Track scene stage
-  if (SceneStage) {
-    TrackStageMemory("scene.usda", SceneStage);
+    g_rankMemoryStore->StoreFile(
+      filename,
+      fullUsdContent.data(),
+      fullUsdContent.size(),
+      "text/plain"
+    );
   }
+
+  // Add to tracking
+  StageMemoryInfo info;
+  info.name = stageName;
+  info.estimatedBytes = estimatedBytes;
+  info.stage = stage; // Store reference for later recalculation
+  MemoryTracking.push_back(info);
+
+  // Log the memory usage
+  double sizeMB = estimatedBytes / (1024.0 * 1024.0);
+  UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+    "In-memory stage '" << stageName << "': ~" << sizeMB << " MB");
 }
 
 size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
 {
   size_t total = 0;
-  for (const auto& info : MemoryTracking) {
-    total += info.size;
+  for(const auto& info : MemoryTracking)
+  {
+    total += info.estimatedBytes;
   }
   return total;
+}
+
+void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
+{
+  // Recalculate memory usage for all tracked stages
+  for(auto& info : MemoryTracking)
+  {
+    if(info.stage)
+    {
+      size_t estimatedBytes = 0;
+
+      // Get all layers in the stage
+      auto layers = info.stage->GetUsedLayers();
+      for(const auto& layer : layers)
+      {
+        if(layer)
+        {
+          // Export to string to estimate memory
+          std::string layerStr;
+          layer->ExportToString(&layerStr);
+          estimatedBytes += layerStr.size();
+        }
+      }
+
+      // Update the stored estimate
+      info.estimatedBytes = estimatedBytes;
+    }
+  }
 }

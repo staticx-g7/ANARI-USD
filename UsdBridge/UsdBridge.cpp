@@ -1222,7 +1222,21 @@ void UsdBridge::SaveScene()
 {
   if (!SessionValid) return;
 
-  BRIDGE_USDWRITER.SaveScene();
+  if(this->EnableSaving)
+  {
+    BRIDGE_USDWRITER.GetSceneStage()->Save();
+  }
+  else
+  {
+    // Recalculate actual memory usage for all stages (now that data is written)
+    BRIDGE_USDWRITER.RecalculateAllMemoryUsage();
+
+    // Report total memory usage
+    size_t totalBytes = BRIDGE_USDWRITER.GetTotalMemoryUsage();
+    double totalMB = totalBytes / (1024.0 * 1024.0);
+    UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::STATUS,
+      "Total in-memory USD data: ~" << totalMB << " MB across " << BRIDGE_USDWRITER.GetMemoryTrackingSize() << " stages");
+  }
 }
 
 // =============================================================================
