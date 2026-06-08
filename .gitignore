@@ -2,3 +2,4 @@ _*/
 __pycache__/*
 .vscode
 .anari_deps
+build/
