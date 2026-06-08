@@ -75,7 +75,6 @@ struct UsdBridgeInternals
 {
   UsdBridgeInternals(const UsdBridgeSettings& settings)
     : UsdWriter(settings)
-    , RenderManager(UsdWriter)
   {
     RefModCallbacks.AtNewRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache){
       // Increase the reference count for the child on creation of referencing prim
@@ -95,6 +94,13 @@ struct UsdBridgeInternals
   {
     if(DiagRemoveFunc)
       DiagRemoveFunc(DiagnosticDelegate.get());
+  }
+
+  UsdRenderManager& GetRenderManager()
+  {
+    if(!RenderManager)
+      RenderManager = std::make_unique<UsdRenderManager>(UsdWriter);
+    return *RenderManager;
   }
 
   template<typename UsdHandleType>
@@ -122,8 +128,8 @@ struct UsdBridgeInternals
   // USDWriter
   UsdBridgeUsdWriter UsdWriter;
 
-  // USD Render Manager (new multi-frame system)
-  UsdRenderManager RenderManager;
+  // USD Render Manager (new multi-frame system, lazy-initialized)
+  std::unique_ptr<UsdRenderManager> RenderManager;
 
   // Material->geometry binding suggestion
   std::map<UsdBridgePrimCache*, SdfPath> MaterialToGeometryBinding;
@@ -1248,35 +1254,35 @@ void UsdBridge::RegisterFrame(const char* frameName)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.RegisterFrame(frameName);
+  Internals->GetRenderManager().RegisterFrame(frameName);
 }
 
 void UsdBridge::UnregisterFrame(const char* frameName)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.UnregisterFrame(frameName);
+  Internals->GetRenderManager().UnregisterFrame(frameName);
 }
 
 void UsdBridge::UnregisterFrameByState(void* frameState)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.UnregisterFrameByState(frameState);
+  Internals->GetRenderManager().UnregisterFrameByState(frameState);
 }
 
 void* UsdBridge::GetFrameState(const char* frameName)
 {
   if (!SessionValid) return nullptr;
 
-  return Internals->RenderManager.GetFrameState(frameName);
+  return Internals->GetRenderManager().GetFrameState(frameName);
 }
 
 void UsdBridge::SetFrameRenderer(const char* frameName, const char* hydraRendererName)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.SetFrameRenderer(frameName, hydraRendererName);
+  Internals->GetRenderManager().SetFrameRenderer(frameName, hydraRendererName);
 }
 
 void UsdBridge::SetFrameWorld(const char* frameName, UsdWorldHandle world)
@@ -1287,7 +1293,7 @@ void UsdBridge::SetFrameWorld(const char* frameName, UsdWorldHandle world)
   SdfPath worldPath;
   BRIDGE_USDWRITER.GetRootPrimPath(cache->Name, worldPathCp, worldPath);
 
-  Internals->RenderManager.SetFrameWorld(frameName, worldPath);
+  Internals->GetRenderManager().SetFrameWorld(frameName, worldPath);
 }
 
 void UsdBridge::SetFrameCamera(const char* frameName, UsdCameraHandle camera)
@@ -1298,42 +1304,42 @@ void UsdBridge::SetFrameCamera(const char* frameName, UsdCameraHandle camera)
   SdfPath cameraPath;
   BRIDGE_USDWRITER.GetRootPrimPath(cache->Name, cameraPathCp, cameraPath);
 
-  Internals->RenderManager.SetFrameCamera(frameName, cameraPath);
+  Internals->GetRenderManager().SetFrameCamera(frameName, cameraPath);
 }
 
 void UsdBridge::SetFrameRenderSize(const char* frameName, uint32_t width, uint32_t height)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.SetFrameRenderSize(frameName, width, height);
+  Internals->GetRenderManager().SetFrameRenderSize(frameName, width, height);
 }
 
 void UsdBridge::RenderFrame(const char* frameName, double timeStep)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.Render(frameName, timeStep);
+  Internals->GetRenderManager().Render(frameName, timeStep);
 }
 
 bool UsdBridge::FrameReady(const char* frameName, bool wait)
 {
   if (!SessionValid) return true;
 
-  return Internals->RenderManager.FrameReady(frameName, wait);
+  return Internals->GetRenderManager().FrameReady(frameName, wait);
 }
 
 void* UsdBridge::MapFrame(const char* frameName, UsdBridgeType& returnFormat)
 {
   if (!SessionValid) return nullptr;
 
-  return Internals->RenderManager.MapFrame(frameName, returnFormat);
+  return Internals->GetRenderManager().MapFrame(frameName, returnFormat);
 }
 
 void UsdBridge::UnmapFrame(const char* frameName)
 {
   if (!SessionValid) return;
 
-  Internals->RenderManager.UnmapFrame(frameName);
+  Internals->GetRenderManager().UnmapFrame(frameName);
 }
 
 void UsdBridge::ResetResourceUpdateState()
