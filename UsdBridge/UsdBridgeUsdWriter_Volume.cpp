@@ -151,6 +151,18 @@ void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgeP
   const char* volumeStreamData; size_t volumeStreamDataSize;
   VolumeWriter->GetSerializedVolumeData(volumeStreamData, volumeStreamDataSize);
   Connect->WriteFile(volumeStreamData, volumeStreamDataSize, wdRelVolPath.c_str(), true);
+
+  // Also store VDB in memory when not saving to disk
+  if(!this->EnableSaving && g_rankMemoryStore)
+  {
+    g_rankMemoryStore->StoreFile(
+      relVolPath,
+      volumeStreamData,
+      volumeStreamDataSize,
+      "application/octet-stream"
+    );
+  }
+
   // Record file write for timestep
   cacheEntry->AddResourceKey(UsdBridgeResourceKey(nullptr, timeStep));
 }

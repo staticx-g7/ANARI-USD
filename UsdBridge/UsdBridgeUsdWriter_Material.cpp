@@ -1474,6 +1474,17 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
         // Filename, relative from connection working dir
         std::string wdRelFilename(SessionDirectory + imgFileName);
         Connect->WriteFile(writeOutput.imageData, writeOutput.imageSize, wdRelFilename.c_str(), true);
+
+        // Also store PNG in memory when not saving to disk
+        if(!this->EnableSaving && g_rankMemoryStore)
+        {
+          g_rankMemoryStore->StoreFile(
+            imgFileName,
+            writeOutput.imageData,
+            writeOutput.imageSize,
+            "image/png"
+          );
+        }
       }
       else
       {

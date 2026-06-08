@@ -1059,6 +1059,14 @@ void UsdBridge::SetSpatialFieldData(UsdSpatialFieldHandle field, const UsdBridge
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     volumeStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 
@@ -1082,6 +1090,14 @@ void UsdBridge::SetMaterialData(UsdMaterialHandle material, const UsdBridgeMater
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     materialStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 
@@ -1103,6 +1119,14 @@ void UsdBridge::SetSamplerData(UsdSamplerHandle sampler, const UsdBridgeSamplerD
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     samplerStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 
@@ -1128,6 +1152,14 @@ void UsdBridge::SetLightDataTemplate(UsdLightHandle light, const LightDataType& 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     lightStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 
@@ -1167,6 +1199,14 @@ void UsdBridge::SetCameraData(UsdCameraHandle camera, const UsdBridgeCameraData&
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     cameraStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 
