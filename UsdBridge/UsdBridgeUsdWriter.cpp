@@ -1456,9 +1456,18 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
     // Determine the filename based on stage name
+    // NOTE: ExportToString always produces ASCII, so always use .usda extension
     std::string filename;
     if(stageName == "FullScene") {
       filename = this->SceneFileName;
+      // Force .usda extension since ExportToString produces ASCII
+      if (filename.length() >= 4) {
+        std::string ext4 = filename.substr(filename.length() - 4);
+        if (ext4 == ".usd") {
+          // Replace .usd with .usda
+          filename = filename.substr(0, filename.length() - 4) + ".usda";
+        }
+      }
     } else {
       // For other stages, construct filename from SessionDirectory + stageName
       // Check if stageName already ends with .usd or .usda extension
@@ -1466,15 +1475,19 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
         std::string ext4 = stageName.substr(stageName.length() - 4);
         std::string ext5 = stageName.substr(stageName.length() - 5);
         if (ext4 == ".usd" || ext5 == ".usda") {
-          // Already has extension, don't add another
-          filename = stageName;
+          // Already has extension, ensure it's .usda
+          if (ext4 == ".usd") {
+            filename = stageName + "a";  // .usd -> .usda
+          } else {
+            filename = stageName;
+          }
         } else {
-          // Add appropriate extension
-          filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+          // Add .usda extension (ExportToString produces ASCII)
+          filename = stageName + ".usda";
         }
       } else {
-        // Too short to have extension, add it
-        filename = stageName + (this->Settings.BinaryOutput ? ".usd" : ".usda");
+        // Too short to have extension, add .usda
+        filename = stageName + ".usda";
       }
     }
 
@@ -1540,21 +1553,31 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       info.estimatedBytes = estimatedBytes;
 
       // Re-store updated file content to memory store
+      // NOTE: ExportToString always produces ASCII, so always use .usda extension
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
         std::string filename;
         if(info.name == "FullScene") {
           filename = this->SceneFileName;
+          // Force .usda extension since ExportToString produces ASCII
+          if (filename.length() >= 4) {
+            std::string ext4 = filename.substr(filename.length() - 4);
+            if (ext4 == ".usd") {
+              filename = filename.substr(0, filename.length() - 4) + ".usda";
+            }
+          }
         } else {
           filename = info.name;
           if (filename.length() >= 4) {
             std::string ext4 = filename.substr(filename.length() - 4);
             std::string ext5 = filename.substr(filename.length() - 5);
-            if (ext4 != ".usd" && ext5 != ".usda") {
-              filename += (this->Settings.BinaryOutput ? ".usd" : ".usda");
+            if (ext4 == ".usd") {
+              filename = filename + "a";  // .usd -> .usda
+            } else if (ext5 != ".usda") {
+              filename += ".usda";
             }
           } else {
-            filename += (this->Settings.BinaryOutput ? ".usd" : ".usda");
+            filename += ".usda";
           }
         }
 
