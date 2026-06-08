@@ -18,6 +18,7 @@
 #include "UsdLight.h"
 #include "UsdCamera.h"
 #include "UsdDevice_queries.h"
+#include "UsdBridge/UsdBridgeMemoryStore.h"
 
 #include "UsdBridge/Common/UsdBridgeParallelController.h"
 
@@ -29,6 +30,11 @@
 #include <sstream>
 #include <algorithm>
 #include <limits>
+#include <filesystem>
+#include <thread>
+#include <atomic>
+#include <system_error>
+#include <chrono>
 
 #ifdef USD_DEVICE_MPI_ENABLED
 #include "UsdMpiController.h"
@@ -57,6 +63,8 @@ public:
       deviceParams.outputMdlShader,
       deviceParams.useDisplayColorOpacity
     };
+
+    bridge->SetSelectiveFileSaving(deviceParams.selectiveFileSaving);
 
 #ifdef USD_DEVICE_MPI_ENABLED
     if(!mpiController)
@@ -368,7 +376,95 @@ void UsdDevice::initializeBridge()
   if (!internals->CreateNewBridge(paramData, &reportBridgeStatus, this))
   {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR, "Usd Bridge failed to load");
+    return;
   }
+
+  // MPI rank detection from environment variables
+  #ifdef ANARI_USD_ENABLE_MPI
+  const char* slurmprocid = getenv("SLURM_PROCID");
+  const char* slurmntasks = getenv("SLURM_NTASKS");
+  const char* ompirank = getenv("OMPI_COMM_WORLD_RANK");
+  const char* ompisize = getenv("OMPI_COMM_WORLD_SIZE");
+  const char* pmirank = getenv("PMI_RANK");
+  const char* pmisize = getenv("PMI_SIZE");
+
+  if (slurmprocid && slurmntasks) {
+    mpiRank = std::atoi(slurmprocid);
+    mpiSize = std::atoi(slurmntasks);
+    mpiAvailable = true;
+  }
+  else if (ompirank && ompisize) {
+    mpiRank = std::atoi(ompirank);
+    mpiSize = std::atoi(ompisize);
+    mpiAvailable = true;
+  }
+  else if (pmirank && pmisize) {
+    mpiRank = std::atoi(pmirank);
+    mpiSize = std::atoi(pmisize);
+    mpiAvailable = true;
+  }
+
+  if (mpiAvailable && mpiSize > 1) {
+    if (mpiRank == 0) {
+      zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+      if (!zmqBroker_->Initialize(mpiSize - 1)) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+            "Failed to initialize ZMQ broker on rank 0");
+      }
+      const auto& workers = zmqBroker_->GetConnectedWorkers();
+      for (const auto& worker : workers) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+            "Rank 0: Worker %d connected from %s", worker.rank, worker.hostname.c_str());
+      }
+    }
+    else {
+      zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
+      if (!zmqWorker_->Connect()) {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Failed to connect to broker on rank %d", mpiRank);
+        return;
+      }
+      fileServingActive_ = true;
+      fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                   ANARI_STATUS_NO_ERROR,
+                   "Rank %d: Started background file serving thread", mpiRank);
+    }
+    InitializeMemoryStore(mpiRank);
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Memory store initialized for rank %d", mpiRank);
+  }
+  else {
+    zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+    if (!zmqBroker_->Initialize(0)) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+          "Failed to initialize ZMQ broker");
+    }
+    if (mpiAvailable) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Single-rank MPI ZMQ broker started (rank %d)", mpiRank);
+    } else {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "Non-MPI ZMQ broker started");
+    }
+    InitializeMemoryStore(0);
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                 ANARI_STATUS_NO_ERROR,
+                 "Memory store initialized for local file serving");
+  }
+  #else
+  zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
+  if (!zmqBroker_->Initialize(0)) {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_ERROR, ANARI_STATUS_UNKNOWN_ERROR,
+        "Failed to initialize ZMQ broker");
+  }
+  InitializeMemoryStore(0);
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+               ANARI_STATUS_NO_ERROR,
+               "Memory store initialized for local file serving");
+  #endif
 }
 
 ANARIArray UsdDevice::CreateDataArray(const void *appMemory,
@@ -652,6 +748,27 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     frameObjPtr->saveUsd(this);
     frameObjPtr->renderFrame(this);
   }
+
+  // Send commit notification to laptop client
+  #ifdef ANARI_USD_ENABLE_MPI
+  if (zmqWorker_ && zmqWorker_->IsConnected() && frame) {
+    const char* frameFilename = "scene.usda";
+    auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
+    uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
+    uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp);
+  }
+
+  // Serve file requests from laptop client
+  if (zmqWorker_ && zmqWorker_->IsConnected()) {
+    ServeFileRequests();
+  }
+  #else
+  if (zmqBroker_) {
+    ServeFileRequests();
+  }
+  #endif
 }
 
 int UsdDevice::frameReady(ANARIFrame frame, ANARIWaitMask mask)
@@ -881,6 +998,39 @@ int UsdDevice::getProperty(ANARIObject object,
     else if (strEquals(name, "extension") && type == ANARI_STRING_LIST)
     {
       writeToVoidP(mem, anari::usd::query_extensions());
+      return 1;
+    }
+    else if (strEquals(name, "workerCount") && type == ANARI_INT32) {
+      int32_t workerCount = 0;
+      #ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable && mpiRank == 0 && zmqBroker_) {
+        workerCount = static_cast<int32_t>(zmqBroker_->GetConnectedWorkers().size());
+      }
+      else if (mpiAvailable && mpiSize > 1) {
+        workerCount = 0;
+      }
+      #endif
+      writeToVoidP(mem, workerCount);
+      return 1;
+    }
+    else if (strEquals(name, "mpiSize") && type == ANARI_INT32) {
+      int32_t mpiSizeValue = 1;
+      #ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable) {
+        mpiSizeValue = mpiSize;
+      }
+      #endif
+      writeToVoidP(mem, mpiSizeValue);
+      return 1;
+    }
+    else if (strEquals(name, "mpiRank") && type == ANARI_INT32) {
+      int32_t mpiRankValue = 0;
+      #ifdef ANARI_USD_ENABLE_MPI
+      if (mpiAvailable) {
+        mpiRankValue = mpiRank;
+      }
+      #endif
+      writeToVoidP(mem, mpiRankValue);
       return 1;
     }
   }
@@ -1135,6 +1285,86 @@ bool UsdDevice::isStrAllocated(const UsdSharedString* ptr) const
 bool UsdDevice::isRawAllocated(const void* ptr) const
 {
   return isAllocated(ptr, allocatedRawMemory);
+}
+#endif
+
+#ifdef ANARI_USD_ENABLE_MPI
+void UsdDevice::ServeFileRequests()
+{
+  if (mpiAvailable && mpiRank == 0) return;
+  if (!zmqWorker_) return;
+
+  using namespace usd_bridge;
+  ZmqFileRequest request;
+
+  while (zmqWorker_->CheckForFileRequest(request, false)) {
+    if (request.magic != USD_FILE_MAGIC) {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+                   ANARI_STATUS_INVALID_OPERATION,
+                   "Rank %d: Received invalid file request (bad magic)", mpiRank);
+      continue;
+    }
+
+    if (request.message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
+      auto files = g_rankMemoryStore ? g_rankMemoryStore->ListFiles() : std::vector<std::string>();
+      std::stringstream jsonResponse;
+      jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
+      bool first = true;
+      for (const auto& filename : files) {
+        if (filename.size() > 6 && filename.substr(filename.size() - 6) == ".usda") {
+          continue;
+        }
+        if (!first) jsonResponse << ",";
+        jsonResponse << "\"" << filename << "\"";
+        first = false;
+      }
+      jsonResponse << "]}";
+      std::string jsonStr = jsonResponse.str();
+      zmqWorker_->SendFileChunk(request.request_id, "__file_list__.json",
+          jsonStr.data(), jsonStr.size(), 0, jsonStr.size());
+      zmqWorker_->SendFileComplete(request.request_id, "__file_list__.json", jsonStr.size());
+      continue;
+    }
+
+    if (!g_rankMemoryStore) {
+      zmqWorker_->SendNoFile(request.request_id, request.filename);
+      continue;
+    }
+
+    auto* fileEntry = g_rankMemoryStore->GetFile(request.filename);
+    if (!fileEntry) {
+      zmqWorker_->SendNoFile(request.request_id, request.filename);
+      continue;
+    }
+
+    size_t totalSize = fileEntry->data.size();
+    size_t chunkSize = 4 * 1024 * 1024; // 4MB chunks
+    size_t offset = 0;
+
+    while (offset < totalSize) {
+      size_t sendSize = std::min(chunkSize, totalSize - offset);
+      zmqWorker_->SendFileChunk(request.request_id, request.filename,
+          fileEntry->data.data() + offset, sendSize, offset, totalSize);
+      offset += sendSize;
+    }
+
+    if (offset == totalSize) {
+      zmqWorker_->SendFileComplete(request.request_id, request.filename, totalSize);
+    }
+  }
+}
+
+void UsdDevice::FileServingThreadLoop()
+{
+  while (fileServingActive_) {
+    ServeFileRequests();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+void UsdDevice::NotifyFrameReady(double timestep)
+{
+  (void)timestep;
 }
 #endif
 

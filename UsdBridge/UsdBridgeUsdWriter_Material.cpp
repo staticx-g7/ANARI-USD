@@ -1188,6 +1188,8 @@ void UsdBridgeUsdWriter::UpdateUsdMaterialManifest(const UsdBridgePrimCache* cac
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
 void UsdBridgeUsdWriter::UpdateUsdSamplerManifest(const UsdBridgePrimCache* cacheEntry, const UsdBridgeSamplerData& samplerData)
@@ -1199,6 +1201,8 @@ void UsdBridgeUsdWriter::UpdateUsdSamplerManifest(const UsdBridgePrimCache* cach
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 #endif
 

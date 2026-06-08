@@ -6,6 +6,7 @@
 #include "UsdBridgeMdlStrings.h"
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
+#include "UsdBridgeMemoryStore.h"
 #include "Common/UsdBridgeParallelController.h"
 
 #include <filesystem>
@@ -180,6 +181,11 @@ void UsdBridgeUsdWriter::SetExternalSceneStage(UsdStageRefPtr sceneStage)
 void UsdBridgeUsdWriter::SetEnableSaving(bool enableSaving)
 {
   this->EnableSaving = enableSaving;
+}
+
+void UsdBridgeUsdWriter::SetSelectiveFileSaving(bool selectiveFileSaving)
+{
+  this->SelectiveFileSaving = selectiveFileSaving;
 }
 
 void UsdBridgeUsdWriter::SaveScene()
@@ -1329,4 +1335,40 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
     }
   }
   keys.resize(0);
+}
+
+void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, const UsdStageRefPtr& stage)
+{
+  if (!stage) return;
+
+  std::ostringstream oss;
+  stage->GetRootLayer()->Export(oss);
+  std::string content = oss.str();
+
+  size_t totalSize = content.size();
+
+  MemoryTracking.push_back({stageName, totalSize});
+
+  if (g_rankMemoryStore) {
+    g_rankMemoryStore->StoreFile(stageName, content);
+  }
+}
+
+void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
+{
+  MemoryTracking.clear();
+
+  // Track scene stage
+  if (SceneStage) {
+    TrackStageMemory("scene.usda", SceneStage);
+  }
+}
+
+size_t UsdBridgeUsdWriter::GetTotalMemoryUsage() const
+{
+  size_t total = 0;
+  for (const auto& info : MemoryTracking) {
+    total += info.size;
+  }
+  return total;
 }

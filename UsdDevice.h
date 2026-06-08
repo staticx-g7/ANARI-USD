@@ -10,6 +10,12 @@
 #include <vector>
 #include <memory>
 
+#ifdef ANARI_USD_ENABLE_MPI
+#include <thread>
+#include <atomic>
+#include "UsdBridgeZmqBroker.h"
+#endif
+
 #ifdef _WIN32
 #ifdef anari_library_usd_EXPORTS
 #define USDDevice_INTERFACE __declspec(dllexport)
@@ -36,16 +42,16 @@ struct UsdDeviceData
 {
   UsdSharedString* hostName = nullptr;
   UsdSharedString* outputPath = nullptr;
-  bool createNewSession = true;
+  bool createNewSession = false;
   bool outputBinary = false;
   bool writeAtCommit = false;
 
   double timeStep = 0.0;
 
   bool outputMaterial = true;
-  bool outputPreviewSurfaceShader = true;
-  bool outputMdlShader = true;
-  bool useDisplayColorOpacity = false;
+  bool outputPreviewSurfaceShader = false;
+  bool outputMdlShader = false;
+  bool selectiveFileSaving = false; // Only save geometry and texture files
 };
 
 class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<UsdDevice, UsdDeviceData>
@@ -318,5 +324,25 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     const void* statusUserData = nullptr;
     ANARIStatusCallback userSetStatusFunc = nullptr;
     const void* userSetStatusUserData = nullptr;
+
+  private:
+  #ifdef ANARI_USD_ENABLE_MPI
+    int mpiRank = 0;
+    int mpiSize = 1;
+    bool mpiAvailable = false;
+    bool mpiInitializedByUs_{false};
+
+    std::unique_ptr<usd_bridge::ZmqBroker> zmqBroker_;
+    std::unique_ptr<usd_bridge::ZmqWorker> zmqWorker_;
+
+    void ServeFileRequests();
+
+    std::thread fileServingThread_;
+    std::atomic<bool> fileServingActive_{false};
+    void FileServingThreadLoop();
+
+    uint32_t frameCounter_{0};
+    void NotifyFrameReady(double timestep);
+  #endif
 };
 

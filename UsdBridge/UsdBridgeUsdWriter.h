@@ -168,6 +168,14 @@ public:
 
   void ResetSharedResourceModified();
 
+  void SetSelectiveFileSaving(bool selectiveFileSaving);
+  bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
+
+  void TrackStageMemory(const std::string& stageName, const UsdStageRefPtr& stage);
+  void RecalculateAllMemoryUsage();
+  size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
+  size_t GetTotalMemoryUsage() const;
+
   TfToken& AttributeNameToken(const char* attribName);
 
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
@@ -211,7 +219,8 @@ protected:
   int SessionNumber = -1;
   UsdStageRefPtr SceneStage;
   UsdStageRefPtr ExternalSceneStage;
-  bool EnableSaving = true;
+  bool EnableSaving = false;
+  bool SelectiveFileSaving = false;
   std::string SceneFileName;
   std::string SessionDirectory;
   std::string MpiBaseSessionDirectory; // Session directory without rank suffix (only set when MPI active)
@@ -227,6 +236,12 @@ protected:
 
   std::string TempNameStr;
   std::vector<unsigned char> TempImageData;
+
+  struct StageMemoryInfo {
+    std::string name;
+    size_t size;
+  };
+  std::vector<StageMemoryInfo> MemoryTracking;
 };
 
 void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 

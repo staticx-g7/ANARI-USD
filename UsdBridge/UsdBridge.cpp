@@ -297,6 +297,11 @@ void UsdBridge::SetEnableSaving(bool enableSaving)
   BRIDGE_USDWRITER.SetEnableSaving(enableSaving);
 }
 
+void UsdBridge::SetSelectiveFileSaving(bool selectiveFileSaving)
+{
+  BRIDGE_USDWRITER.SetSelectiveFileSaving(selectiveFileSaving);
+}
+
 bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
 {
   BRIDGE_USDWRITER.LogObject = {logUserData, logCallback};
@@ -1008,6 +1013,14 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
     geomStage->Save();
+  else
+  {
+    auto it = cache->ClipStages.find(timeStep);
+    if(it != cache->ClipStages.end())
+    {
+      BRIDGE_USDWRITER.TrackStageMemory(it->second.first, it->second.second);
+    }
+  }
 #endif
 }
 

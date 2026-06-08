@@ -110,6 +110,8 @@ void UsdBridgeUsdWriter::UpdateUsdVolumeManifest(const UsdBridgePrimCache* cache
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 #endif
 

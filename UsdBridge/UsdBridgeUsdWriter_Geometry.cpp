@@ -1221,6 +1221,8 @@ void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cac
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
 void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cacheEntry, const UsdBridgeInstancerData& instancerData)
@@ -1231,6 +1233,8 @@ void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cac
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
 void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cacheEntry, const UsdBridgeCurveData& curveData)
@@ -1241,6 +1245,8 @@ void UsdBridgeUsdWriter::UpdateUsdGeometryManifest(const UsdBridgePrimCache* cac
 
   if(this->EnableSaving)
     cacheEntry->ManifestStage.second->Save();
+  else
+    this->TrackStageMemory(cacheEntry->ManifestStage.first + " (manifest)", cacheEntry->ManifestStage.second);
 }
 #endif
 
