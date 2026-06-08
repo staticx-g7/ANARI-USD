@@ -64,8 +64,6 @@ public:
       deviceParams.useDisplayColorOpacity
     };
 
-    bridge->SetSelectiveFileSaving(deviceParams.selectiveFileSaving);
-
 #ifdef USD_DEVICE_MPI_ENABLED
     if(!mpiController)
       mpiController = UsdMpiController::CreateDefault();
@@ -82,6 +80,7 @@ public:
 
     bridge->SetExternalSceneStage(externalSceneStage);
     bridge->SetEnableSaving(this->enableSaving);
+    bridge->SetSelectiveFileSaving(deviceParams.selectiveFileSaving);
 
     bridgeStatusFunc(UsdBridgeLogLevel::STATUS, userData, "Initializing UsdBridge Session");
 
