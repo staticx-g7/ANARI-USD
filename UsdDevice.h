@@ -51,6 +51,7 @@ struct UsdDeviceData
   bool outputMaterial = true;
   bool outputPreviewSurfaceShader = false;
   bool outputMdlShader = false;
+  bool useDisplayColorOpacity = false;
   bool selectiveFileSaving = false; // Only save geometry and texture files
 };
 
