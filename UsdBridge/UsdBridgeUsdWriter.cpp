@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <typeinfo>
+#include <cstdlib>
 
 #define PROCESS_PREFIX
 
@@ -82,6 +83,34 @@ namespace constring
   const char* const indexShaderPf = "indexshader";
   const char* const indexColorMapPf = "indexcolormap";
 #endif
+}
+
+static bool GetMpiRankSizeFromEnv(int &rank, int &size)
+{
+  const char *slurmprocid = getenv("SLURM_PROCID");
+  const char *slurmntasks = getenv("SLURM_NTASKS");
+  const char *ompirank = getenv("OMPI_COMM_WORLD_RANK");
+  const char *ompisize = getenv("OMPI_COMM_WORLD_SIZE");
+  const char *pmirank = getenv("PMI_RANK");
+  const char *pmisize = getenv("PMI_SIZE");
+
+  if (slurmprocid && slurmntasks) {
+    rank = std::atoi(slurmprocid);
+    size = std::atoi(slurmntasks);
+    return true;
+  } else if (ompirank && ompisize) {
+    rank = std::atoi(ompirank);
+    size = std::atoi(ompisize);
+    return true;
+  } else if (pmirank && pmisize) {
+    rank = std::atoi(pmirank);
+    size = std::atoi(pmisize);
+    return true;
+  }
+
+  rank = 0;
+  size = 1;
+  return false;
 }
 
 #ifdef OMNIVERSE_CONNECTION_ENABLE
@@ -598,10 +627,17 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
     // Create a new Clipstage
     const char* folder = constring::primStageFolder;
     std::string fullNamePostfix(namePostfix); 
-    if(isClip) 
+    if(isClip)
     {
       folder = constring::clipFolder;
-      fullNamePostfix += std::to_string(timeStep); 
+
+      // Add rank suffix to clip filename (but prim name stays the same)
+      int mpiRank = 0, mpiSize = 1;
+      if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1) {
+        fullNamePostfix += "_r" + std::to_string(mpiRank);
+      }
+
+      fullNamePostfix += "_" + std::to_string(timeStep);
     }
     std::string relativeFileName = folder + cacheEntry->Name.GetString() + fullNamePostfix + (binary ? ".usd" : ".usda");
 
