@@ -508,10 +508,13 @@ void ZmqBroker::MessageLoopThread() {
                                 }
                             }
                             
-                            const auto& entry = g_rankMemoryStore->GetFile(filename);
-                            if (!first) jsonResponse << ",";
-                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
-                            first = false;
+                             const auto& entry = g_rankMemoryStore->GetFile(filename);
+                             uint64_t hLo = entry->hash128[0];
+                             uint64_t hHi = entry->hash128[1];
+                             if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
+                             if (!first) jsonResponse << ",";
+                             jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
+                             first = false;
                         }
                         jsonResponse << "]}";
                         
@@ -631,8 +634,10 @@ void ZmqBroker::MessageLoopThread() {
                                     }
                                     
                                     const auto& entry = g_rankMemoryStore->GetFile(filename);
+                                    uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
+                                    if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
                                     if (!first) jsonResponse << ",";
-                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << entry->hash128[0] << ",\"hash_hi\":" << entry->hash128[1] << "}";
+                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
                                     first = false;
                                 }
                                 jsonResponse << "]}";
@@ -724,8 +729,10 @@ void ZmqBroker::MessageLoopThread() {
                                             }
                                             
                                             const auto& entry = g_rankMemoryStore->GetFile(filename);
+                                            uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
+                                            if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
                                             if (!first) jsonResponse << ",";
-                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << entry->hash128[0] << ",\"hash_hi\":" << entry->hash128[1] << "}";
+                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
 
                                             first = false;
                                         }
