@@ -6,6 +6,16 @@
 #include <chrono>
 #include <cstring>
 
+#define XXH_INLINE_ALL
+#include "xxhash/xxhash.h"
+
+// Helper: compute XXH3-128 hash of a data buffer
+static void ComputeHash128(const uint8_t* data, size_t size, uint64_t outHash[2]) {
+    XXH128_hash_t h = XXH3_128bits(data, size, 0);
+    outHash[0] = h.low64;
+    outHash[1] = h.high64;
+}
+
 // Global instance
 UsdBridgeMemoryStore* g_rankMemoryStore = nullptr;
 
@@ -34,45 +44,53 @@ void UsdBridgeMemoryStore::StoreFile(const std::string& filename,
 }
 
 void UsdBridgeMemoryStore::StoreFile(const std::string& filename,
-                                       const void* data,
-                                       size_t size,
-                                       const std::string& mime_type)
+                                        const void* data,
+                                        size_t size,
+                                        const std::string& mime_type)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
+    // Compute hash OUTSIDE lock (fast, no contention with other ops)
+    uint64_t hash[2] = {0, 0};
+    ComputeHash128(static_cast<const uint8_t*>(data), size, hash);
+
     // Get current timestamp
     auto now = std::chrono::system_clock::now();
     auto timestamp = std::chrono::duration<double>(now.time_since_epoch()).count();
-    
+
     // Check if file already exists
     auto it = files_.find(filename);
     if (it != files_.end()) {
         // File exists - update it
         total_memory_usage_ -= it->second.data.size();
-        it->second.data.assign(static_cast<const uint8_t*>(data), 
+        it->second.data.assign(static_cast<const uint8_t*>(data),
                                static_cast<const uint8_t*>(data) + size);
         it->second.mime_type = mime_type;
         it->second.timestamp = timestamp;
+        it->second.hash128[0] = hash[0];
+        it->second.hash128[1] = hash[1];
         total_memory_usage_ += size;
-        
-        std::cout << "[MemoryStore] Rank " << rank_ 
-                  << " updated: " << filename 
+
+        std::cout << "[MemoryStore] Rank " << rank_
+                  << " updated: " << filename
                   << " (" << (size / 1024.0) << " KB, " << mime_type << ")"
                   << std::endl;
     } else {
         // New file - create entry
         FileEntry entry;
         entry.filename = filename;
-        entry.data.assign(static_cast<const uint8_t*>(data), 
-                          static_cast<const uint8_t*>(data) + size);
+        entry.data.assign(static_cast<const uint8_t*>(data),
+                           static_cast<const uint8_t*>(data) + size);
         entry.mime_type = mime_type;
         entry.timestamp = timestamp;
-        
+        entry.hash128[0] = hash[0];
+        entry.hash128[1] = hash[1];
+
         files_[filename] = std::move(entry);
         total_memory_usage_ += size;
-        
-        std::cout << "[MemoryStore] Rank " << rank_ 
-                  << " stored: " << filename 
+
+        std::cout << "[MemoryStore] Rank " << rank_
+                  << " stored: " << filename
                   << " (" << (size / 1024.0) << " KB, " << mime_type << ")"
                   << std::endl;
     }

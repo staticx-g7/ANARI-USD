@@ -31,7 +31,8 @@ public:
         std::vector<uint8_t> data;     // Serialized content
         std::string mime_type;         // "text/plain", "image/png", "application/vdb"
         double timestamp;              // Creation/update time
-        
+        uint64_t hash128[2];           // XXH3-128 hash of data
+
         size_t size() const { return data.size(); }
     };
     

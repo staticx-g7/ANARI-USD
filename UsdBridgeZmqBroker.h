@@ -84,8 +84,8 @@ struct __attribute__((packed)) ZmqFileNotification {
     uint32_t message_type;     // NOTIFY_FILE_UPDATE or NOTIFY_COMMIT_COMPLETE
     int32_t source_rank;       // Which rank sent this
     char filename[256];        // Filename that was updated
-    uint64_t file_size;        // Current file size
     uint64_t timestamp;        // Unix timestamp of update
+    uint64_t hash128[2];       // XXH3-128 hash of file data
 };
 
 // Property query response (Broker → Laptop)
@@ -178,8 +178,8 @@ public:
     bool SendNoFile(uint32_t requestId, const std::string& filename);
 
     // Push notification handling
-    bool SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp);
-    bool SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp);
+    bool SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128 = nullptr);
+    bool SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128 = nullptr);
 
     std::string GetInfiniBandIP();
     bool IsConnected() const { return connected_; }

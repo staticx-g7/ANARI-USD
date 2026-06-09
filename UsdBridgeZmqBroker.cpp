@@ -617,7 +617,7 @@ void ZmqBroker::MessageLoopThread() {
                                     
                                     const auto& entry = g_rankMemoryStore->GetFile(filename);
                                     if (!first) jsonResponse << ",";
-                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
+                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << entry->hash128[0] << ",\"hash_hi\":" << entry->hash128[1] << "}";
                                     first = false;
                                 }
                                 jsonResponse << "]}";
@@ -703,7 +703,7 @@ void ZmqBroker::MessageLoopThread() {
                                             
                                             const auto& entry = g_rankMemoryStore->GetFile(filename);
                                             if (!first) jsonResponse << ",";
-                                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\"}";
+                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << entry->hash128[0] << ",\"hash_hi\":" << entry->hash128[1] << "}";
 
                                             first = false;
                                         }
