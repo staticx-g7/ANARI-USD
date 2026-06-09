@@ -184,13 +184,12 @@ target_compile_definitions(anari_library_usd
     -DDEVICE_VERSION_NAME=\"${USD_DEVICE_VERSION}\"
     ${USD_DEVICE_TIME_DEFS})
 
-# Include xxhash headers
-target_include_directories(anari_library_usd PRIVATE ${CMAKE_CURRENT_LIST_DIR}/UsdBridge)
-set(xxhash.c  # For xxhash.h + xxhash.c
-target_sources(anari_library_usd PRIVATE
-    UsdBridge/xxhash/xxhash.c
-    UsdBridge/xxhash/xxhash.h
+# Include xxhash headers and compile xxhash.c
+target_include_directories(anari_library_usd PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/UsdBridge
+    ${CMAKE_CURRENT_LIST_DIR}/UsdBridge/xxhash
 )
+target_sources(anari_library_usd PRIVATE UsdBridge/xxhash/xxhash.c)
 
 option(CHECK_OBJECT_REFERENCES "Perform a memory check on the reference count of all objects allocated by a USD device, avoiding memleaks and double deletion." OFF)
 if(CHECK_OBJECT_REFERENCES)
