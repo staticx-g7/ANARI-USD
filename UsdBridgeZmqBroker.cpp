@@ -1616,7 +1616,7 @@ bool ZmqWorker::SendNoFile(uint32_t requestId, const std::string& filename) {
 // Push Notification Methods
 // ============================================================================
 
-bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp) {
+bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
 
     try {
@@ -1628,6 +1628,8 @@ bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileS
         msg.filename[sizeof(msg.filename) - 1] = '\0';
         msg.file_size = fileSize;
         msg.timestamp = timestamp;
+        msg.hash128[0] = hash128 ? hash128[0] : 0;
+        msg.hash128[1] = hash128 ? hash128[1] : 0;
 
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));
@@ -1645,7 +1647,7 @@ bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileS
     }
 }
 
-bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp) {
+bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
 
     try {
@@ -1657,6 +1659,8 @@ bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fil
         msg.filename[sizeof(msg.filename) - 1] = '\0';
         msg.file_size = fileSize;
         msg.timestamp = timestamp;
+        msg.hash128[0] = hash128 ? hash128[0] : 0;
+        msg.hash128[1] = hash128 ? hash128[1] : 0;
 
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));
