@@ -499,6 +499,14 @@ void ZmqBroker::MessageLoopThread() {
                                 std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Skipping duplicate extension file: " << filename << std::endl;
                                 continue;
                             }
+                            // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
+                            if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
+                                std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
+                                if (g_rankMemoryStore->HasFile(usdVariant)) {
+                                    std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Skipping .usda duplicate: " << filename << " (.usd exists)" << std::endl;
+                                    continue;
+                                }
+                            }
                             
                             const auto& entry = g_rankMemoryStore->GetFile(filename);
                             if (!first) jsonResponse << ",";
@@ -614,6 +622,13 @@ void ZmqBroker::MessageLoopThread() {
                                         std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file: " << filename << std::endl;
                                         continue;
                                     }
+                                    // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
+                                    if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
+                                        std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
+                                        if (g_rankMemoryStore->HasFile(usdVariant)) {
+                                            continue;
+                                        }
+                                    }
                                     
                                     const auto& entry = g_rankMemoryStore->GetFile(filename);
                                     if (!first) jsonResponse << ",";
@@ -699,6 +714,13 @@ void ZmqBroker::MessageLoopThread() {
                                             if (filename.find(".usda.usda") != std::string::npos) {
                                                 std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file in direct request: " << filename << std::endl;
                                                 continue;
+                                            }
+                                            // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
+                                            if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
+                                                std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
+                                                if (g_rankMemoryStore->HasFile(usdVariant)) {
+                                                    continue;
+                                                }
                                             }
                                             
                                             const auto& entry = g_rankMemoryStore->GetFile(filename);
