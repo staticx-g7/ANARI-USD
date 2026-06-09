@@ -19,6 +19,7 @@
 #include "UsdCamera.h"
 #include "UsdDevice_queries.h"
 #include "UsdBridge/UsdBridgeMemoryStore.h"
+#include "UsdBridge/xxhash/xxhash.h"
 
 #include "UsdBridge/Common/UsdBridgeParallelController.h"
 
@@ -1360,17 +1361,26 @@ void UsdDevice::ServeFileRequests()
       bool first = true;
        for (const auto& filename : files) {
         if (filename.find(".usda.usda") != std::string::npos) continue;
+        // Skip .usda if .usd counterpart exists
+        if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
+          std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
+          if (g_rankMemoryStore && g_rankMemoryStore->HasFile(usdVariant)) continue;
+        }
         if (!first) jsonResponse << ",";
         uint64_t fsize = 0;
         const char* mime = "application/octet-stream";
+        uint64_t hLo = 0, hHi = 0;
         if (g_rankMemoryStore) {
           auto* entry = g_rankMemoryStore->GetFile(filename);
           if (entry) {
             fsize = entry->size();
             mime = entry->mime_type.c_str();
+            hLo = entry->hash128[0];
+            hHi = entry->hash128[1];
+            if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
           }
         }
-        jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << fsize << ",\"mime\":\"" << mime << "\"}";
+        jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << fsize << ",\"mime\":\"" << mime << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
         first = false;
       }
       jsonResponse << "]}";
