@@ -1478,6 +1478,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   // Add to tracking
   StageMemoryInfo info;
   info.name = stageName;
+  info.filename = filename; // Store actual filename to avoid .usd/.usda duplicates on recalculation
   info.estimatedBytes = estimatedBytes;
   info.stage = stage; // Store reference for later recalculation
   MemoryTracking.push_back(info);
@@ -1520,33 +1521,18 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
 
-      // Re-store updated file content to memory store
+      // Re-store updated file content to memory store (use stored filename to avoid .usd/.usda duplicates)
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
-        std::string filename;
-        if(info.name == "FullScene") {
-          filename = this->SceneFileName;
-        } else {
-          filename = info.name;
-          if (filename.length() >= 4) {
-            std::string ext4 = filename.substr(filename.length() - 4);
-            std::string ext5 = filename.substr(filename.length() - 5);
-            if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda") {
-              filename += ".usda";
-            }
-          } else {
-            filename += ".usda";
-          }
-        }
+        std::string filename = info.filename.empty() ? info.name : info.filename;
 
-        g_rankMemoryStore->StoreFile(
+        g_rankMemoryStore->UpdateFile(
           filename,
           fullUsdContent.data(),
-          fullUsdContent.size(),
-          "text/plain"
+          fullUsdContent.size()
         );
 
-        std::cout << "[RecalculateAllMemoryUsage] Re-stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
+        std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
       }
     }
   }

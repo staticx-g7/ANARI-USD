@@ -135,6 +135,11 @@ void UsdBridgeMemoryStore::UpdateFile(const std::string& filename,
                                static_cast<const uint8_t*>(data) + size);
         total_memory_usage_ += size;
         
+        // Recompute XXH3-128 hash
+        XXH128_hash_t hash = XXH3_128bits(data, size);
+        it->second.hash128[0] = hash.low64;
+        it->second.hash128[1] = hash.high64;
+        
         auto now = std::chrono::system_clock::now();
         it->second.timestamp = std::chrono::duration<double>(now.time_since_epoch()).count();
     } else {

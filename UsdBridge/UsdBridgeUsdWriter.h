@@ -239,9 +239,10 @@ protected:
   std::vector<unsigned char> TempImageData;
 
   struct StageMemoryInfo {
-    std::string name;
+    std::string name;         // Stage logical name
+    std::string filename;     // Actual filename in memory store (preserves extension)
     size_t estimatedBytes;
-    UsdStageRefPtr stage; // Keep reference to stage for recalculation
+    UsdStageRefPtr stage;     // Keep reference to stage for recalculation
   };
   std::vector<StageMemoryInfo> MemoryTracking;
 };
