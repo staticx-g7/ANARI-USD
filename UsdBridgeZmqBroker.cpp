@@ -1,6 +1,7 @@
 
 #include "UsdBridgeZmqBroker.h"
 #include "UsdBridge/UsdBridgeMemoryStore.h"
+#include "UsdBridge/xxhash/xxhash.h"
 
 #include <zmq.hpp>
 #include <iostream>
