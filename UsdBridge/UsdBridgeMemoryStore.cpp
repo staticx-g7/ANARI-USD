@@ -6,12 +6,11 @@
 #include <chrono>
 #include <cstring>
 
-#define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
 
 // Helper: compute XXH3-128 hash of a data buffer
 static void ComputeHash128(const uint8_t* data, size_t size, uint64_t outHash[2]) {
-    XXH128_hash_t h = XXH3_128bits(data, size, 0);
+    XXH128_hash_t h = XXH3_128bits(data, size);
     outHash[0] = h.low64;
     outHash[1] = h.high64;
 }

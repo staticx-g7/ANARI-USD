@@ -178,6 +178,7 @@ set(USDBRIDGE_SOURCES
   UsdBridgeRt.cpp
   UsdBridgeDiagnosticMgrDelegate.cpp
   UsdBridgeMemoryStore.cpp
+  xxhash/xxhash.c
   UsdBridge.h
   UsdBridgeCaches.h
   UsdBridgeUsdWriter.h
@@ -211,6 +212,7 @@ target_include_directories(UsdBridge
     ${CMAKE_CURRENT_LIST_DIR}
   PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/Mdl
+    ${CMAKE_CURRENT_LIST_DIR}/xxhash
     ${Boost_SEP_INCLUDE_DIR}
   )
 
