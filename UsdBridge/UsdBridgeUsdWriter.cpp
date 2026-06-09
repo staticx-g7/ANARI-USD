@@ -1445,26 +1445,27 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     estimatedBytes = fullUsdContent.size();
   }
 
+  // Determine the filename based on stage name
+  std::string filename;
+  if(stageName == "FullScene")
+    filename = this->SceneFileName;
+  else
+  {
+    filename = stageName;
+    if (filename.length() >= 4)
+    {
+      std::string ext4 = filename.substr(filename.length() - 4);
+      std::string ext5 = filename.substr(filename.length() - 5);
+      if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda")
+        filename += ".usda";
+    }
+    else
+      filename += ".usda";
+  }
+
   // Store in memory file store for ZMQ streaming
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
-    // Determine the filename based on stage name
-    std::string filename;
-    if(stageName == "FullScene") {
-      filename = this->SceneFileName;
-    } else {
-      filename = stageName;
-      if (filename.length() >= 4) {
-        std::string ext4 = filename.substr(filename.length() - 4);
-        std::string ext5 = filename.substr(filename.length() - 5);
-        if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda") {
-          filename += ".usda";
-        }
-      } else {
-        filename += ".usda";
-      }
-    }
-
     g_rankMemoryStore->StoreFile(
       filename,
       fullUsdContent.data(),
