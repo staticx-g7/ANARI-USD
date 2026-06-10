@@ -1359,14 +1359,9 @@ void UsdDevice::ServeFileRequests()
       std::stringstream jsonResponse;
       jsonResponse << "{\"rank\":" << mpiRank << ",\"files\":[";
       bool first = true;
-       for (const auto& filename : files) {
-        if (filename.find(".usda.usda") != std::string::npos) continue;
-        // Skip .usda if .usd counterpart exists
-        if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
-          std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
-          if (g_rankMemoryStore && g_rankMemoryStore->HasFile(usdVariant)) continue;
-        }
-        if (!first) jsonResponse << ",";
+        for (const auto& filename : files) {
+         if (filename.find(".usda.usda") != std::string::npos) continue;
+         if (!first) jsonResponse << ",";
         uint64_t fsize = 0;
         const char* mime = "application/octet-stream";
         uint64_t hLo = 0, hHi = 0;

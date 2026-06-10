@@ -7,6 +7,7 @@
 #include "UsdSampler.h"
 #include "UsdDataArray.h"
 #include "UsdGeometry.h"
+#include "UsdBridgeMemoryStore.h"
 
 #define SamplerType ANARI_SAMPLER
 using SamplerUsdType = AnariToUsdBridgedObject<SamplerType>::Type;
@@ -221,6 +222,10 @@ bool UsdMaterial::doCommitData(UsdDevice* device)
   bool isNew = false;
   if (!usdHandle.value)
     isNew = usdBridge->CreateMaterial(getName(), usdHandle);
+
+  // Force update in memory-only mode: Catalyst may update material data in-place
+  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
+  if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
   {

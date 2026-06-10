@@ -495,20 +495,7 @@ void ZmqBroker::MessageLoopThread() {
                         jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
                         bool first = true;
                         for (const auto& filename : files) {
-                            // Filter out .usda.usda files (duplicate extensions)
-                            if (filename.find(".usda.usda") != std::string::npos) {
-                                std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Skipping duplicate extension file: " << filename << std::endl;
-                                continue;
-                            }
-                            // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
-                            if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
-                                std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
-                                if (g_rankMemoryStore->HasFile(usdVariant)) {
-                                    std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Skipping .usda duplicate: " << filename << " (.usd exists)" << std::endl;
-                                    continue;
-                                }
-                            }
-                            
+                            if (filename.find(".usda.usda") != std::string::npos) continue;
                              const auto& entry = g_rankMemoryStore->GetFile(filename);
                              uint64_t hLo = entry->hash128[0];
                              uint64_t hHi = entry->hash128[1];
@@ -621,18 +608,7 @@ void ZmqBroker::MessageLoopThread() {
                                 jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
                                 bool first = true;
                                 for (const auto& filename : files) {
-                                    // Filter out .usda.usda files (duplicate extensions)
-                                    if (filename.find(".usda.usda") != std::string::npos) {
-                                        std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file: " << filename << std::endl;
-                                        continue;
-                                    }
-                                    // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
-                                    if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
-                                        std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
-                                        if (g_rankMemoryStore->HasFile(usdVariant)) {
-                                            continue;
-                                        }
-                                    }
+                                    if (filename.find(".usda.usda") != std::string::npos) continue;
                                     
                                     const auto& entry = g_rankMemoryStore->GetFile(filename);
                                     uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
@@ -716,18 +692,7 @@ void ZmqBroker::MessageLoopThread() {
                                         bool first = true;
                                         for (const auto& filename : files)
                                         {
-                                            // Filter out .usda.usda files (duplicate extensions)
-                                            if (filename.find(".usda.usda") != std::string::npos) {
-                                                std::cout << "[Rank 0 MPI Broker] Skipping duplicate extension file in direct request: " << filename << std::endl;
-                                                continue;
-                                            }
-                                            // Skip .usda if .usd counterpart exists (dedup .usd/.usda pairs)
-                                            if (filename.size() >= 5 && filename.substr(filename.size() - 5) == ".usda") {
-                                                std::string usdVariant = filename.substr(0, filename.size() - 5) + ".usd";
-                                                if (g_rankMemoryStore->HasFile(usdVariant)) {
-                                                    continue;
-                                                }
-                                            }
+                                            if (filename.find(".usda.usda") != std::string::npos) continue;
                                             
                                             const auto& entry = g_rankMemoryStore->GetFile(filename);
                                             uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];

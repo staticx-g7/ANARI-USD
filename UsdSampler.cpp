@@ -5,6 +5,7 @@
 #include "UsdAnari.h"
 #include "UsdDevice.h"
 #include "UsdDataArray.h"
+#include "UsdBridgeMemoryStore.h"
 
 DEFINE_PARAMETER_MAP(UsdSampler, 
   REGISTER_PARAMETER_MACRO("name", ANARI_STRING, name)
@@ -127,6 +128,10 @@ bool UsdSampler::doCommitData(UsdDevice* device)
   bool isNew = false;
   if (!usdHandle.value)
     isNew = usdBridge->CreateSampler(getName(), usdHandle, type);
+
+  // Force update in memory-only mode: Catalyst may update sampler/texture data in-place
+  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
+  if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
   {

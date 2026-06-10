@@ -9,6 +9,7 @@
 #include "UsdBridgeMemoryStore.h"
 #include "Common/UsdBridgeParallelController.h"
 
+#include <cstring>
 #include <filesystem>
 #include <typeinfo>
 #include <cstdlib>
@@ -1435,6 +1436,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     return;
 
   // Export authored root layer — captures time-sampled data Catalyst writes in-place
+  // ExportToString is memory-only, zero disk I/O
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
 
@@ -1445,10 +1447,10 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     estimatedBytes = fullUsdContent.size();
   }
 
-  // Determine the filename based on stage name
+  // Always use .usda — ExportToString produces ASCII text
   std::string filename;
   if(stageName == "FullScene")
-    filename = this->SceneFileName;
+    filename = "FullScene.usda";
   else
   {
     filename = stageName;
@@ -1476,13 +1478,23 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
   }
 
-  // Add to tracking
-  StageMemoryInfo info;
-  info.name = stageName;
-  info.filename = filename; // Store actual filename to avoid .usd/.usda duplicates on recalculation
-  info.estimatedBytes = estimatedBytes;
-  info.stage = stage; // Store reference for later recalculation
-  MemoryTracking.push_back(info);
+  // Add to tracking (dedup by filename to avoid duplicate entries for same stage)
+  for (auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it) {
+    if (it->filename == filename) {
+      it->stage = stage;
+      it->estimatedBytes = estimatedBytes;
+      goto tracking_done;
+    }
+  }
+  {
+    StageMemoryInfo info;
+    info.name = stageName;
+    info.filename = filename; // Store actual filename to avoid .usd/.usda duplicates on recalculation
+    info.estimatedBytes = estimatedBytes;
+    info.stage = stage; // Store reference for later recalculation
+    MemoryTracking.push_back(info);
+  }
+tracking_done:;
 
   // Log the memory usage
   double sizeMB = estimatedBytes / (1024.0 * 1024.0);
@@ -1504,7 +1516,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
   std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
 
-  // Re-export authored layers — captures time-sampled data Catalyst writes in-place
+  // Re-export all tracked stages to .usda text format — memory-only, zero disk I/O
   for(auto& info : MemoryTracking)
   {
     if(info.stage)
@@ -1519,13 +1531,20 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
         estimatedBytes = fullUsdContent.size();
       }
 
-      // Update the stored estimate
       info.estimatedBytes = estimatedBytes;
 
-      // Re-store updated file content to memory store (use stored filename to avoid .usd/.usda duplicates)
+      // Re-store updated file content to memory store (use stored .usda filename)
       if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
       {
         std::string filename = info.filename.empty() ? info.name : info.filename;
+        // Always .usda — ExportToString produces ASCII text
+        if (filename.size() >= 5 && filename.substr(filename.size() - 5) != ".usda") {
+          if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".usd") {
+            filename += "a";  // .usd → .usda
+          } else {
+            filename += ".usda";
+          }
+        }
 
         g_rankMemoryStore->UpdateFile(
           filename,
