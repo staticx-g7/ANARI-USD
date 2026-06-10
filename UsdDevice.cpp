@@ -359,23 +359,9 @@ void UsdDevice::initializeBridge()
     }
   }
 
-  // Enable auto-flush on geometry commit from environment variable
-  // ANARI_USD_AUTO_FLUSH: 1 = flush USD + send ZMQ after each geometry commit (ON by default)
-  // ANARI_USD_AUTO_FLUSH=0 disables it (reverts to renderFrame-only behavior)
-  {
-    auto* envAutoFlush = getenv("ANARI_USD_AUTO_FLUSH");
-    if (envAutoFlush) {
-      autoFlushOnGeometryCommit = std::atoi(envAutoFlush) != 0;
-    }
-    if (autoFlushOnGeometryCommit) {
-      lastFlushTime_ = std::chrono::steady_clock::now();
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-          "usd::autoFlush = ON (flush USD + ZMQ on geometry commit, 500ms debounce)");
-    } else {
-      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
-          "usd::autoFlush = OFF (renderFrame-only USD flush via camera pan)");
-    }
-  }
+  // Geometry-commit auto-flush removed — USD + ZMQ now only triggered by renderFrame (camera pan)
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "usd::flush = renderFrame only (camera pan triggers USD save + ZMQ)");
 
   if (internals->outputLocation.empty())
   {
@@ -1265,13 +1251,6 @@ void UsdDevice::commitParameters(ANARIObject object)
   if(object)
   {
     getBaseObjectPtr(object)->commit(this);
-
-    // Auto-flush USD to disk + ZMQ on geometry commit
-    // This fixes the issue where ParaView updates geometry but never calls renderFrame()
-    // which is the only path that saves USD + sends ZMQ notifications
-    if (autoFlushOnGeometryCommit && AnariToUsdObjectPtr(object)->getType() == ANARI_GEOMETRY) {
-      FlushSceneAndNotify();
-    }
   }
 }
 

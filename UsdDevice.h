@@ -45,7 +45,7 @@ struct UsdDeviceData
   bool createNewSession = false;
   bool outputBinary = true;
   bool writeAtCommit = false;
-  bool autoFlushOnGeometryCommit = true; // Flush USD + ZMQ on geometry commit (OFF)
+  bool autoFlushOnGeometryCommit = false; // Flush USD + ZMQ on geometry commit (OFF, renderFrame-only)
 
   double timeStep = 0.0;
 
@@ -328,10 +328,8 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     const void* userSetStatusUserData = nullptr;
 
    private:
-    // Event-driven flush on geometry commit: when Parasview calls commitParameters(geometry),
-    // we debounce-flush USD to disk + send ZMQ notifications.
-    // No polling thread — only fires when geometry data actually changes.
-    bool autoFlushOnGeometryCommit = true; // default from UsdDeviceData, may be overridden by env
+    // Flush on renderFrame (camera change) only — no geometry-commit auto-flush
+    bool autoFlushOnGeometryCommit = false;
     bool hasPendingFlush_ = false; // reserved for future use
     std::chrono::steady_clock::time_point lastFlushTime_;
     void FlushSceneAndNotify();
