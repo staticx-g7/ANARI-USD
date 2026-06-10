@@ -792,7 +792,8 @@ void UsdDevice::renderFrame(ANARIFrame frame)
       const char* frameFilename = "FullScene.usda";
       auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
-      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp);
+      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
+      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
     }
 
     // Also notify about individual clip files that changed on this rank
@@ -802,7 +803,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         if (name.find("clips/") == 0) {
           auto* entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
-            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp);
+            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp, entry->hash128);
           }
         }
       }
