@@ -326,7 +326,15 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     ANARIStatusCallback userSetStatusFunc = nullptr;
     const void* userSetStatusUserData = nullptr;
 
-  private:
+   private:
+    // Event-driven flush on geometry commit: when Parasview calls commitParameters(geometry),
+    // we debounce-flush USD to disk + send ZMQ notifications.
+    // No polling thread — only fires when geometry data actually changes.
+    bool autoFlushOnGeometryCommit_ = true; // controlled by ANARI_USD_AUTO_FLUSH env var
+    bool hasPendingFlush_ = false; // reserved for future use
+    std::chrono::steady_clock::time_point lastFlushTime_;
+    void FlushSceneAndNotify();
+
   #ifdef ANARI_USD_ENABLE_MPI
     int mpiRank = 0;
     int mpiSize = 1;

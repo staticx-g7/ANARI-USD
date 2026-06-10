@@ -123,6 +123,7 @@ DEFINE_PARAMETER_MAP(UsdDevice,
   REGISTER_PARAMETER_MACRO("usd::output.previewSurfaceShader", ANARI_BOOL, outputPreviewSurfaceShader)
   REGISTER_PARAMETER_MACRO("usd::output.mdlShader", ANARI_BOOL, outputMdlShader)
   REGISTER_PARAMETER_MACRO("usd::output.displayColorOpacity", ANARI_BOOL, useDisplayColorOpacity)
+  REGISTER_PARAMETER_MACRO("usd::autoFlush", ANARI_BOOL, autoFlushOnGeometryCommit_)
 )
 
 void UsdDevice::clearDeviceParameters()
@@ -355,6 +356,24 @@ void UsdDevice::initializeBridge()
       internals->outputLocation = envLocation;
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
         "Usd Device parameter 'usd::serialize.location' using ANARI_USD_SERIALIZE_LOCATION value");
+    }
+  }
+
+  // Enable auto-flush on geometry commit from environment variable
+  // ANARI_USD_AUTO_FLUSH: 1 = flush USD + send ZMQ after each geometry commit (ON by default)
+  // ANARI_USD_AUTO_FLUSH=0 disables it (reverts to renderFrame-only behavior)
+  {
+    auto* envAutoFlush = getenv("ANARI_USD_AUTO_FLUSH");
+    if (envAutoFlush) {
+      autoFlushOnGeometryCommit_ = std::atoi(envAutoFlush) != 0;
+    }
+    if (autoFlushOnGeometryCommit_) {
+      lastFlushTime_ = std::chrono::steady_clock::now();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "usd::autoFlush = ON (flush USD + ZMQ on geometry commit, 500ms debounce)");
+    } else {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+          "usd::autoFlush = OFF (renderFrame-only USD flush via camera pan)");
     }
   }
 
@@ -1244,7 +1263,16 @@ void UsdDevice::retain(ANARIObject object)
 void UsdDevice::commitParameters(ANARIObject object)
 {
   if(object)
+  {
     getBaseObjectPtr(object)->commit(this);
+
+    // Auto-flush USD to disk + ZMQ on geometry commit
+    // This fixes the issue where ParaView updates geometry but never calls renderFrame()
+    // which is the only path that saves USD + sends ZMQ notifications
+    if (autoFlushOnGeometryCommit_ && AnariToUsdObjectPtr(object)->getType() == ANARI_GEOMETRY) {
+      FlushSceneAndNotify();
+    }
+  }
 }
 
 #ifdef CHECK_MEMLEAKS
@@ -1429,4 +1457,60 @@ void UsdDevice::NotifyFrameReady(double timestep)
 }
 #endif
 
+// -----------------------------------------------------------------------------
+// Event-driven flush on geometry commit
+// Called from commitParameters() when ParaView commits geometry data.
+// Debounced: only fires once per 500ms window to batch multiple geometry commits.
+// -----------------------------------------------------------------------------
 
+void UsdDevice::FlushSceneAndNotify()
+{
+  if (!isInitialized()) return;
+
+  // Debounce: skip if we flushed recently (ParaView commits multiple objects per frame)
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFlushTime_).count();
+  if (elapsed < 500) return;
+  lastFlushTime_ = now;
+
+  // Flush pending commit list
+  if (!commitList.empty()) {
+    flushCommitList();
+  }
+
+  // Save USD scene to disk
+  internals->bridge->ResetResourceUpdateState();
+  internals->bridge->SaveScene();
+
+#ifdef ANARI_USD_ENABLE_MPI
+  // Send ZMQ notifications
+  if (zmqWorker_ && zmqWorker_->IsConnected()) {
+    uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // Only rank 0 sends commit notification to avoid duplicates
+    if (mpiRank == 0 && g_rankMemoryStore) {
+      auto* fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
+      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
+      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
+      zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
+    }
+
+    // Notify about clip files that changed on this rank
+    if (g_rankMemoryStore) {
+      auto clipFiles = g_rankMemoryStore->ListFiles();
+      for (const auto& name : clipFiles) {
+        if (name.find("clips/") == 0) {
+          auto* entry = g_rankMemoryStore->GetFile(name);
+          if (entry) {
+            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp, entry->hash128);
+          }
+        }
+      }
+    }
+
+    // Serve any pending file requests
+    ServeFileRequests();
+  }
+#endif
+}
