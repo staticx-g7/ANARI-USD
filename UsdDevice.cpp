@@ -123,7 +123,7 @@ DEFINE_PARAMETER_MAP(UsdDevice,
   REGISTER_PARAMETER_MACRO("usd::output.previewSurfaceShader", ANARI_BOOL, outputPreviewSurfaceShader)
   REGISTER_PARAMETER_MACRO("usd::output.mdlShader", ANARI_BOOL, outputMdlShader)
   REGISTER_PARAMETER_MACRO("usd::output.displayColorOpacity", ANARI_BOOL, useDisplayColorOpacity)
-  REGISTER_PARAMETER_MACRO("usd::autoFlush", ANARI_BOOL, autoFlushOnGeometryCommit_)
+  REGISTER_PARAMETER_MACRO("usd::autoFlush", ANARI_BOOL, autoFlushOnGeometryCommit)
 )
 
 void UsdDevice::clearDeviceParameters()
@@ -365,9 +365,9 @@ void UsdDevice::initializeBridge()
   {
     auto* envAutoFlush = getenv("ANARI_USD_AUTO_FLUSH");
     if (envAutoFlush) {
-      autoFlushOnGeometryCommit_ = std::atoi(envAutoFlush) != 0;
+      autoFlushOnGeometryCommit = std::atoi(envAutoFlush) != 0;
     }
-    if (autoFlushOnGeometryCommit_) {
+    if (autoFlushOnGeometryCommit) {
       lastFlushTime_ = std::chrono::steady_clock::now();
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
           "usd::autoFlush = ON (flush USD + ZMQ on geometry commit, 500ms debounce)");
@@ -1269,7 +1269,7 @@ void UsdDevice::commitParameters(ANARIObject object)
     // Auto-flush USD to disk + ZMQ on geometry commit
     // This fixes the issue where ParaView updates geometry but never calls renderFrame()
     // which is the only path that saves USD + sends ZMQ notifications
-    if (autoFlushOnGeometryCommit_ && AnariToUsdObjectPtr(object)->getType() == ANARI_GEOMETRY) {
+    if (autoFlushOnGeometryCommit && AnariToUsdObjectPtr(object)->getType() == ANARI_GEOMETRY) {
       FlushSceneAndNotify();
     }
   }
