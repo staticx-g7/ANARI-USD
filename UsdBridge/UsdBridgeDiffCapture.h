@@ -64,6 +64,8 @@ public:
 private:
     // Disable copy/move
     UsdBridgeDiffCapture() = default;
+
+    friend UsdBridgeDiffCapture& GetDiffCapture();
     UsdBridgeDiffCapture(const UsdBridgeDiffCapture&) = delete;
     UsdBridgeDiffCapture& operator=(const UsdBridgeDiffCapture&) = delete;
 
