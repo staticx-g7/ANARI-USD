@@ -40,6 +40,9 @@ enum class ZmqMessageType : uint32_t {
     NOTIFY_FILE_UPDATE = 300,  // Notification that a file has been updated
     NOTIFY_COMMIT_COMPLETE = 301,  // Notification that scene commit is complete
 
+    // Diff-aware notifications (hash-prev + hasOldData for delta streaming)
+    NOTIFY_FILE_UPDATE_V2 = 302,  // Same as 300, but includes hashPrev128 + hasOldData
+
     // Property query (Laptop → Broker)
     REQ_GET_PROPERTY = 400,    // Request a property value
     RESP_PROPERTY = 401        // Response with property value
@@ -86,7 +89,9 @@ struct __attribute__((packed)) ZmqFileNotification {
     char filename[256];        // Filename that was updated
     uint64_t file_size;        // Current file size
     uint64_t timestamp;        // Unix timestamp of update
-    uint64_t hash128[2];       // XXH3-128 hash of file data
+    uint64_t hash128[2];       // XXH3-128 hash of new file data
+    uint64_t hashPrev128[2];   // XXH3-128 hash of old file data (0 if first time)
+    bool hasOldData;           // true if hashPrev128 is valid (for delta streaming)
 };
 
 // Property query response (Broker → Laptop)
@@ -180,6 +185,7 @@ public:
 
     // Push notification handling
     bool SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128 = nullptr);
+    bool SendFileNotificationV2(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128, const uint64_t* hashPrev128, bool hasOldData);
     bool SendCommitNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128 = nullptr);
 
     std::string GetInfiniBandIP();

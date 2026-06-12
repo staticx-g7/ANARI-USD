@@ -20,6 +20,7 @@
 #include "UsdDevice_queries.h"
 #include "UsdBridge/UsdBridgeMemoryStore.h"
 #include "UsdBridge/xxhash/xxhash.h"
+#include "UsdBridge/UsdBridgeDiffCapture.h"
 
 #include "UsdBridge/Common/UsdBridgeParallelController.h"
 
@@ -808,7 +809,11 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         if (name.find("clips/") == 0) {
           auto* entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
-            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp, entry->hash128);
+            // DIFF-CAPTURE-HOOK: send old-hash-aware notification
+            const uint64_t* oldHash = GetDiffCapture().GetOldHash128(name);
+            bool hasOld = GetDiffCapture().HasOldEntry(name);
+            zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
+            GetDiffCapture().Commit(name);
           }
         }
       }
@@ -1482,7 +1487,11 @@ void UsdDevice::FlushSceneAndNotify()
         if (name.find("clips/") == 0) {
           auto* entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
-            zmqWorker_->SendFileNotification(name, entry->data.size(), timestamp, entry->hash128);
+            // DIFF-CAPTURE-HOOK: send old-hash-aware notification
+            const uint64_t* oldHash = GetDiffCapture().GetOldHash128(name);
+            bool hasOld = GetDiffCapture().HasOldEntry(name);
+            zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
+            GetDiffCapture().Commit(name);
           }
         }
       }

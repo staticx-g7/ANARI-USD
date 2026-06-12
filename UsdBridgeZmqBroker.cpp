@@ -957,11 +957,13 @@ void ZmqBroker::MessageLoopThread() {
                         ZmqFileNotification* notification = reinterpret_cast<ZmqFileNotification*>(data.data());
 
                         if (notification->magic == USD_FILE_MAGIC &&
-                            (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE) ||
-                             notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE))) {
+                             (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE) ||
+                              notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE_V2) ||
+                              notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE))) {
 
-                            std::string notif_type = (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE))
-                                ? "FILE_UPDATE" : "COMMIT_COMPLETE";
+                             std::string notif_type = (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE))
+                                 ? "FILE_UPDATE" : (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE_V2))
+                                 ? "FILE_UPDATE_V2" : "COMMIT_COMPLETE";
 
                             std::cout << "[Rank 0 MPI Broker] Received " << notif_type
                                       << " notification from rank " << notification->source_rank
@@ -1612,12 +1614,18 @@ bool ZmqWorker::SendNoFile(uint32_t requestId, const std::string& filename) {
 // ============================================================================
 
 bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128) {
+    // V1: no old hash data
+    return SendFileNotificationV2(filename, fileSize, timestamp, hash128, nullptr, false);
+}
+
+bool ZmqWorker::SendFileNotificationV2(const std::string& filename, uint64_t fileSize, uint64_t timestamp, const uint64_t* hash128, const uint64_t* hashPrev128, bool hasOldData) {
     std::lock_guard<std::mutex> lock(socket_mutex_);
 
     try {
         ZmqFileNotification msg;
+        memset(&msg, 0, sizeof(msg));
         msg.magic = USD_FILE_MAGIC;
-        msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE);
+        msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE_V2);
         msg.source_rank = rank_;
         strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
         msg.filename[sizeof(msg.filename) - 1] = '\0';
@@ -1625,6 +1633,9 @@ bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileS
         msg.timestamp = timestamp;
         msg.hash128[0] = hash128 ? hash128[0] : 0;
         msg.hash128[1] = hash128 ? hash128[1] : 0;
+        msg.hashPrev128[0] = (hashPrev128 && hasOldData) ? hashPrev128[0] : 0;
+        msg.hashPrev128[1] = (hashPrev128 && hasOldData) ? hashPrev128[1] : 0;
+        msg.hasOldData = hasOldData;
 
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));
@@ -1632,12 +1643,17 @@ bool ZmqWorker::SendFileNotification(const std::string& filename, uint64_t fileS
         dealer_->send(empty, zmq::send_flags::sndmore);
         dealer_->send(payload, zmq::send_flags::none);
 
-        std::cout << "[Worker Rank " << rank_ << "] Sent file notification: " << filename
-                  << " (" << fileSize << " bytes)" << std::endl;
+        if (hasOldData) {
+            std::cout << "[Worker Rank " << rank_ << "] Sent file notification V2: " << filename
+                      << " (has_old_data=true, " << fileSize << " bytes)" << std::endl;
+        } else {
+            std::cout << "[Worker Rank " << rank_ << "] Sent file notification V2: " << filename
+                      << " (first_time, " << fileSize << " bytes)" << std::endl;
+        }
 
         return true;
     } catch (const zmq::error_t& e) {
-        std::cerr << "[Worker Rank " << rank_ << "] SendFileNotification error: " << e.what() << std::endl;
+        std::cerr << "[Worker Rank " << rank_ << "] SendFileNotificationV2 error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -1647,6 +1663,7 @@ bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fil
 
     try {
         ZmqFileNotification msg;
+        memset(&msg, 0, sizeof(msg));
         msg.magic = USD_FILE_MAGIC;
         msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE);
         msg.source_rank = rank_;
@@ -1656,6 +1673,7 @@ bool ZmqWorker::SendCommitNotification(const std::string& filename, uint64_t fil
         msg.timestamp = timestamp;
         msg.hash128[0] = hash128 ? hash128[0] : 0;
         msg.hash128[1] = hash128 ? hash128[1] : 0;
+        // hashPrev128 remains 0, hasOldData remains false for commit notifications
 
         zmq::message_t empty;
         zmq::message_t payload(&msg, sizeof(msg));

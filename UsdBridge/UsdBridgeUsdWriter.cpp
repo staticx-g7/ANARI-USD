@@ -7,6 +7,7 @@
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 #include "UsdBridgeMemoryStore.h"
+#include "UsdBridgeDiffCapture.h"
 #include "Common/UsdBridgeParallelController.h"
 
 #include <cstring>
@@ -1468,6 +1469,9 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   // Store in memory file store for ZMQ streaming
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
+    // DIFF-CAPTURE-HOOK: capture old file data before StoreFile overwrites
+    GetDiffCapture().CapturePreStore(filename);
+
     g_rankMemoryStore->StoreFile(
       filename,
       fullUsdContent.data(),
