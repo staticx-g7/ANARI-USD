@@ -142,6 +142,7 @@ public:
 private:
     void MessageLoopThread();  // Background thread for message routing
     void SSHReminderThread();  // Periodic SSH command reminder
+    void StatusPrinterThread();  // Periodic status table (every 10s)
 
     std::unique_ptr<zmq::context_t> context_;
     std::unique_ptr<zmq::socket_t> router_;        // Port worker_port_ - for workers (DEALER)
@@ -161,6 +162,8 @@ private:
     std::atomic<bool> message_loop_active_{false};
     std::thread ssh_reminder_thread_;
     std::atomic<bool> ssh_reminder_active_{false};
+    std::thread status_printer_thread_;
+    std::atomic<bool> status_printer_active_{false};
     std::string broker_ip_;  // Store broker IP for SSH reminder
 };
 

@@ -2,6 +2,7 @@
 #include "UsdBridgeZmqBroker.h"
 #include "UsdBridge/UsdBridgeMemoryStore.h"
 #include "UsdBridge/xxhash/xxhash.h"
+#include "UsdBridge/DiffCaptureStatus.h"
 
 #include <zmq.hpp>
 #include <iostream>
@@ -331,6 +332,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 
                 workers_.push_back(worker);
                 worker_map_[worker.identity] = worker.rank;
+                GetDiffCaptureStatus().RegisterRank(worker.rank, worker.hostname);
 
                 // Only count non-zero ranks toward expectedWorkers
                 if (worker.rank != 0)
@@ -367,6 +369,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         rank0Worker.ready = true;
         workers_.push_back(rank0Worker);
         worker_map_[rank0Worker.identity] = 0;
+        GetDiffCaptureStatus().RegisterRank(0, hostname);
 
         std::cout << "Rank 0 (MPI Broker): Added rank 0 to worker list (self-service mode)" << std::endl;
         std::cout << "Rank 0 (MPI Broker): Total workers including rank 0: " << workers_.size() << std::endl;
@@ -385,6 +388,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         selfWorker.ready = true;
         workers_.push_back(selfWorker);
         worker_map_[selfWorker.identity] = 0;
+        GetDiffCaptureStatus().RegisterRank(0, "localhost");
         
         std::cout << "[Non-MPI ZMQ Broker] Added self as worker rank 0" << std::endl;
 #endif
@@ -400,9 +404,14 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         // ========== START SSH REMINDER THREAD ==========
         ssh_reminder_active_ = true;
         ssh_reminder_thread_ = std::thread(&ZmqBroker::SSHReminderThread, this);
-        
+
+        // ========== START STATUS PRINTER THREAD ==========
+        status_printer_active_ = true;
+        status_printer_thread_ = std::thread(&ZmqBroker::StatusPrinterThread, this);
+
         std::cout << "[Rank 0 MPI Broker] Started background message routing thread" << std::endl;
         std::cout << "[Rank 0 MPI Broker] SSH tunnel reminder will print every 60 seconds" << std::endl;
+        std::cout << "[Rank 0 MPI Broker] DiffCapture status table will print every 10 seconds" << std::endl;
         std::cout << "[Rank 0 MPI Broker] Rank 0 can now proceed to render geometry!" << std::endl;
 
         return true;
@@ -969,10 +978,13 @@ void ZmqBroker::MessageLoopThread() {
                                       << " notification from rank " << notification->source_rank
                                       << ": " << notification->filename << std::endl;
 
-                            // Forward notification to all connected laptop clients
-                            ForwardNotificationToClient(*notification);
+                             // Forward notification to all connected laptop clients
+                             ForwardNotificationToClient(*notification);
 
-                            continue;
+                             // DIFF-CAPTURE-STATUS-HOOK: track for status table
+                             GetDiffCaptureStatus().OnNotification(notification->source_rank, notification->filename, notification->timestamp);
+
+                             continue;
                         }
                     }
 
@@ -1073,6 +1085,7 @@ void ZmqBroker::MessageLoopThread() {
 
                             workers_.push_back(worker);
                             worker_map_[worker.identity] = worker.rank;
+                            GetDiffCaptureStatus().RegisterRank(worker.rank, worker.hostname);
 
                             std::cout << "[Rank 0 MPI Broker THREAD] Late-joining worker rank " << worker.rank
                                       << " connected from " << worker.hostname
@@ -1099,6 +1112,34 @@ void ZmqBroker::MessageLoopThread() {
     } catch (const zmq::error_t& e) {
         std::cerr << "[Rank 0 MPI Broker THREAD] ZMQ Error in message loop: " << e.what() << std::endl;
     }
+}
+
+void ZmqBroker::StatusPrinterThread() {
+    int intervalSec = 10;
+
+    // Allow override via env var
+    const char* envInt = getenv("DIFFCAPTURE_STATUS_INTERVAL");
+    if (envInt) {
+        intervalSec = std::atoi(envInt);
+        if (intervalSec <= 0) {
+            std::cout << "[DiffCapture STATUS] Disabled (DIFFCAPTURE_STATUS_INTERVAL=" << envInt << ")" << std::endl;
+            GetDiffCaptureStatus().Disable();
+            return;
+        }
+    }
+
+    std::cout << "[DiffCapture STATUS] Thread started - table refresh every " << intervalSec << "s" << std::endl;
+
+    while (status_printer_active_) {
+        for (int i = 0; i < intervalSec && status_printer_active_; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (!status_printer_active_) break;
+
+        GetDiffCaptureStatus().PrintTable(client_port_, broker_ip_, intervalSec);
+    }
+
+    std::cout << "[DiffCapture STATUS] Thread stopped" << std::endl;
 }
 
 void ZmqBroker::SSHReminderThread() {
@@ -1246,6 +1287,13 @@ void ZmqBroker::Shutdown() {
         if (ssh_reminder_thread_.joinable()) {
             ssh_reminder_thread_.join();
             std::cout << "[Rank 0 MPI Broker] SSH reminder thread stopped" << std::endl;
+        }
+
+        // Stop status printer thread
+        status_printer_active_ = false;
+        if (status_printer_thread_.joinable()) {
+            status_printer_thread_.join();
+            std::cout << "[Rank 0 MPI Broker] Status printer thread stopped" << std::endl;
         }
 
         // Stop message loop thread

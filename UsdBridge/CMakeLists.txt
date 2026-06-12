@@ -179,6 +179,7 @@ set(USDBRIDGE_SOURCES
   UsdBridgeDiagnosticMgrDelegate.cpp
   UsdBridgeMemoryStore.cpp
   UsdBridgeDiffCapture.cpp
+  DiffCaptureStatus.cpp
   xxhash/xxhash.c
   UsdBridge.h
   UsdBridgeCaches.h
@@ -194,6 +195,7 @@ set(USDBRIDGE_SOURCES
   UsdBridgeDiagnosticMgrDelegate.h
   UsdBridgeMemoryStore.h
   UsdBridgeDiffCapture.h
+  DiffCaptureStatus.h
   usd.h
   ${USDBRIDGE_MDL_SOURCES}
 )
