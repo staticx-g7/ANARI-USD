@@ -21,7 +21,10 @@ std::string DiffCaptureStatus::CategorizeFile(const std::string& filename) {
         filename.find("_material.") != std::string::npos ||
         filename.find("materialdiff") != std::string::npos ||
         filename.find("material_param") != std::string::npos ||
-        filename.find(".param.") != std::string::npos) {
+        filename.find(".param.") != std::string::npos ||
+        filename.find(".png") != std::string::npos ||
+        filename.find(".jpg") != std::string::npos ||
+        filename.find(".jpeg") != std::string::npos) {
         return "texture";
     }
     if (filename.find("clip") != std::string::npos ||

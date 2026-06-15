@@ -5,6 +5,7 @@
 
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeUsdWriter_Arrays.h"
+#include "UsdBridgeDiffCapture.h"
 #include "stb_image_write.h"
 
 #include <limits>
@@ -1478,6 +1479,8 @@ void UsdBridgeUsdWriter::UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridge
         // Also store PNG in memory when not saving to disk
         if(!this->EnableSaving && g_rankMemoryStore)
         {
+          // DIFF-CAPTURE-HOOK: capture old image state before StoreFile overwrites
+          GetDiffCapture().CapturePreStore(imgFileName);
           g_rankMemoryStore->StoreFile(
             imgFileName,
             writeOutput.imageData,

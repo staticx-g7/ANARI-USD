@@ -802,11 +802,11 @@ void UsdDevice::renderFrame(ANARIFrame frame)
       zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
     }
 
-    // Also notify about individual clip files that changed on this rank
+    // Also notify about individual clip files and image files that changed on this rank
     if (g_rankMemoryStore) {
-      auto clipFiles = g_rankMemoryStore->ListFiles();
-      for (const auto& name : clipFiles) {
-        if (name.find("clips/") == 0) {
+      auto allFiles = g_rankMemoryStore->ListFiles();
+      for (const auto& name : allFiles) {
+        if (name.find("clips/") == 0 || name.find("images/") == 0) {
           auto* entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
             // DIFF-CAPTURE-HOOK: send old-hash-aware notification
@@ -1480,11 +1480,11 @@ void UsdDevice::FlushSceneAndNotify()
       zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
     }
 
-    // Notify about clip files that changed on this rank
+    // Notify about clip files and image files that changed on this rank
     if (g_rankMemoryStore) {
-      auto clipFiles = g_rankMemoryStore->ListFiles();
-      for (const auto& name : clipFiles) {
-        if (name.find("clips/") == 0) {
+      auto allFiles = g_rankMemoryStore->ListFiles();
+      for (const auto& name : allFiles) {
+        if (name.find("clips/") == 0 || name.find("images/") == 0) {
           auto* entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
             // DIFF-CAPTURE-HOOK: send old-hash-aware notification
