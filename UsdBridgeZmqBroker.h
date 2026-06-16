@@ -45,7 +45,7 @@ enum class ZmqMessageType : uint32_t {
 
     // Property query (Laptop → Broker)
     REQ_GET_PROPERTY = 400,    // Request a property value
-    RESP_PROPERTY = 401        // Response with property value,
+    RESP_PROPERTY = 401,       // Response with property value,
 
     // Scene snapshot (Laptop → Broker → Workers)
     REQ_SCENE_SNAPSHOT = 500,  // Request full scene snapshot from all ranks
