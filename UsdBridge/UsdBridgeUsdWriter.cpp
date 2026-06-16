@@ -1600,13 +1600,20 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
           }
         }
 
-        g_rankMemoryStore->UpdateFile(
+        // info.filename may be "clipname.usd" but filename is "clipname.usda" —
+        // UpdateFile only works on existing keys. Remove stale .usd and StoreFile .usda
+        // so only one entry exists in ListFiles() -> no duplicate V2 notifications.
+        if (filename != info.filename && g_rankMemoryStore->HasFile(info.filename)) {
+          g_rankMemoryStore->RemoveFile(info.filename);
+        }
+        g_rankMemoryStore->StoreFile(
           filename,
           fullUsdContent.data(),
-          fullUsdContent.size()
+          fullUsdContent.size(),
+          "text/plain"
         );
 
-        std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
+        std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << ' bytes' << std::endl;
       }
     }
   }
