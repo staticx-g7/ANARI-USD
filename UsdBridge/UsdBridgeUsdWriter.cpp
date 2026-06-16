@@ -1585,36 +1585,47 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
         estimatedBytes = fullUsdContent.size();
       }
 
-      info.estimatedBytes = estimatedBytes;
+       info.estimatedBytes = estimatedBytes;
 
-      // Re-store updated file content to memory store (use stored .usda filename)
-      if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
-      {
-        std::string filename = info.filename.empty() ? info.name : info.filename;
-        // Always .usda — ExportToString produces ASCII text
-        if (filename.size() >= 5 && filename.substr(filename.size() - 5) != ".usda") {
-          if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".usd") {
-            filename += "a";  // .usd → .usda
-          } else {
-            filename += ".usda";
-          }
-        }
+       // Re-store updated file content to memory store (use stored .usda filename)
+       if(g_rankMemoryStore != nullptr)
+       {
+         if (fullUsdContent.empty() && info.stage)
+         {
+           // Stage exists but ExportToString returned empty — this can happen if the stage
+           // was just created and has no data yet. Keep the binary .usd available instead.
+           std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
+                     << (info.filename.empty() ? info.name : info.filename)
+                     << "' — keeping binary .usd as fallback" << std::endl;
+         }
+         else if (!fullUsdContent.empty())
+         {
+           std::string filename = info.filename.empty() ? info.name : info.filename;
+           // Always .usda — ExportToString produces ASCII text
+           if (filename.size() >= 5 && filename.substr(filename.size() - 5) != ".usda") {
+             if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".usd") {
+               filename += "a";  // .usd → .usda
+             } else {
+               filename += ".usda";
+             }
+           }
 
-        // info.filename may be "clipname.usd" but filename is "clipname.usda" —
-        // UpdateFile only works on existing keys. Remove stale .usd and StoreFile .usda
-        // so only one entry exists in ListFiles() -> no duplicate V2 notifications.
-        if (filename != info.filename && g_rankMemoryStore->HasFile(info.filename)) {
-          g_rankMemoryStore->RemoveFile(info.filename);
-        }
-        g_rankMemoryStore->StoreFile(
-          filename,
-          fullUsdContent.data(),
-          fullUsdContent.size(),
-          "text/plain"
-        );
+           // Store .usda FIRST, then remove stale .usd. The brief overlap is safe (broker picks .usda),
+           // and avoids a window where neither key exists for mid-flight client requests.
+           // Only one entry in ListFiles() after both ops complete -> no duplicate V2 notifications.
+           g_rankMemoryStore->StoreFile(
+             filename,
+             fullUsdContent.data(),
+             fullUsdContent.size(),
+             "text/plain"
+           );
+           if (filename != info.filename && g_rankMemoryStore->HasFile(info.filename)) {
+             g_rankMemoryStore->RemoveFile(info.filename);
+           }
 
-        std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << ' bytes' << std::endl;
-      }
+           std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << ' bytes' << std::endl;
+         }
+       }
     }
   }
 }
