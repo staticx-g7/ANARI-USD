@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
@@ -1110,29 +1111,53 @@ void UsdBridgeUsdWriter::RemoveAllRefs(UsdBridgePrimCache* parentCache, const ch
 
 void UsdBridgeUsdWriter::RemoveAllRefs(UsdStageRefPtr stage, UsdBridgePrimCache* parentCache, SdfPath childBasePath, bool timeVarying, double timeStep, AtRemoveRefFunc atRemoveRef)
 {
-#ifdef TIME_BASED_CACHING
-  UsdTimeCode timeCode(timeStep);
-
-  // Make refs just for this timecode invisible and possibly remove,
-  // but leave refs which are still visible in other timecodes intact.
-  ChildrenRemoveIfInvisibleAnytime(stage, parentCache, childBasePath, timeVarying, timeCode, atRemoveRef);
-#else
   UsdPrim parentPrim = stage->GetPrimAtPath(childBasePath);
   if(parentPrim)
   {
+    size_t removedCount = 0;
     UsdPrimSiblingRange children = parentPrim.GetAllChildren();
     for (UsdPrim child : children)
     {
       UsdBridgePrimCache* childCache = parentCache->GetChildCache(child.GetName());
+      std::string childName = child.GetName().GetString();
 
+#ifdef TIME_BASED_CACHING
+      UsdTimeCode timeCode(timeStep);
+      // Make refs just for this timecode invisible and possibly remove,
+      // but leave refs which are still visible in other timecodes intact.
+      bool wasRemoved = true; // assume removed, check PrimRemoveIfInvisibleAnytime
+      PrimRemoveIfInvisibleAnytime(stage, child, timeVarying, timeCode, atRemoveRef,
+        parentCache, childCache);
+      UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING,
+        "USDRMNG: RemoveAllRefs — removed prim '" << childName
+        << "' from '" << parentCache->PrimPath.GetNameToken().GetString()
+        << "' at time " << timeStep
+        );
+      removedCount++;
+#else
+      // Remove all refs immediately
       if(childCache)
       {
         atRemoveRef(parentCache, childCache); // Decrease reference count in caches
-        stage->RemovePrim(child.GetPath()); // Remove reference prim
+        UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING,
+          "USDRMNG: RemoveAllRefs — removed prim '" << childName
+          << "' from '" << parentCache->PrimPath.GetNameToken().GetString()
+          << "' at time " << timeStep
+          );
       }
+      stage->RemovePrim(child.GetPath()); // Remove reference prim
+      removedCount++;
+#endif
+    }
+    
+    if (removedCount > 0)
+    {
+      UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+        "USDRMNG: RemoveAllRefs summary — removed " << removedCount << " prims from '"
+        << parentCache->PrimPath.GetNameToken().GetString() << "' at time " << timeStep
+        );
     }
   }
-#endif
 }
 
 void UsdBridgeUsdWriter::ManageUnusedRefs(UsdBridgePrimCache* parentCache, const UsdBridgePrimCacheList& newChildren, const char* refPathExt, bool timeVarying, double timeStep, AtRemoveRefFunc atRemoveRef)
@@ -1158,31 +1183,56 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
     // For each old (referencing) child prim, find it among the new ones, otherwise
     // possibly delete the referencing prim.
     UsdPrimSiblingRange children = basePrim.GetAllChildren();
+    
+    // Build a lookup of new child names for O(1) matching
+    std::set<std::string> newChildNames;
+    for (size_t i = 0; i < newChildren.size(); ++i)
+      newChildNames.insert(newChildren[i]->PrimPath.GetNameToken().GetString());
+    
+    size_t removedCount = 0;
     for (UsdPrim oldChild : children)
     {
-      bool found = false;
-      for (size_t newChildIdx = 0; newChildIdx < newChildren.size() && !found; ++newChildIdx)
-      {
-        found = (oldChild.GetName() == newChildren[newChildIdx]->PrimPath.GetNameToken());
-      }
+      std::string oldName = oldChild.GetName().GetString();
+      bool found = newChildNames.count(oldName) > 0;
 
       UsdBridgePrimCache* oldChildCache = parentCache->GetChildCache(oldChild.GetName());
 
       // Not an assert: allow the case where child prims in a stage aren't cached, ie. when the bridge is destroyed and recreated
       if (!found)
-#ifdef TIME_BASED_CACHING
       {
-        // Remove *referencing* prim if no visible timecode exists anymore
-        PrimRemoveIfInvisibleAnytime(stage, oldChild, timeVarying, timeCode, atRemoveRef,
-          parentCache, oldChildCache);
-      }
+        const char* extStr = refPathExt ? refPathExt : "(root)";
+        UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING,
+          "USDRMNG: ManageUnusedRefs — removing orphaned prim '" << oldName
+          << "' from parent '" << parentCache->PrimPath.GetNameToken().GetString()
+          << "." << extStr << "' at time " << timeStep
+          << " (newChildren count: " << newChildren.size() << ")"
+          );
+#ifdef TIME_BASED_CACHING
+        {
+          // Remove *referencing* prim if no visible timecode exists anymore
+          bool wasRemoved = !oldChildCache || parentCache->SetChildInvisibleAtTime(oldChildCache, timeCode.GetValue());
+          if (wasRemoved)
+            PrimRemoveIfInvisibleAnytime(stage, oldChild, timeVarying, timeCode, atRemoveRef,
+              parentCache, oldChildCache);
+          removedCount += wasRemoved;
+        }
 #else
-      {// remove the whole referencing prim
-        if(oldChildCache)
-          atRemoveRef(parentCache, oldChildCache);
-        stage->RemovePrim(oldChild.GetPath());
-      }
+        {// remove the whole referencing prim
+          if(oldChildCache)
+            atRemoveRef(parentCache, oldChildCache);
+          stage->RemovePrim(oldChild.GetPath());
+          removedCount++;
+        }
 #endif
+      }
+    }
+    
+    if (removedCount > 0)
+    {
+      UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+        "USDRMNG: ManageUnusedRefs summary — removed " << removedCount << " orphaned prims from '"
+        << parentCache->PrimPath.GetNameToken().GetString() << "' at time " << timeStep << ", newChildren=" << newChildren.size()
+        );
     }
   }
 }

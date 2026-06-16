@@ -879,6 +879,68 @@ void ZmqBroker::MessageLoopThread() {
                     }
                 }
 
+                // Handle scene snapshot requests (binary format)
+                if (request.size() >= sizeof(ZmqFileRequest) - 256) {  // Minimum size check
+                    ZmqFileRequest* fileReq = reinterpret_cast<ZmqFileRequest*>(request.data());
+
+                    if (fileReq->magic == USD_FILE_MAGIC &&
+                        fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_SCENE_SNAPSHOT)) {
+
+                        std::cout << "[Rank 0 MPI Broker] Scene snapshot request from laptop: request_id="
+                                  << fileReq->request_id << std::endl;
+
+                        // Build scene snapshot response as JSON string
+                        std::stringstream snapshotJson;
+                        snapshotJson << "{";
+                        snapshotJson << "\"request_id\":" << fileReq->request_id << ",";
+                        snapshotJson << "\"type\":\"scene_snapshot\",";
+                        snapshotJson << "\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count() << ",";
+                        snapshotJson << "\"num_workers\":" << workers_.size() << ",";
+                        
+                        // List connected workers
+                        snapshotJson << "\"workers\":[";
+                        for (size_t i = 0; i < workers_.size(); ++i) {
+                            if (i > 0) snapshotJson << ",";
+                            snapshotJson << "{\"rank\":" << workers_[i].rank
+                                        << ",\"hostname\":\"" << workers_[i].hostname
+                                        << "\",\"ready\":" << (workers_[i].ready ? "true" : "false") << "}";
+                        }
+                        snapshotJson << "],"
+                            
+                            // Memory store files (rank 0)
+                            << "\"files\":[";
+                        if (g_rankMemoryStore) {
+                            auto files = g_rankMemoryStore->ListFiles();
+                            bool firstFile = true;
+                            for (const auto& f : files) {
+                                auto* fe = g_rankMemoryStore->GetFile(f);
+                                if (!fe) continue;
+                                if (!firstFile) snapshotJson << ",";
+                                firstFile = false;
+                                snapshotJson << "{\"name\":\"" << f
+                                            << "\",\"size\":" << fe->size()
+                                            << ",\"hash_lo\":" << fe->hash128[0]
+                                            << ",\"hash_hi\":" << fe->hash128[1]
+                                            << ",\"mime\":\"" << fe->mime_type << "\"}";
+                            }
+                        }
+                        snapshotJson << "]}";
+
+                        std::string reply = snapshotJson.str();
+                        std::cout << "[Rank 0 MPI Broker] Sending scene snapshot (" << reply.size() << " bytes)" << std::endl;
+
+                        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                        // Send as RESP_SCENE_SNAPSHOT
+                        uint32_t respType = static_cast<uint32_t>(ZmqMessageType::RESP_SCENE_SNAPSHOT);
+                        client_router_->send(zmq::message_t(&respType, sizeof(respType)), zmq::send_flags::sndmore);
+                        client_router_->send(zmq::message_t(reply.data(), reply.size()), zmq::send_flags::none);
+
+                        continue;
+                    }
+                }
+
                 // Handle property query requests (binary format)
                 if (request.size() >= sizeof(ZmqFileRequest) - 256) {  // Minimum size check
                     ZmqFileRequest* fileReq = reinterpret_cast<ZmqFileRequest*>(request.data());

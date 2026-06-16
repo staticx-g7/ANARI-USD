@@ -1391,15 +1391,34 @@ void UsdBridge::ResetResourceUpdateState()
 
 void UsdBridge::GarbageCollect()
 {
+  // Collect names of about-to-be-deleted prim caches for logging
+  std::vector<std::string> deletedPrimNames;
   BRIDGE_CACHE.RemoveUnreferencedPrimCaches(
-    [this](UsdBridgePrimCache* cacheEntry) 
-    { 
+    [this, &deletedPrimNames](UsdBridgePrimCache* cacheEntry) 
+    {
+      deletedPrimNames.push_back(cacheEntry->PrimPath.GetString());
+      
       if(cacheEntry->ResourceCollect)
         cacheEntry->ResourceCollect(cacheEntry, BRIDGE_USDWRITER);
 
       BRIDGE_USDWRITER.DeletePrim(cacheEntry);
     }
   );
+  
+  if (!deletedPrimNames.empty())
+  {
+    std::vector<std::string> namesForLog;
+    for (size_t i = 0; i < deletedPrimNames.size(); ++i)
+    {
+      UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::WARNING,
+        "USDRMNG: GarbageCollect deleted unreferenced prim: " << deletedPrimNames[i]
+        );
+    }
+    UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::STATUS,
+      "USDRMNG: GarbageCollect summary — deleted " << deletedPrimNames.size() << " unreferenced prims, saving scene"
+      );
+  }
+  
   BRIDGE_USDWRITER.SaveScene();
 }
 

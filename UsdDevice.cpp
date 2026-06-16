@@ -249,9 +249,65 @@ void UsdDevice::filterSetParam(
 {
   if (strEquals(name, "usd::garbageCollect"))
   {
+    // SAFETY: Respect disableGarbageCollect flag
+    if (disableGarbageCollect_)
+    {
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: usd::garbageCollect blocked — disableGarbageCollect is true");
+      return;
+    }
     // Perform garbage collection on usd objects (needs to move into the user interface)
     if(internals->bridge)
       internals->bridge->GarbageCollect();
+  }
+  else if(strEquals(name, "usd::disableGarbageCollect"))
+  {
+    // SAFETY: Disable GC to prevent orphaned prim cleanup from removing scene objects prematurely
+    disableGarbageCollect_ = true;
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: usd::disableGarbageCollect = true — GC disabled to prevent missing actors");
+  }
+  else if(strEquals(name, "usd::debug.sceneSummary"))
+  {
+    // DEBUG: Dump full scene summary to logs
+    if(internals->bridge)
+    {
+      std::stringstream ss;
+      ss << "USDRMNG: === SCENE SUMMARY ===\n";
+      
+      // Commit list status
+      ss << "CommitList: " << commitList.size() << " pending objects\n";
+      ss << "RemoveList: " << removeList.size() << " marked for removal\n";
+      
+      ss << "Worlds: " << commitList.size() << " objects in commit list\n";
+      for (const auto& entry : commitList)
+      {
+        ss << "  - [" << (int)entry.first.ptr->getType() << "] " << entry.first.ptr->getName()
+           << " commitData=" << entry.second << "\n";
+      }
+      
+      // Memory store
+      if (g_rankMemoryStore)
+      {
+        auto files = g_rankMemoryStore->ListFiles();
+        ss << "MemoryStore: " << files.size() << " files\n";
+        for (const auto& f : files)
+        {
+          const auto* fe = g_rankMemoryStore->GetFile(f);
+          ss << "  - " << f << " (" << (fe ? fe->size() : 0) << " bytes)\n";
+        }
+      }
+      
+      // Remove list
+      if (!removeList.empty())
+      {
+        ss << "RemoveList objects:\n";
+        for (auto* obj : removeList)
+          ss << "  - [" << (int)obj->getType() << "] " << obj->getName() << "\n";
+      }
+      
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR, "%s", ss.str().c_str());
+    }
   }
   else if(strEquals(name, "usd::removeUnusedNames"))
   {
@@ -320,6 +376,8 @@ void UsdDevice::filterResetParam(const char * name)
     internals->mpiController.reset();
   }
   else if (!strEquals(name, "usd::garbageCollect")
+    && !strEquals(name, "usd::disableGarbageCollect")
+    && !strEquals(name, "usd::debug.sceneSummary")
     && !strEquals(name, "usd::removeUnusedNames"))
   {
     resetParam(name);
@@ -776,14 +834,46 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   if(!isInitialized())
     return;
 
+  // Log pre-flush state
+  if (!commitList.empty())
+  {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: renderFrame — flushing %zu pending objects", commitList.size());
+  }
+
   flushCommitList();
+
+  // Ensure device usd::time is committed before USD save — this guarantees
+  // the bridge processes data at the correct timestep, preventing missing actors.
+  // This is required when the user does usd::writeAtCommit = false (default).
+  transferWriteToReadParams();
+  const UsdDeviceData& paramData = getReadParams();
+  internals->bridge->UpdateBeginEndTime(paramData.timeStep);
 
   internals->bridge->ResetResourceUpdateState(); // Reset the modified flags for committed shared resources
 
   if(frame)
   {
     UsdFrame* frameObjPtr = AnariToUsdObjectPtr(frame);
+    
+    // Debug: log pre-save file state
+    if (g_rankMemoryStore)
+    {
+      auto files = g_rankMemoryStore->ListFiles();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: renderFrame — MemoryStore has %zu files before save", files.size());
+    }
+    
     frameObjPtr->saveUsd(this);
+    
+    // Debug: log post-save file state
+    if (g_rankMemoryStore)
+    {
+      auto files = g_rankMemoryStore->ListFiles();
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: renderFrame — MemoryStore has %zu files after save", files.size());
+    }
+    
     frameObjPtr->renderFrame(this);
   }
 
@@ -907,6 +997,32 @@ void UsdDevice::flushCommitList()
 {
   lockCommitList = true;
 
+  // Log commit list summary before processing
+  size_t totalCount = commitList.size();
+  size_t perTypeCounts[16] = {0}; // Track per-type counts
+  for (const auto& entry : commitList)
+  {
+    int typeIdx = (int)entry.first.ptr->getType();
+    if (typeIdx >= 0 && typeIdx < (int)(sizeof(perTypeCounts)/sizeof(perTypeCounts[0])))
+      perTypeCounts[typeIdx]++;
+  }
+  std::stringstream flushLog;
+  flushLog << "USDRMNG: flushCommitList — total=" << totalCount << " objects: ";
+  if (perTypeCounts[1]) flushLog << "[" << perTypeCounts[1] << " sampler] ";
+  if (perTypeCounts[4]) flushLog << "[" << perTypeCounts[4] << " geometry] ";
+  if (perTypeCounts[2]) flushLog << "[" << perTypeCounts[2] << " spatialField] ";
+  if (perTypeCounts[15]) flushLog << "[" << perTypeCounts[15] << " light] ";
+  if (perTypeCounts[12]) flushLog << "[" << perTypeCounts[12] << " material] ";
+  if (perTypeCounts[11]) flushLog << "[" << perTypeCounts[11] << " surface] ";
+  if (perTypeCounts[13]) flushLog << "[" << perTypeCounts[13] << " volume] ";
+  if (perTypeCounts[5]) flushLog << "[" << perTypeCounts[5] << " group] ";
+  if (perTypeCounts[6]) flushLog << "[" << perTypeCounts[6] << " instance] ";
+  if (perTypeCounts[8]) flushLog << "[" << perTypeCounts[8] << " world] ";
+  if (perTypeCounts[9]) flushLog << "[" << perTypeCounts[9] << " camera] ";
+  if (perTypeCounts[10]) flushLog << "[" << perTypeCounts[10] << " frame] ";
+  if (perTypeCounts[16]) flushLog << "[" << perTypeCounts[16] << " renderer] ";
+  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR, "%s", flushLog.str().c_str());
+
   writeTypeToUsd<(int)ANARI_SAMPLER>();
 
   writeTypeToUsd<(int)ANARI_SPATIAL_FIELD>();
@@ -996,11 +1112,25 @@ void UsdDevice::writeTypeToUsd()
 
 void UsdDevice::removePrimsFromUsd(bool onlyRemoveHandles)
 {
-  if(!onlyRemoveHandles)
+  if(onlyRemoveHandles)
   {
-    for(auto baseObj : removeList)
+    if (!removeList.empty())
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: removePrimsFromUsd — handle-only pass, skipping removal of %zu objects", removeList.size());
+  }
+  else
+  {
+    if (!removeList.empty())
     {
-      baseObj->remove(this);
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: removePrimsFromUsd — actively removing %zu prims marked with usd::removePrim", removeList.size());
+      for (auto baseObj : removeList)
+      {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
+          "USDRMNG: removePrimsFromUsd — removing prim of type %d, name '%s'",
+          (int)baseObj->getType(), baseObj->getName());
+        baseObj->remove(this);
+      }
     }
   }
   removeList.resize(0);
@@ -1454,17 +1584,33 @@ void UsdDevice::FlushSceneAndNotify()
   // Debounce: skip if we flushed recently (ParaView commits multiple objects per frame)
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFlushTime_).count();
-  if (elapsed < 500) return;
+  if (elapsed < 500) {
+    // Log the debounce skip to help diagnosis
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: FlushSceneAndNotify — debounced (%ldms < 500ms), will flush in %ldms",
+      (long)elapsed, (long)(500 - elapsed));
+    return;
+  }
   lastFlushTime_ = now;
 
   // Flush pending commit list
   if (!commitList.empty()) {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: FlushSceneAndNotify — flushing %zu pending objects", commitList.size());
     flushCommitList();
   }
 
   // Save USD scene to disk
   internals->bridge->ResetResourceUpdateState();
   internals->bridge->SaveScene();
+
+  // Debug: log MemoryStore file count
+  if (g_rankMemoryStore)
+  {
+    auto files = g_rankMemoryStore->ListFiles();
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: FlushSceneAndNotify — flush complete, MemoryStore has %zu files", files.size());
+  }
 
 #ifdef ANARI_USD_ENABLE_MPI
   // Send ZMQ notifications

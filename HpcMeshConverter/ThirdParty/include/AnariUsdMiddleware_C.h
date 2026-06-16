@@ -808,6 +808,37 @@ ANARI_USD_MIDDLEWARE_C_API void RequestFileListAsync_C(
     BrokerErrorCallback_C error_callback,
     int timeout_ms);
 
+// ========== SCENE SNAPSHOT SUPPORT ==========
+
+/**
+ * Callback for scene snapshot JSON response
+ * Called when broker returns full scene state
+ *
+ * @param json_string JSON string containing scene snapshot:
+ *   {
+ *     "request_id": ...,
+ *     "type": "scene_snapshot",
+ *     "timestamp": ...,
+ *     "num_workers": ...,
+ *     "workers": [{"rank": ..., "hostname": ..., "ready": true/false}, ...],
+ *     "files": [{"name": ..., "size": ..., "hash_lo": ..., "hash_hi": ..., "mime": ...}, ...]
+ *   }
+ */
+typedef void (*SceneSnapshotCallback_C)(const char* json_string);
+
+/**
+ * Request full scene snapshot from broker (non-blocking)
+ * Returns all registered workers and rank 0 memory store files with hashes
+ *
+ * @param callback Called with JSON scene snapshot on success
+ * @param error_callback Called on error (can be NULL)
+ * @param timeout_ms Timeout in milliseconds
+ */
+ANARI_USD_MIDDLEWARE_C_API void RequestSceneSnapshotAsync_C(
+    SceneSnapshotCallback_C callback,
+    BrokerErrorCallback_C error_callback,
+    int timeout_ms);
+
 // ========== PARALLEL FILE DOWNLOAD SUPPORT ==========
 
 /**

@@ -327,6 +327,9 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     ANARIStatusCallback userSetStatusFunc = nullptr;
     const void* userSetStatusUserData = nullptr;
 
+    // Disable garbage collection to prevent orphaned prim removal
+    bool disableGarbageCollect_ = false;
+
    private:
     // Flush on renderFrame (camera change) only — no geometry-commit auto-flush
     bool autoFlushOnGeometryCommit = false;

@@ -37,8 +37,12 @@ enum class ZmqMessageType : uint32_t {
     RESP_FILE_COMPLETE = 202,  // File transmission complete
     RESP_NO_FILE = 203,        // File not found
     RESP_ERROR = 204,          // Error occurred
-    RESP_PROPERTY = 401,       // Response with property value
-    
+    RESP_PROPERTY = 401,       // Response with property value,
+
+    // Scene snapshot
+    REQ_SCENE_SNAPSHOT = 500,  // Request full scene snapshot from all ranks
+    RESP_SCENE_SNAPSHOT = 501, // Response: JSON with scene state
+
     // Push notifications (Worker → Broker → Laptop)
     NOTIFY_FILE_UPDATE = 300,  // Notification that a file has been updated
     NOTIFY_COMMIT_COMPLETE = 301  // Notification that scene commit is complete
