@@ -877,22 +877,13 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     frameObjPtr->renderFrame(this);
   }
 
-  // Send commit notification to laptop client (only from rank 0 to avoid duplicates)
+  // Send ZMQ notifications to laptop client (only from rank 0 to avoid duplicates)
   #ifdef ANARI_USD_ENABLE_MPI
   if (zmqWorker_ && zmqWorker_->IsConnected() && frame) {
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    // Only rank 0 sends the commit notification to avoid 16 duplicates
-    if (mpiRank == 0) {
-      const char* frameFilename = "FullScene.usda";
-      auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
-      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
-      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
-      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
-    }
-
-    // Also notify about individual clip files and image files that changed on this rank
+    // 1. First: notify about individual clip files and image files that changed on this rank
     if (g_rankMemoryStore) {
       auto allFiles = g_rankMemoryStore->ListFiles();
       for (const auto& name : allFiles) {
@@ -907,6 +898,24 @@ void UsdDevice::renderFrame(ANARIFrame frame)
           }
         }
       }
+    }
+
+    // 2. Barrier: wait for all ranks to finish sending their file notifications
+    //    This ensures CommitComplete arrives AFTER all V2 file notifications,
+    //    so the UE client's dedup sets are cleared at the right time.
+#ifdef USD_DEVICE_MPI_ENABLED
+    if (internals->mpiController) {
+      internals->mpiController->Barrier();
+    }
+#endif
+
+    // 3. Last: only rank 0 sends the commit notification to avoid 16 duplicates
+    if (mpiRank == 0) {
+      const char* frameFilename = "FullScene.usda";
+      auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
+      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
+      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
+      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
     }
   }
 
@@ -1618,15 +1627,7 @@ void UsdDevice::FlushSceneAndNotify()
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    // Only rank 0 sends commit notification to avoid duplicates
-    if (mpiRank == 0 && g_rankMemoryStore) {
-      auto* fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
-      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
-      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
-      zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
-    }
-
-    // Notify about clip files and image files that changed on this rank
+    // 1. First: notify about clip files and image files that changed on this rank
     if (g_rankMemoryStore) {
       auto allFiles = g_rankMemoryStore->ListFiles();
       for (const auto& name : allFiles) {
@@ -1641,6 +1642,23 @@ void UsdDevice::FlushSceneAndNotify()
           }
         }
       }
+    }
+
+    // 2. Barrier: wait for all ranks to finish sending their file notifications
+    //    This ensures CommitComplete arrives AFTER all V2 file notifications,
+    //    so the UE client's dedup sets are cleared at the right time.
+#ifdef USD_DEVICE_MPI_ENABLED
+    if (internals->mpiController) {
+      internals->mpiController->Barrier();
+    }
+#endif
+
+    // 3. Last: only rank 0 sends commit notification to avoid duplicates
+    if (mpiRank == 0 && g_rankMemoryStore) {
+      auto* fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
+      uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
+      const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
+      zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
     }
 
     // Serve any pending file requests
