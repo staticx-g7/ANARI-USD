@@ -280,11 +280,11 @@ void UsdDevice::filterSetParam(
       ss << "RemoveList: " << removeList.size() << " marked for removal\n";
       
       ss << "Worlds: " << commitList.size() << " objects in commit list\n";
-      for (const auto& entry : commitList)
-      {
-        ss << "  - [" << (int)entry.first.ptr->getType() << "] " << entry.first.ptr->getName()
-           << " commitData=" << entry.second << "\n";
-      }
+       for (const auto& entry : commitList)
+       {
+         ss << "  - [" << (int)entry.first.ptr->getType() << "] " << entry.first.ptr->getType()
+            << " commitData=" << entry.second << "\n";
+       }
       
       // Memory store
       if (g_rankMemoryStore)
@@ -303,7 +303,7 @@ void UsdDevice::filterSetParam(
       {
         ss << "RemoveList objects:\n";
         for (auto* obj : removeList)
-          ss << "  - [" << (int)obj->getType() << "] " << obj->getName() << "\n";
+          ss << "  - [" << (int)obj->getType() << "] " << obj->getType() << "\n";
       }
       
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR, "%s", ss.str().c_str());
@@ -1127,8 +1127,8 @@ void UsdDevice::removePrimsFromUsd(bool onlyRemoveHandles)
       for (auto baseObj : removeList)
       {
         reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
-          "USDRMNG: removePrimsFromUsd — removing prim of type %d, name '%s'",
-          (int)baseObj->getType(), baseObj->getName());
+          "USDRMNG: removePrimsFromUsd — removing prim of type %d",
+          (int)baseObj->getType());
         baseObj->remove(this);
       }
     }
