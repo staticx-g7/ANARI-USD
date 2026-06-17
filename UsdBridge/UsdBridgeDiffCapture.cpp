@@ -94,6 +94,16 @@ void UsdBridgeDiffCapture::Clear() {
     entries_.clear();
 }
 
+std::vector<std::string> UsdBridgeDiffCapture::GetCapturedFilenames() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> filenames;
+    filenames.reserve(entries_.size());
+    for (const auto& kv : entries_) {
+        filenames.push_back(kv.first);
+    }
+    return filenames;
+}
+
 size_t UsdBridgeDiffCapture::GetCapturedCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return entries_.size();

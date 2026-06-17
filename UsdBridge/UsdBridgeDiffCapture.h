@@ -53,6 +53,9 @@ public:
     // Clear all captured state (e.g., on frame overwrite / restart)
     void Clear();
 
+    // Return all currently-captured filenames (for V2 notification filtering)
+    std::vector<std::string> GetCapturedFilenames() const;
+
     // Get captured entry count (memory tracking)
     size_t GetCapturedCount() const;
 

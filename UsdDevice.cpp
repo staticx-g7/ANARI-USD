@@ -883,20 +883,44 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    // 1. First: notify about individual clip files and image files that changed on this rank
-    if (g_rankMemoryStore) {
-      auto allFiles = g_rankMemoryStore->ListFiles();
-      for (const auto& name : allFiles) {
-        if (name.find("clips/") == 0 || name.find("images/") == 0) {
-          auto* entry = g_rankMemoryStore->GetFile(name);
-          if (entry) {
-            // DIFF-CAPTURE-HOOK: send old-hash-aware notification
-            const uint64_t* oldHash = GetDiffCapture().GetOldHash128(name);
-            bool hasOld = GetDiffCapture().HasOldEntry(name);
-            zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
-            GetDiffCapture().Commit(name);
+    // 1. First: notify ONLY about files that were actually written this renderFrame cycle.
+    //    DiffCapture holds entries for files whose CapturePreStore() was called right before
+    //    StoreFile(). Iterating DiffCapture instead of MemoryStore.ListFiles() avoids sending
+    //    stale V2 notifications for clips from previous frames (rank redistribution left them
+    //    in the store but they weren't written this cycle).
+    auto& diffCap = GetDiffCapture();
+    auto capturedFiles = diffCap.GetCapturedFilenames();
+
+    if (capturedFiles.empty()) {
+      // Fallback: if DiffCapture is empty but MemoryStore has clips,
+      // still notify them (first frame after connection, no old hashes yet).
+      // These are genuinely new files — the client has never seen them.
+      if (g_rankMemoryStore) {
+        auto allFiles = g_rankMemoryStore->ListFiles();
+        for (const auto& name : allFiles) {
+          if (name.find("clips/") == 0 || name.find("images/") == 0) {
+            auto* entry = g_rankMemoryStore->GetFile(name);
+            if (entry) {
+              zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, nullptr, false);
+            }
           }
         }
+      }
+    } else {
+      // Only V2-notify files that were actually written this frame
+      for (const auto& name : capturedFiles) {
+        // Only geometry and image files get V2 notifications
+        if (name.find("clips/") != 0 && name.find("images/") != 0) {
+          diffCap.Commit(name);
+          continue;
+        }
+        auto* entry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(name) : nullptr;
+        if (entry) {
+          const uint64_t* oldHash = diffCap.GetOldHash128(name);
+          bool hasOld = diffCap.HasOldEntry(name);
+          zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
+        }
+        diffCap.Commit(name);
       }
     }
 
