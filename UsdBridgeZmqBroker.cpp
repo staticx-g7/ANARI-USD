@@ -310,7 +310,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
                   << " MPI workers to connect..." << std::endl;
 
         auto starttime = std::chrono::steady_clock::now();
-        const int timeoutseconds = 400;
+        const int timeoutseconds = 30;
         int nonZeroWorkersConnected = 0;  // Count only ranks 1-N
 
         while (nonZeroWorkersConnected < expectedWorkers)
@@ -399,8 +399,9 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         std::cout << "Rank 0 (MPI Broker): Added rank 0 to worker list (self-service mode)" << std::endl;
         std::cout << "Rank 0 (MPI Broker): Total workers including rank 0: " << workers_.size() << std::endl;
 
-        std::cout << "[MPI ZMQ Broker] All " << expectedWorkers
-                  << " MPI workers connected successfully!" << std::endl;
+        std::cout << "[MPI ZMQ Broker] " << nonZeroWorkersConnected << "/" << expectedWorkers
+                  << " MPI workers connected" << (nonZeroWorkersConnected < expectedWorkers ? " (partial)" : " successfully!")
+                  << std::endl;
 #else
         // Non-MPI mode: No workers to wait for, just add self as rank 0
         std::cout << "[Non-MPI ZMQ Broker] Running in single-process mode, no external workers." << std::endl;
