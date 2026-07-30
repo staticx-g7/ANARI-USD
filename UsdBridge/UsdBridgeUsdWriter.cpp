@@ -1623,7 +1623,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
              g_rankMemoryStore->RemoveFile(info.filename);
            }
 
-           std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << ' bytes' << std::endl;
+            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
          }
        }
     }

@@ -169,6 +169,8 @@ std::string ZmqBroker::GetInfiniBandIP() {
 bool ZmqBroker::Initialize(int expectedWorkers) {
     if (initialized_) return true;
 
+    std::cout << "[Rank 0 MPI Broker] ZmqBroker::Initialize() called" << std::endl << std::flush;
+
     try {
 #ifdef ANARI_USD_ENABLE_MPI
         // Get MPI rank
