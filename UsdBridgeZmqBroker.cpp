@@ -6,6 +6,7 @@
 
 #include <zmq.hpp>
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <thread>
@@ -257,40 +258,51 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         client_router_->bind(client_bind_addr.str());
         client_router_->set(zmq::sockopt::linger, linger);
 
-        // Print connection information
-        std::cerr << std::endl;
-        std::cerr << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
-        std::cerr << "║ ZMQ BROKER CONNECTION INFORMATION                                             ║" << std::endl;
-        std::cerr << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
-        
+        // Print connection information to both stderr and a file
+        {
+            std::stringstream ssh_info;
+            ssh_info << std::endl;
+            ssh_info << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+            ssh_info << "║ ZMQ BROKER CONNECTION INFORMATION                                             ║" << std::endl;
+            ssh_info << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
+            
 #ifdef ANARI_USD_ENABLE_MPI
-        if (expectedWorkers > 0) {
-            // MPI mode: SSH tunnel for remote access
-            std::cerr << "SSH TUNNEL COMMAND FOR REMOTE ACCESS:" << std::endl;
-            std::cerr << "ssh -N -L " << client_port_ << ":" << ib_ip << ":" << client_port_ << " \\" << std::endl;
-            std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-            std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
-        } else {
-            // MPI but 0 workers case (data is too small to split)
-            // In single-rank mode, broker binds to localhost
-            std::cerr << "REMOTE LOCALHOST BROKER (NO MPI SPLIT):" << std::endl;
-            std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
-            std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-            std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
-        }
+            if (expectedWorkers > 0) {
+                ssh_info << "SSH TUNNEL COMMAND FOR REMOTE ACCESS:" << std::endl;
+                ssh_info << "ssh -N -L " << client_port_ << ":" << ib_ip << ":" << client_port_ << " \\" << std::endl;
+                ssh_info << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+                ssh_info << " george2@jureca04.fz-juelich.de" << std::endl;
+            } else {
+                ssh_info << "REMOTE LOCALHOST BROKER (NO MPI SPLIT):" << std::endl;
+                ssh_info << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+                ssh_info << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+                ssh_info << " george2@jureca04.fz-juelich.de" << std::endl;
+            }
 #else
-        // Non-MPI mode: Direct localhost connection or SSH tunnel if remote GUI
-        std::cerr << "REMOTE LOCALHOST BROKER (NON-MPI / MAIN GUI):" << std::endl;
-        std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
-        std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-        std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
-        
-        std::cerr << "\nDIRECT LOCAL CONNECTION (if running on same machine):" << std::endl;
-        std::cerr << "Connect to: localhost:" << client_port_ << std::endl;
+            ssh_info << "REMOTE LOCALHOST BROKER (NON-MPI / MAIN GUI):" << std::endl;
+            ssh_info << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+            ssh_info << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+            ssh_info << " george2@jureca04.fz-juelich.de" << std::endl;
+            
+            ssh_info << "\nDIRECT LOCAL CONNECTION (if running on same machine):" << std::endl;
+            ssh_info << "Connect to: localhost:" << client_port_ << std::endl;
 #endif
-        
-        std::cerr << std::flush;
-        std::cerr << std::endl;
+            ssh_info << std::flush;
+            
+            std::cerr << ssh_info.str();
+            
+            // Also write SSH info to a file
+            const char* output_dir = getenv("ANARI_USD_SERIALIZE_LOCATION");
+            if (output_dir) {
+                std::string ssh_file = std::string(output_dir) + "/_ssh_connection_info.txt";
+                std::ofstream ssh_fout(ssh_file);
+                if (ssh_fout) {
+                    ssh_fout << ssh_info.str();
+                    ssh_fout.close();
+                    std::cerr << "[Rank 0 MPI Broker] SSH connection info also written to: " << ssh_file << std::endl;
+                }
+            }
+        }
 
 #ifdef ANARI_USD_ENABLE_MPI
         // MPI mode: Wait for MPI workers to connect
