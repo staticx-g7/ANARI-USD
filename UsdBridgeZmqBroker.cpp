@@ -279,6 +279,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         std::cout << "Connect to: localhost:" << client_port_ << std::endl;
 #endif
         
+        std::cout << std::flush;
         std::cout << std::endl;
 
 #ifdef ANARI_USD_ENABLE_MPI
@@ -1245,9 +1246,11 @@ void ZmqBroker::SSHReminderThread() {
         std::cout << "Then run: cd ~/Desktop/Github/ANARI-USD/laptop_client" << std::endl;
         std::cout << "          python3 usd_stream_client.py --discover 0 1 2 3 --download-all" << std::endl;
         std::cout << std::endl;
+        std::cout << std::flush;
     }
 
     std::cout << "[SSH REMINDER] Thread stopped" << std::endl;
+    std::cout << std::flush;
 }
 
 bool ZmqBroker::SendToWorker(const std::string& workerId, const void* data, size_t size) {
