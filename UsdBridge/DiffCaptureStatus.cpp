@@ -139,23 +139,23 @@ void DiffCaptureStatus::PrintTable(
     int width = 80;
 
     // --- Clear + print ---
-    std::cout << ANSI_CLEAR;
+    std::cerr << ANSI_CLEAR;
 
     // Header box
-    std::cout << ANSI_BRIGHT;
-    std::cout << "+" << std::string(width - 2, '=') << "+" << std::endl;
-    std::cout << "| " << ANSI_CYAN << "DIFF-CAPTURE STATUS TABLE" << ANSI_RESET;
+    std::cerr << ANSI_BRIGHT;
+    std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
+    std::cerr << "| " << ANSI_CYAN << "DIFF-CAPTURE STATUS TABLE" << ANSI_RESET;
     std::string hdr = std::string(width - 4 - 23, ' ');
-    if (!hdr.empty()) std::cout << hdr;
-    std::cout << "| " << ANSI_GREEN << "interval: " << intervalSec << "s" << ANSI_RESET << " |" << std::endl;
-    std::cout << "+" << std::string(width - 2, '=') << "+" << std::endl;
+    if (!hdr.empty()) std::cerr << hdr;
+    std::cerr << "| " << ANSI_GREEN << "interval: " << intervalSec << "s" << ANSI_RESET << " |" << std::endl;
+    std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
 
     // SSH command line
     if ((int)ssh.str().size() <= width - 4) {
-        std::cout << "| " << ANSI_YELLOW << ssh.str();
-        std::cout << std::string(width - 4 - (int)ssh.str().size(), ' ') << " |" << std::endl;
+        std::cerr << "| " << ANSI_YELLOW << ssh.str();
+        std::cerr << std::string(width - 4 - (int)ssh.str().size(), ' ') << " |" << std::endl;
     } else {
-        std::cout << "| " << ANSI_YELLOW << ssh.str().substr(0, width - 8) << "..." << ANSI_RESET << " |" << std::endl;
+        std::cerr << "| " << ANSI_YELLOW << ssh.str().substr(0, width - 8) << "..." << ANSI_RESET << " |" << std::endl;
     }
 
     // Totals line
@@ -163,29 +163,29 @@ void DiffCaptureStatus::PrintTable(
     tot << "Ranks: " << ranks.size()
         << "  |  Active: " << lastUpdate_.size()
         << "  |  Updates (last " << windowSec << "s): " << updatesInWindow;
-    std::cout << "| " << ANSI_BRIGHT << tot.str();
+    std::cerr << "| " << ANSI_BRIGHT << tot.str();
     std::string pad = std::string(width - 4 - (int)tot.str().size(), ' ');
-    if (!pad.empty()) std::cout << pad;
-    std::cout << " |" << std::endl;
-    std::cout << "+" << std::string(width - 2, '-') << "+" << std::endl;
+    if (!pad.empty()) std::cerr << pad;
+    std::cerr << " |" << std::endl;
+    std::cerr << "+" << std::string(width - 2, '-') << "+" << std::endl;
 
     // Column headers
-    std::cout << "| " << std::left << std::setw(6) << "Rank"
+    std::cerr << "| " << std::left << std::setw(6) << "Rank"
               << " " << std::setw(14) << "Updated"
               << " " << std::setw(8) << "Category"
               << " " << std::setw(38) << "File Updated"
               << " |" << std::endl;
-    std::cout << "+" << std::string(width - 2, '-') << "+" << std::endl;
+    std::cerr << "+" << std::string(width - 2, '-') << "+" << std::endl;
 
     // Rows
     if (ranks.empty()) {
-        std::cout << "| " << ANSI_YELLOW << "  (no ranks registered yet)" << ANSI_RESET;
-        std::cout << std::string(width - 35, ' ') << " |" << std::endl;
+        std::cerr << "| " << ANSI_YELLOW << "  (no ranks registered yet)" << ANSI_RESET;
+        std::cerr << std::string(width - 35, ' ') << " |" << std::endl;
     } else {
         for (int r : ranks) {
             auto uit = lastUpdate_.find(r);
             if (uit == lastUpdate_.end()) {
-                std::cout << "| " << std::left << std::setw(6) << r
+                std::cerr << "| " << std::left << std::setw(6) << r
                           << " " << std::setw(14) << "---"
                           << " " << std::setw(8) << "--"
                           << " " << std::setw(38) << "(no update yet)"
@@ -205,7 +205,6 @@ void DiffCaptureStatus::PrintTable(
 
                 std::string cat = uit->second.category;
                 std::string fn = uit->second.filename;
-                // Truncate filename if too long
                 if ((int)fn.size() > 38) {
                     fn = "..." + fn.substr(fn.size() - 35);
                 }
@@ -213,7 +212,7 @@ void DiffCaptureStatus::PrintTable(
                 bool isRecent = (ago < (uint64_t)intervalSec);
                 std::string rowColor = isRecent ? ANSI_GREEN : ANSI_RESET;
 
-                std::cout << rowColor
+                std::cerr << rowColor
                           << "| " << std::left << std::setw(6) << r
                           << " " << std::setw(14) << agoStr
                           << " " << categoryColor(cat) << std::setw(8) << cat << ANSI_RESET
@@ -223,14 +222,14 @@ void DiffCaptureStatus::PrintTable(
         }
     }
 
-    std::cout << "+" << std::string(width - 2, '=') << "+" << std::endl;
-    std::cout << "| " << std::left << "Legend: "
+    std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
+    std::cerr << "| " << std::left << "Legend: "
               << std::string(70, ' ') << " |" << std::endl;
-    std::cout << "+ " << ANSI_GREEN << " geom  " << ANSI_RESET << "= geometry (.usda)    "
+    std::cerr << "+ " << ANSI_GREEN << " geom  " << ANSI_RESET << "= geometry (.usda)    "
               << ANSI_YELLOW << " texture " << ANSI_RESET << "= materials/textures  "
               << ANSI_CYAN << " anim  " << ANSI_RESET << "= animation clips"
               << std::string(17, ' ') << "+" << std::endl;
-    std::cout << "+" << std::string(width - 2, '=') << "+" << std::endl;
+    std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
 
-    std::cout.flush();
+    std::cerr.flush();
 }

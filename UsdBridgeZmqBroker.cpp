@@ -169,7 +169,7 @@ std::string ZmqBroker::GetInfiniBandIP() {
 bool ZmqBroker::Initialize(int expectedWorkers) {
     if (initialized_) return true;
 
-    std::cout << "[Rank 0 MPI Broker] ZmqBroker::Initialize() called" << std::endl << std::flush;
+    std::cerr << "[Rank 0 MPI Broker] ZmqBroker::Initialize() called" << std::endl << std::flush;
 
     try {
 #ifdef ANARI_USD_ENABLE_MPI
@@ -250,39 +250,39 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         client_router_->set(zmq::sockopt::linger, linger);
 
         // Print connection information
-        std::cout << std::endl;
-        std::cout << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║ ZMQ BROKER CONNECTION INFORMATION                                             ║" << std::endl;
-        std::cout << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cerr << "║ ZMQ BROKER CONNECTION INFORMATION                                             ║" << std::endl;
+        std::cerr << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
         
 #ifdef ANARI_USD_ENABLE_MPI
         if (expectedWorkers > 0) {
             // MPI mode: SSH tunnel for remote access
-            std::cout << "SSH TUNNEL COMMAND FOR REMOTE ACCESS:" << std::endl;
-            std::cout << "ssh -N -L " << client_port_ << ":" << ib_ip << ":" << client_port_ << " \\" << std::endl;
-            std::cout << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-            std::cout << " george2@jureca04.fz-juelich.de" << std::endl;
+            std::cerr << "SSH TUNNEL COMMAND FOR REMOTE ACCESS:" << std::endl;
+            std::cerr << "ssh -N -L " << client_port_ << ":" << ib_ip << ":" << client_port_ << " \\" << std::endl;
+            std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+            std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
         } else {
             // MPI but 0 workers case (data is too small to split)
             // In single-rank mode, broker binds to localhost
-            std::cout << "REMOTE LOCALHOST BROKER (NO MPI SPLIT):" << std::endl;
-            std::cout << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
-            std::cout << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-            std::cout << " george2@jureca04.fz-juelich.de" << std::endl;
+            std::cerr << "REMOTE LOCALHOST BROKER (NO MPI SPLIT):" << std::endl;
+            std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+            std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+            std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
         }
 #else
         // Non-MPI mode: Direct localhost connection or SSH tunnel if remote GUI
-        std::cout << "REMOTE LOCALHOST BROKER (NON-MPI / MAIN GUI):" << std::endl;
-        std::cout << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
-        std::cout << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-        std::cout << " george2@jureca04.fz-juelich.de" << std::endl;
+        std::cerr << "REMOTE LOCALHOST BROKER (NON-MPI / MAIN GUI):" << std::endl;
+        std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+        std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+        std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
         
-        std::cout << "\nDIRECT LOCAL CONNECTION (if running on same machine):" << std::endl;
-        std::cout << "Connect to: localhost:" << client_port_ << std::endl;
+        std::cerr << "\nDIRECT LOCAL CONNECTION (if running on same machine):" << std::endl;
+        std::cerr << "Connect to: localhost:" << client_port_ << std::endl;
 #endif
         
-        std::cout << std::flush;
-        std::cout << std::endl;
+        std::cerr << std::flush;
+        std::cerr << std::endl;
 
 #ifdef ANARI_USD_ENABLE_MPI
         // MPI mode: Wait for MPI workers to connect
@@ -1187,13 +1187,13 @@ void ZmqBroker::StatusPrinterThread() {
     if (envInt) {
         intervalSec = std::atoi(envInt);
         if (intervalSec <= 0) {
-            std::cout << "[DiffCapture STATUS] Disabled (DIFFCAPTURE_STATUS_INTERVAL=" << envInt << ")" << std::endl;
+            std::cerr << "[DiffCapture STATUS] Disabled (DIFFCAPTURE_STATUS_INTERVAL=" << envInt << ")" << std::endl;
             GetDiffCaptureStatus().Disable();
             return;
         }
     }
 
-    std::cout << "[DiffCapture STATUS] Thread started - table refresh every " << intervalSec << "s" << std::endl;
+    std::cerr << "[DiffCapture STATUS] Thread started - table refresh every " << intervalSec << "s" << std::endl;
 
     while (status_printer_active_) {
         for (int i = 0; i < intervalSec && status_printer_active_; ++i) {
@@ -1204,11 +1204,11 @@ void ZmqBroker::StatusPrinterThread() {
         GetDiffCaptureStatus().PrintTable(client_port_, broker_ip_, intervalSec);
     }
 
-    std::cout << "[DiffCapture STATUS] Thread stopped" << std::endl;
+    std::cerr << "[DiffCapture STATUS] Thread stopped" << std::endl;
 }
 
 void ZmqBroker::SSHReminderThread() {
-    std::cout << "[SSH REMINDER] Thread started - will print SSH command every 60 seconds" << std::endl;
+    std::cerr << "[SSH REMINDER] Thread started - will print SSH command every 60 seconds" << std::endl;
 
     int reminder_count = 0;
     while (ssh_reminder_active_) {
@@ -1222,37 +1222,37 @@ void ZmqBroker::SSHReminderThread() {
         reminder_count++;
 
         // Print the SSH tunnel command
-        std::cout << std::endl;
-        std::cout << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║ SSH TUNNEL REMINDER #" << std::left << std::setw(58) << reminder_count << "║" << std::endl;
-        std::cout << "╠════════════════════════════════════════════════════════════════════════════════╣" << std::endl;
-        std::cout << "║ Run this command on your laptop to connect:                                   ║" << std::endl;
-        std::cout << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "╔════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cerr << "║ SSH TUNNEL REMINDER #" << std::left << std::setw(58) << reminder_count << "║" << std::endl;
+        std::cerr << "╠════════════════════════════════════════════════════════════════════════════════╣" << std::endl;
+        std::cerr << "║ Run this command on your laptop to connect:                                   ║" << std::endl;
+        std::cerr << "╚════════════════════════════════════════════════════════════════════════════════╝" << std::endl;
         
 #ifdef ANARI_USD_ENABLE_MPI
         if (workers_.size() > 1) {
             // MPI mode with multiple workers
-            std::cout << "ssh -N -L " << client_port_ << ":" << broker_ip_ << ":" << client_port_ << " \\" << std::endl;
+            std::cerr << "ssh -N -L " << client_port_ << ":" << broker_ip_ << ":" << client_port_ << " \\" << std::endl;
         } else {
             // MPI but single rank (no workers) or non-MPI mode
-            std::cout << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+            std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
         }
 #else
         // Non-MPI mode: always use localhost
-        std::cout << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
+        std::cerr << "ssh -N -L " << client_port_ << ":localhost:" << client_port_ << " \\" << std::endl;
 #endif
         
-        std::cout << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
-        std::cout << " george2@jureca04.fz-juelich.de" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Then run: cd ~/Desktop/Github/ANARI-USD/laptop_client" << std::endl;
-        std::cout << "          python3 usd_stream_client.py --discover 0 1 2 3 --download-all" << std::endl;
-        std::cout << std::endl;
-        std::cout << std::flush;
+        std::cerr << " -i ~/.ssh/ed_25519_universal_openssh \\" << std::endl;
+        std::cerr << " george2@jureca04.fz-juelich.de" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "Then run: cd ~/Desktop/Github/ANARI-USD/laptop_client" << std::endl;
+        std::cerr << "          python3 usd_stream_client.py --discover 0 1 2 3 --download-all" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << std::flush;
     }
 
-    std::cout << "[SSH REMINDER] Thread stopped" << std::endl;
-    std::cout << std::flush;
+    std::cerr << "[SSH REMINDER] Thread stopped" << std::endl;
+    std::cerr << std::flush;
 }
 
 bool ZmqBroker::SendToWorker(const std::string& workerId, const void* data, size_t size) {
