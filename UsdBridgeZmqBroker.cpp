@@ -308,8 +308,10 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             if (elapsed >= timeoutseconds)
             {
                 std::cerr << "Rank 0 (MPI Broker): Timeout waiting for workers. Only "
-                          << nonZeroWorkersConnected << "/" << expectedWorkers << " connected." << std::endl;
-                return false;
+                          << nonZeroWorkersConnected << "/" << expectedWorkers << " connected."
+                          << " Continuing with partial workers. Late joiners will be accepted by message loop."
+                          << std::endl;
+                break;
             }
 
             zmq::pollitem_t items[] = { {*router_, 0, ZMQ_POLLIN, 0} };

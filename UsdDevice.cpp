@@ -480,31 +480,36 @@ void UsdDevice::initializeBridge()
       zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
       if (!zmqBroker_->Initialize(mpiSize - 1)) {
         reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
-            "Failed to initialize ZMQ broker on rank 0, continuing without ZMQ");
+            "Failed to initialize ZMQ broker on rank 0");
         zmqBroker_.reset();
       }
-      else {
+      if (zmqBroker_) {
         const auto& workers = zmqBroker_->GetConnectedWorkers();
         for (const auto& worker : workers) {
           reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
               "Rank 0: Worker %d connected from %s", worker.rank, worker.hostname.c_str());
         }
+        fileServingActive_ = true;
+        fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
+                     ANARI_STATUS_NO_ERROR,
+                     "Rank 0: Started background file serving thread");
       }
     }
     else {
       zmqWorker_ = std::make_unique<usd_bridge::ZmqWorker>("", mpiRank);
-      if (!zmqWorker_->Connect()) {
-        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
-                     ANARI_STATUS_UNKNOWN_ERROR,
-                     "Failed to connect to broker on rank %d, continuing without ZMQ", mpiRank);
-        zmqWorker_.reset();
-      }
-      else {
+      if (zmqWorker_->Connect()) {
         fileServingActive_ = true;
         fileServingThread_ = std::thread(&UsdDevice::FileServingThreadLoop, this);
         reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
                      ANARI_STATUS_NO_ERROR,
                      "Rank %d: Started background file serving thread", mpiRank);
+      }
+      else {
+        reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+                     ANARI_STATUS_UNKNOWN_ERROR,
+                     "Failed to connect to broker on rank %d, continuing without ZMQ", mpiRank);
+        zmqWorker_.reset();
       }
     }
     InitializeMemoryStore(mpiRank);
