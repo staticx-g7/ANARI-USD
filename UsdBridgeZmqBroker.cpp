@@ -169,13 +169,21 @@ std::string ZmqBroker::GetInfiniBandIP() {
 bool ZmqBroker::Initialize(int expectedWorkers) {
     if (initialized_) return true;
 
-    std::cerr << "[Rank 0 MPI Broker] ZmqBroker::Initialize() called" << std::endl << std::flush;
-
     try {
 #ifdef ANARI_USD_ENABLE_MPI
         // Get MPI rank
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+        const char* slurm_procid = getenv("SLURM_PROCID");
+        const char* ompi_rank = getenv("OMPI_COMM_WORLD_RANK");
+        const char* pmi_rank = getenv("PMI_RANK");
+        std::cerr << "[Rank " << rank << "/MPI_COMM_WORLD] ZmqBroker::Initialize() called"
+                  << " | SLURM_PROCID=" << (slurm_procid ? slurm_procid : "?")
+                  << " | OMPI_RANK=" << (ompi_rank ? ompi_rank : "?")
+                  << " | PMI_RANK=" << (pmi_rank ? pmi_rank : "?")
+                  << " | expectedWorkers=" << expectedWorkers
+                  << std::endl << std::flush;
 
         if (rank != 0) {
             std::cerr << "[ZmqBroker] ERROR: Initialize() called on non-zero rank!" << std::endl;
