@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <cstring>
@@ -22,6 +23,27 @@
 #endif
 
 namespace usd_bridge {
+
+// ---------------------------------------------------------------------------
+// Verbose logging gate
+// ---------------------------------------------------------------------------
+// Per-chunk / per-request stdout used to fire for every 4MB chunk of every
+// file on every rank (iostreams are slow, and on a multi-rank HPC node the
+// shared terminal + line-buffered flush dominates CPU). Hot-path logging is
+// now gated behind BROKER_VERBOSE=1 (set 0/unset = quiet, the default).
+// One-time startup banners and all errors/warnings stay unconditional.
+static bool BrokerVerbose() {
+    static const bool verbose = []() {
+        const char* env = getenv("BROKER_VERBOSE");
+        return env != nullptr && env[0] != '0' && std::string(env) != "false";
+    }();
+    return verbose;
+}
+
+// Per-chunk / per-request log lines (high frequency in steady state)
+#define BVERB if (BrokerVerbose()) std::cout
+// Worker-only hot-path variant (same gate)
+#define WVERB if (BrokerVerbose()) std::cout
 
 // ============================================================================
 // Helper Functions
@@ -154,7 +176,12 @@ ZmqBroker::ZmqBroker(int workerPort, int clientPort)
     , client_port_(clientPort)
     , initialized_(false)
 {
-    context_ = std::make_unique<zmq::context_t>(1);
+    // >1 I/O threads: the broker multiplexes every worker + the laptop client
+    // through a single poll loop; one I/O thread becomes the socket-level
+    // bottleneck for large files over high-bandwidth (IB) links.
+    unsigned hw = std::thread::hardware_concurrency();
+    int ioThreads = static_cast<int>(std::min<size_t>(std::max<size_t>(hw, 8) / 4, 8));
+    context_ = std::make_unique<zmq::context_t>(ioThreads);
     router_ = std::make_unique<zmq::socket_t>(*context_, zmq::socket_type::router);
     client_router_ = std::make_unique<zmq::socket_t>(*context_, zmq::socket_type::router);
 }
@@ -458,12 +485,20 @@ void ZmqBroker::MessageLoopThread() {
     try {
         // ========== MAIN MESSAGE LOOP - Handle BOTH workers and laptop client ==========
         while (message_loop_active_) {
+            // Advance in-flight rank-0 file transfers first (round-robin across the
+            // active downloads) so one big file can't hold up the whole broker —
+            // worker traffic and other clients get serviced between its chunks.
+            TickPendingTransfers(2);
+
             zmq::pollitem_t items[] = {
                 { *router_, 0, ZMQ_POLLIN, 0 },        // Messages from workers (ROUTER)
                 { *client_router_, 0, ZMQ_POLLIN, 0 }  // Messages from laptop client (ROUTER)
             };
 
-            zmq::poll(&items[0], 2, std::chrono::milliseconds(100));
+            // Keep polling tight while a transfer is in flight so chunks keep
+            // moving without waiting out a full 100ms poll timeout per chunk.
+            const int pollTimeoutMs = pending_transfers_.empty() ? 100 : 1;
+            zmq::poll(&items[0], 2, std::chrono::milliseconds(pollTimeoutMs));
 
             // ========== Handle Laptop Client Request (CLIENT ROUTER socket) ==========
             if (items[1].revents & ZMQ_POLLIN) {
@@ -476,30 +511,32 @@ void ZmqBroker::MessageLoopThread() {
                 std::string client_id(static_cast<const char*>(client_identity.data()), 
                                      client_identity.size());
 
-                // DEBUG: Log all incoming client requests - FIRST THING
-                std::cout << "[Rank 0 MPI Broker] DEBUG: Received client request - size=" 
-                          << request.size() << " bytes, client_id=" << client_id.substr(0, 8) << "..."
-                          << ", sizeof(ZmqFileRequest)=" << sizeof(ZmqFileRequest) << std::endl;
-                
+                // DEBUG: Log all incoming client requests - FIRST THING (verbose-only:
+                // fires on every single request, including every download)
+                BVERB << "[Rank 0 MPI Broker] DEBUG: Received client request - size="
+                      << request.size() << " bytes, client_id=" << client_id.substr(0, 8) << "..."
+                      << ", sizeof(ZmqFileRequest)=" << sizeof(ZmqFileRequest) << std::endl;
+
                 // Check if request is large enough to be a binary message
                 if (request.size() < sizeof(ZmqFileRequest)) {
-                    std::cout << "[Rank 0 MPI Broker] DEBUG: Request too small for binary message (" 
-                              << request.size() << " bytes), treating as string" << std::endl;
+                    BVERB << "[Rank 0 MPI Broker] DEBUG: Request too small for binary message ("
+                          << request.size() << " bytes), treating as string" << std::endl;
                     // Fall through to string handling below
                 } else {
                     // Check if this is a file request (structured binary message)
                     ZmqFileRequest* fileReq = static_cast<ZmqFileRequest*>(request.data());
 
-                    std::cout << "[Rank 0 MPI Broker] DEBUG: Request magic=0x" 
-                              << std::hex << fileReq->magic << std::dec
-                              << ", type=" << fileReq->message_type
-                              << ", target_rank=" << fileReq->target_rank
-                              << ", expected_magic=0x" << std::hex << USD_FILE_MAGIC << std::dec << std::endl;
-                    
+                    BVERB << "[Rank 0 MPI Broker] DEBUG: Request magic=0x"
+                          << std::hex << fileReq->magic << std::dec
+                          << ", type=" << fileReq->message_type
+                          << ", target_rank=" << fileReq->target_rank
+                          << ", expected_magic=0x" << std::hex << USD_FILE_MAGIC << std::dec << std::endl;
+
                     // Check if magic matches
                     if (fileReq->magic != USD_FILE_MAGIC) {
-                        std::cout << "[Rank 0 MPI Broker] DEBUG: Magic number MISMATCH! Got 0x" 
-                                  << std::hex << fileReq->magic << ", expected 0x" << USD_FILE_MAGIC << std::dec << std::endl;
+                        std::cerr << "[Rank 0 MPI Broker] WARN: request magic MISMATCH! Got 0x"
+                                  << std::hex << fileReq->magic << ", expected 0x"
+                                  << USD_FILE_MAGIC << std::dec << std::endl;
                     }
                     
                     // SPECIAL CASE: Non-MPI mode - handle file list requests directly
@@ -509,12 +546,11 @@ void ZmqBroker::MessageLoopThread() {
                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES) &&
                         workers_.size() == 1) {  // Non-MPI mode: only rank 0 exists
                         std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Handling file list request directly" << std::endl;
-                        
+
                         // Store client identity for response routing
-                        std::string request_key = std::to_string(fileReq->request_id);
-                        client_map_[request_key] = client_id;
+                        client_map_[fileReq->request_id] = client_id;
                         client_ids_.insert(client_id);
-                        
+
                         // Get rank 0's files
                         // NOTE: g_rankMemoryStore is a single pointer, not an array
                         // Use *g_rankMemoryStore instead of g_rankMemoryStore[0]
@@ -531,7 +567,8 @@ void ZmqBroker::MessageLoopThread() {
                         bool first = true;
                         for (const auto& filename : files) {
                             if (filename.find(".usda.usda") != std::string::npos) continue;
-                             const auto& entry = g_rankMemoryStore->GetFile(filename);
+                             auto entry = g_rankMemoryStore->GetFile(filename);
+                             if (!entry) continue;
                              uint64_t hLo = entry->hash128[0];
                              uint64_t hHi = entry->hash128[1];
                              if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
@@ -540,9 +577,9 @@ void ZmqBroker::MessageLoopThread() {
                              first = false;
                         }
                         jsonResponse << "]}";
-                        
+
                         std::string jsonStr = jsonResponse.str();
-                        std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Built JSON response: " << jsonStr.substr(0, 100) << "..." << std::endl;
+                        BVERB << "[Rank 0 MPI Broker] NON-MPI MODE: Built JSON response: " << jsonStr.substr(0, 100) << "..." << std::endl;
                         
                         // Send as file chunk response
                         ZmqFileChunk response;
@@ -582,57 +619,118 @@ void ZmqBroker::MessageLoopThread() {
                         client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
                         
                         std::cout << "[Rank 0 MPI Broker] NON-MPI MODE: Sent file list (" << files.size() << " files)" << std::endl;
-                        
-                        client_map_.erase(request_key);
+
+                        client_map_.erase(fileReq->request_id);
                         continue;  // Done handling this request
                     }
 
                     if (fileReq->magic == USD_FILE_MAGIC &&
                         (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE) ||
-                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES))) {
+                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES) ||
+                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME))) {
 
-                        std::cout << "[Rank 0 MPI Broker] ";
+                        BVERB << "[Rank 0 MPI Broker] ";
                         if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
-                            std::cout << "File list request from laptop client "
-                                      << client_id.substr(0, 8) << "...: "
-                                      << "rank " << fileReq->target_rank << std::endl;
+                            BVERB << "File list request from laptop client "
+                                  << client_id.substr(0, 8) << "...: "
+                                  << "rank " << fileReq->target_rank << std::endl;
+                        } else if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME)) {
+                            BVERB << "Frame request from laptop client "
+                                  << client_id.substr(0, 8) << "...: "
+                                  << fileReq->filename << " (rank " << fileReq->target_rank << ")"
+                                  << std::endl;
                         } else {
-                            std::cout << "File request from laptop client "
-                                      << client_id.substr(0, 8) << "...: "
-                                      << fileReq->filename << " (rank " << fileReq->target_rank << ")"
-                                      << std::endl;
+                            BVERB << "File request from laptop client "
+                                  << client_id.substr(0, 8) << "...: "
+                                  << fileReq->filename << " (rank " << fileReq->target_rank << ")"
+                                  << std::endl;
                         }
 
                         // Store client identity for response routing
-                        std::string request_key = std::to_string(fileReq->request_id);
-                        client_map_[request_key] = client_id;
+                        client_map_[fileReq->request_id] = client_id;
                         client_ids_.insert(client_id);
 
-                        // Track broadcast file list requests for aggregation
-                        if (fileReq->target_rank == -1 &&
-                            fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES)) {
-                            // Initialize aggregation for this request
-                            std::cout << "[Rank 0 MPI Broker] Setting up aggregation for broadcast file list request ID "
-                                      << fileReq->request_id << std::endl;
+                        // Lazy cleanup of stale broadcast trackers (worker died /
+                        // client disconnected mid-list) so this map cannot grow
+                        // unboundedly — anything older than 60s is dead state.
+                        {
+                            auto now = std::chrono::steady_clock::now();
+                            for (auto it = broadcast_state_.begin(); it != broadcast_state_.end();) {
+                                if (now - it->second.created > std::chrono::seconds(60)) {
+                                    client_map_.erase(it->first);
+                                    it = broadcast_state_.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+                            for (auto it = frame_requests_.begin(); it != frame_requests_.end();) {
+                                if (now - it->second > std::chrono::seconds(60)) {
+                                    client_map_.erase(it->first);
+                                    it = frame_requests_.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
                         }
 
                         // Route request to appropriate worker
                         if (fileReq->target_rank == -1)
                         {
+                            const bool isList = fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES);
+                            const bool isFrame = fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME);
+
+                            if (isFrame) {
+                                // Broadcast frame streaming is not supported (the laptop
+                                // client drives refreshes per-rank via the V2
+                                // notifications). Reply with an explicit error instead of
+                                // falling through to the legacy string handler.
+                                ZmqFileChunk errorResp;
+                                memset(&errorResp, 0, sizeof(errorResp));
+                                errorResp.magic = USD_FILE_MAGIC;
+                                errorResp.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_ERROR);
+                                errorResp.request_id = fileReq->request_id;
+                                errorResp.source_rank = -1;
+                                strncpy(errorResp.filename, "ERROR: broadcast frame requests not supported", sizeof(errorResp.filename) - 1);
+
+                                client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                client_router_->send(zmq::message_t(&errorResp, sizeof(errorResp)), zmq::send_flags::none);
+
+                                client_map_.erase(fileReq->request_id);
+                                continue;
+                            }
+
                             // BROADCAST: Send request to ALL workers (ranks 0-15)
-                            std::cout << "Rank 0 (MPI Broker): Broadcasting file request to ALL workers (rank -1) - Processing rank 0 locally" << std::endl;
-                            
-                            // Forward request to workers 1-15 via ZMQ
+                            BVERB << "Rank 0 (MPI Broker): Broadcasting "
+                                  << (isList ? "file list" : "file")
+                                  << " request to ALL workers (rank -1) - Processing rank 0 locally" << std::endl;
+
+                            // Forward request to workers 1-15 via ZMQ.
+                            // For LIST: count how many workers got a copy so the
+                            // client mapping can be erased exactly when the last
+                            // __file_list__.json response arrives (previously the
+                            // mapping was kept forever -> unbounded growth).
+                            int broadcastCopies = 0;
                             for (const auto& worker : workers_)
                             {
                                 if (worker.rank == 0) continue; // Skip rank 0 (handled locally)
                                 router_->send(zmq::buffer(worker.identity), zmq::send_flags::sndmore);
                                 router_->send(zmq::message_t(), zmq::send_flags::sndmore);
                                 router_->send(zmq::message_t(request.data(), request.size()), zmq::send_flags::none);
+                                ++broadcastCopies;
                             }
-                            
-                            // Process rank 0's file list locally (immediate response)
-                            if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_LIST_FILES) && g_rankMemoryStore) {
+                            if (isList && broadcastCopies > 0) {
+                                broadcast_state_[fileReq->request_id] =
+                                    BroadcastState{broadcastCopies, std::chrono::steady_clock::now()};
+                            }
+
+                             // Process rank 0's file list locally (immediate response)
+                             if (isList && !g_rankMemoryStore) {
+                                 std::cerr << "[Rank 0 MPI Broker] ERROR - Rank 0 memory store not available for broadcast list!" << std::endl;
+                                 client_map_.erase(fileReq->request_id);
+                                 continue;
+                             }
+                             if (isList) {
                                 std::cout << "[Rank 0 MPI Broker] Processing rank 0 file list for broadcast request ID " << fileReq->request_id << std::endl;
                                 
                                 // Get rank 0's files
@@ -642,17 +740,18 @@ void ZmqBroker::MessageLoopThread() {
                                 std::stringstream jsonResponse;
                                 jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
                                 bool first = true;
-                                for (const auto& filename : files) {
-                                    if (filename.find(".usda.usda") != std::string::npos) continue;
-                                    
-                                    const auto& entry = g_rankMemoryStore->GetFile(filename);
-                                    uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
-                                    if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
-                                    if (!first) jsonResponse << ",";
-                                    jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
-                                    first = false;
-                                }
-                                jsonResponse << "]}";
+                                 for (const auto& filename : files) {
+                                     if (filename.find(".usda.usda") != std::string::npos) continue;
+
+                                     auto entry = g_rankMemoryStore->GetFile(filename);
+                                     if (!entry) continue;
+                                     uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
+                                     if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
+                                     if (!first) jsonResponse << ",";
+                                     jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
+                                     first = false;
+                                 }
+                                 jsonResponse << "]}";
                                 
                                 std::string jsonStr = jsonResponse.str();
                                 
@@ -693,9 +792,17 @@ void ZmqBroker::MessageLoopThread() {
                                         client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
                                         client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
                                         
-                                        std::cout << "[Rank 0 MPI Broker] Sent rank 0 file list (" << files.size() << " files) for broadcast request" << std::endl;
-                            }
-                            continue; // Done with broadcast
+                                         std::cout << "[Rank 0 MPI Broker] Sent rank 0 file list (" << files.size() << " files) for broadcast request" << std::endl;
+
+                                         // If no worker copies are outstanding, the inline rank-0
+                                         // response is the only response: drop the routing mapping now.
+                                         // Otherwise the worker-response path erases it after the
+                                         // last __file_list__.json arrives.
+                                         if (broadcast_state_.find(fileReq->request_id) == broadcast_state_.end()) {
+                                             client_map_.erase(fileReq->request_id);
+                                         }
+                             }
+                             continue; // Done with broadcast
                         }
                         
                         if (fileReq->target_rank >= 0)
@@ -725,19 +832,20 @@ void ZmqBroker::MessageLoopThread() {
                                         std::stringstream jsonResponse;
                                         jsonResponse << "{\"rank\":" << 0 << ",\"files\":[";
                                         bool first = true;
-                                        for (const auto& filename : files)
-                                        {
-                                            if (filename.find(".usda.usda") != std::string::npos) continue;
-                                            
-                                            const auto& entry = g_rankMemoryStore->GetFile(filename);
-                                            uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
-                                            if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
-                                            if (!first) jsonResponse << ",";
-                            jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
+                                         for (const auto& filename : files)
+                                         {
+                                             if (filename.find(".usda.usda") != std::string::npos) continue;
 
-                                            first = false;
-                                        }
-                                        jsonResponse << "]}";
+                                             auto entry = g_rankMemoryStore->GetFile(filename);
+                                             if (!entry) continue;
+                                             uint64_t hLo = entry->hash128[0]; uint64_t hHi = entry->hash128[1];
+                                             if (hLo == 0 && hHi == 0) { XXH128_hash_t h = XXH3_128bits(entry->data.data(), entry->data.size()); hLo = h.low64; hHi = h.high64; }
+                                             if (!first) jsonResponse << ",";
+                             jsonResponse << "{\"name\":\"" << filename << "\",\"size\":" << entry->size() << ",\"mime\":\"" << entry->mime_type << "\",\"hash_lo\":" << hLo << ",\"hash_hi\":" << hHi << "}";
+
+                                             first = false;
+                                         }
+                                         jsonResponse << "]}";
 
                                         std::string jsonStr = jsonResponse.str();
 
@@ -773,112 +881,130 @@ void ZmqBroker::MessageLoopThread() {
                                         strncpy(complete.filename, "__file_list__.json", sizeof(complete.filename) - 1);
                                         complete.total_size = jsonStr.size();
 
-                                        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                        client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+                                         client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                         client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                         client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
 
-                                        std::cout << "Rank 0 (MPI Broker): Sent rank 0 file list (" << files.size() << " files)" << std::endl;
-                                    }
-                                    else if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE))
-                                    {
-                                        // Get specific file from rank 0
-                                        const auto& fileEntry = g_rankMemoryStore->GetFile(fileReq->filename);
+                                         std::cout << "Rank 0 (MPI Broker): Sent rank 0 file list (" << files.size() << " files)" << std::endl;
 
-                                        if (fileEntry)
-                                        {
-                                            // Send file in chunks
-                                            size_t chunkSize = fileReq->chunk_size > 0 ? fileReq->chunk_size : DEFAULT_CHUNK_SIZE;
-                                            size_t offset = 0;
+                                         // Inline response done — drop the routing mapping.
+                                         // (Queued transfers/frames erase it on completion instead.)
+                                         client_map_.erase(fileReq->request_id);
+                                     }
+                                     else if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE))
+                                     {
+                                         // Get specific file from rank 0.
+                                         // Queue it for interleaved streaming (TickPendingTransfers)
+                                         // instead of blocking the loop thread for the whole file —
+                                         // this lets worker traffic and other clients make progress
+                                         // while a large file is in flight, and lets several
+                                         // client downloads interleave fairly.
+                                         auto fileEntry = g_rankMemoryStore->GetFile(fileReq->filename);
 
-                                            while (offset < fileEntry->data.size())
-                                            {
-                                                size_t sendSize = std::min(chunkSize, fileEntry->data.size() - offset);
+                                         if (fileEntry)
+                                         {
+                                             QueueRank0FileTransfer(client_id, fileReq->request_id,
+                                                                    fileReq->filename, fileReq->chunk_size);
+                                         }
+                                         else
+                                         {
+                                             // File not found (inline: nothing to stream)
+                                             ZmqFileComplete nofile;
+                                             memset(&nofile, 0, sizeof(nofile));
+                                             nofile.magic = USD_FILE_MAGIC;
+                                             nofile.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE);
+                                             nofile.request_id = fileReq->request_id;
+                                             nofile.source_rank = 0;
+                                             strncpy(nofile.filename, fileReq->filename, sizeof(nofile.filename) - 1);
 
-                                                ZmqFileChunk response;
-                                                memset(&response, 0, sizeof(response));
-                                                response.magic = USD_FILE_MAGIC;
-                                                response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
-                                                response.request_id = fileReq->request_id;
-                                                response.source_rank = 0;
-                                                strncpy(response.filename, fileReq->filename, sizeof(response.filename) - 1);
-                                                response.file_size = fileEntry->data.size();
-                                                response.chunk_offset = offset;
-                                                response.chunk_size = sendSize;
+                                             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(&nofile, sizeof(nofile)), zmq::send_flags::none);
 
-                                                size_t totalSize = sizeof(response) + sendSize;
-                                                std::vector<uint8_t> msgData(totalSize);
-                                                memcpy(msgData.data(), &response, sizeof(response));
-                                                memcpy(msgData.data() + sizeof(response), fileEntry->data.data() + offset, sendSize);
+                                             std::cout << "Rank 0 (MPI Broker): Rank 0 file not found: " << fileReq->filename << std::endl;
 
-                                                client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
-                                                client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                                client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+                                             client_map_.erase(fileReq->request_id);
+                                         }
+                                     }
+                                     else if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME))
+                                     {
+                                         // Frame = every file currently in rank 0's store,
+                                         // streamed under one request_id and terminated by a
+                                         // ZmqFileComplete whose filename is "__frame_complete__"
+                                         // (reuses an existing message type; no protocol change).
+                                         // Queue the list; the tick loop streams files in order
+                                         // and emits the marker once they are all done.
+                                         const size_t kMaxChunkSize = 128 * 1024 * 1024;
+                                         size_t chunkSize = (fileReq->chunk_size > 0)
+                                             ? std::min<size_t>(fileReq->chunk_size, kMaxChunkSize)
+                                             : DEFAULT_CHUNK_SIZE;
 
-                                                offset += sendSize;
-                                            }
+                                         PendingFileTransfer t;
+                                         t.client_id = client_id;
+                                         t.request_id = fileReq->request_id;
+                                         t.chunk_size = chunkSize;
+                                         for (const auto& filename : g_rankMemoryStore->ListFiles()) {
+                                             if (filename.find(".usda.usda") != std::string::npos) continue;
+                                             if (!g_rankMemoryStore->GetFile(filename)) continue;
+                                             t.files_in_frame.push_back(filename);
+                                         }
+                                         t.marker_total = static_cast<int>(t.files_in_frame.size());
+                                         pending_transfers_.push_back(std::move(t));
 
-                                            // Send completion
-                                            ZmqFileComplete complete;
-                                            memset(&complete, 0, sizeof(complete));
-                                            complete.magic = USD_FILE_MAGIC;
-                                            complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
-                                            complete.request_id = fileReq->request_id;
-                                            complete.source_rank = 0;
-                                            strncpy(complete.filename, fileReq->filename, sizeof(complete.filename) - 1);
-                                            complete.total_size = fileEntry->data.size();
+                                         std::cout << "Rank 0 (MPI Broker): Frame request queued: "
+                                                   << t.marker_total << " files for "
+                                                   << client_id.substr(0, 8) << "..." << std::endl;
+                                         // Mapping erased when the marker transfer completes.
+                                     }
+                                 }
+                                 else
+                                 {
+                                     std::cerr << "Rank 0 (MPI Broker): ERROR - Rank 0 memory store not available!" << std::endl;
 
-                                            client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
-                                            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                            client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+                                     if (g_rankMemoryStore == nullptr &&
+                                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE)) {
+                                         ZmqFileComplete nofile;
+                                         memset(&nofile, 0, sizeof(nofile));
+                                         nofile.magic = USD_FILE_MAGIC;
+                                         nofile.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE);
+                                         nofile.request_id = fileReq->request_id;
+                                         nofile.source_rank = 0;
+                                         strncpy(nofile.filename, fileReq->filename, sizeof(nofile.filename) - 1);
 
-                                            std::cout << "Rank 0 (MPI Broker): Sent rank 0 file: " << fileReq->filename
-                                                      << " (" << fileEntry->data.size() << " bytes)" << std::endl;
-                                        }
-                                        else
-                                        {
-                                            // File not found
-                                            ZmqFileComplete nofile;
-                                            memset(&nofile, 0, sizeof(nofile));
-                                            nofile.magic = USD_FILE_MAGIC;
-                                            nofile.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE);
-                                            nofile.request_id = fileReq->request_id;
-                                            nofile.source_rank = 0;
-                                            strncpy(nofile.filename, fileReq->filename, sizeof(nofile.filename) - 1);
+                                         client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                         client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                         client_router_->send(zmq::message_t(&nofile, sizeof(nofile)), zmq::send_flags::none);
+                                     }
+                                     client_map_.erase(fileReq->request_id);
+                                 }
 
-                                            client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
-                                            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                            client_router_->send(zmq::message_t(&nofile, sizeof(nofile)), zmq::send_flags::none);
+                                 continue;
+                             }
 
-                                            std::cout << "Rank 0 (MPI Broker): Rank 0 file not found: " << fileReq->filename << std::endl;
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    std::cerr << "Rank 0 (MPI Broker): ERROR - Rank 0 memory store not available!" << std::endl;
-                                }
+                             // For ranks 1-15, forward to workers as normal
+                             bool found = false;
+                             for (const auto& worker : workers_)
+                             {
+                                 if (worker.rank == fileReq->target_rank)
+                                 {
+                                     BVERB << "Rank 0 (MPI Broker): Routing file request to rank " << worker.rank << std::endl;
 
-                                client_map_.erase(request_key);
-                                continue;
-                            }
+                                     // Forward request to worker via ROUTER socket
+                                     router_->send(zmq::buffer(worker.identity), zmq::send_flags::sndmore);
+                                     router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                     router_->send(zmq::message_t(request.data(), request.size()), zmq::send_flags::none);
 
-                            // For ranks 1-15, forward to workers as normal
-                            bool found = false;
-                            for (const auto& worker : workers_)
-                            {
-                                if (worker.rank == fileReq->target_rank)
-                                {
-                                    std::cout << "Rank 0 (MPI Broker): Routing file request to rank " << worker.rank << std::endl;
+                                     // Frame requests span many per-file completes: keep the
+                                     // client mapping alive until the __frame_complete__ marker
+                                     // arrives (the response-routing path checks this set).
+                                      if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME)) {
+                                          frame_requests_[fileReq->request_id] = std::chrono::steady_clock::now();
+                                      }
 
-                                    // Forward request to worker via ROUTER socket
-                                    router_->send(zmq::buffer(worker.identity), zmq::send_flags::sndmore);
-                                    router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-                                    router_->send(zmq::message_t(request.data(), request.size()), zmq::send_flags::none);
-
-                                    found = true;
-                                    break;
-                                }
-                            }
+                                     found = true;
+                                     break;
+                                 }
+                             }
 
                             if (!found)
                             {
@@ -897,7 +1023,7 @@ void ZmqBroker::MessageLoopThread() {
 
                                 std::cout << "Rank 0 (MPI Broker): ERROR - Worker rank " << fileReq->target_rank << " not found" << std::endl;
 
-                                client_map_.erase(request_key);
+                                client_map_.erase(fileReq->request_id);
                             }
                         }
 
@@ -940,7 +1066,7 @@ void ZmqBroker::MessageLoopThread() {
                             auto files = g_rankMemoryStore->ListFiles();
                             bool firstFile = true;
                             for (const auto& f : files) {
-                                auto* fe = g_rankMemoryStore->GetFile(f);
+                                auto fe = g_rankMemoryStore->GetFile(f);
                                 if (!fe) continue;
                                 if (!firstFile) snapshotJson << ",";
                                 firstFile = false;
@@ -1088,47 +1214,76 @@ void ZmqBroker::MessageLoopThread() {
                              chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_ERROR))) {
 
                             // Find client identity using request_id
-                            std::string request_key = std::to_string(chunk->request_id);
-                            auto client_it = client_map_.find(request_key);
+                            auto client_it = client_map_.find(chunk->request_id);
 
                             if (client_it == client_map_.end()) {
-                                std::cerr << "[Rank 0 MPI Broker] WARNING: No client found for request "
-                                          << chunk->request_id << std::endl;
+                                BVERB << "[Rank 0 MPI Broker] WARNING: No client found for request "
+                                      << chunk->request_id << std::endl;
                                 continue;
                             }
 
+                            // Copy, not reference: the routing entry may be erased below
+                            // before the forwarded send uses this identity.
                             std::string client_id = client_it->second;
 
                             // Log what we're forwarding
                             if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK)) {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding file chunk from rank "
-                                          << chunk->source_rank << " to client: " << chunk->filename
-                                          << " (" << chunk->chunk_size << " bytes at offset "
-                                          << chunk->chunk_offset << "/" << chunk->file_size << ")" << std::endl;
+                                // Hot path: one line per chunk per file per rank (verbose-only)
+                                BVERB << "[Rank 0 MPI Broker] Forwarding file chunk from rank "
+                                      << chunk->source_rank << " to client: " << chunk->filename
+                                      << " (" << chunk->chunk_size << " bytes at offset "
+                                      << chunk->chunk_offset << "/" << chunk->file_size << ")" << std::endl;
                             } else if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE)) {
                                 ZmqFileComplete* complete = reinterpret_cast<ZmqFileComplete*>(data.data());
-                                std::cout << "[Rank 0 MPI Broker] Forwarding file completion from rank "
-                                          << complete->source_rank << " to client: " << complete->filename
-                                          << " (" << complete->total_size << " bytes total)" << std::endl;
+                                BVERB << "[Rank 0 MPI Broker] Forwarding file completion from rank "
+                                      << complete->source_rank << " to client: " << complete->filename
+                                      << " (" << complete->total_size << " bytes total)" << std::endl;
 
-                                // For file list responses, track broadcast completion
-                                if (strcmp(complete->filename, "__file_list__.json") == 0) {
-                                    // Log that we're keeping mapping for other workers
-                                    std::cout << "[Rank 0 MPI Broker] Keeping client mapping for broadcast file list request "
-                                              << complete->request_id << " (rank " << complete->source_rank << " responded)" << std::endl;
-                                    // Don't erase - keep for other workers' responses
+                                const bool isListComplete = strcmp(complete->filename, "__file_list__.json") == 0;
+                                const bool isFrameMarker  = strcmp(complete->filename, "__frame_complete__") == 0;
+                                const bool isFrame        = frame_requests_.count(complete->request_id) > 0;
+
+                                bool dropMapping = false;
+                                if (isFrameMarker) {
+                                    // End of a worker-served frame: now safe to release.
+                                    frame_requests_.erase(complete->request_id);
+                                    dropMapping = true;
+                                } else if (isListComplete) {
+                                    auto bIt = broadcast_state_.find(complete->request_id);
+                                    if (bIt != broadcast_state_.end()) {
+                                        // Broadcast list: drop the mapping only once every
+                                        // worker that got a copy has responded.
+                                        if (--bIt->second.pending <= 0) {
+                                            dropMapping = true;
+                                            broadcast_state_.erase(bIt);
+                                        } else {
+                                            BVERB << "[Rank 0 MPI Broker] Keeping client mapping for broadcast file list request "
+                                                  << complete->request_id
+                                                  << " (" << bIt->second.pending << " workers outstanding)" << std::endl;
+                                        }
+                                    } else {
+                                        // Single-rank list response (not broadcast): done.
+                                        dropMapping = true;
+                                    }
+                                } else if (isFrame) {
+                                    // Per-file complete inside a frame: keep the mapping
+                                    // alive until the __frame_complete__ marker arrives.
                                 } else {
-                                    // Normal file: clean up mapping
-                                    client_map_.erase(request_key);
+                                    dropMapping = true;
+                                }
+                                if (dropMapping) {
+                                    client_map_.erase(complete->request_id);
                                 }
                             } else if (chunk->message_type == static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE)) {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding 'file not found' from rank "
-                                          << chunk->source_rank << " to client: " << chunk->filename << std::endl;
-                                client_map_.erase(request_key);
+                                BVERB << "[Rank 0 MPI Broker] Forwarding 'file not found' from rank "
+                                      << chunk->source_rank << " to client: " << chunk->filename << std::endl;
+                                client_map_.erase(chunk->request_id);
+                                frame_requests_.erase(chunk->request_id);
                             } else {
-                                std::cout << "[Rank 0 MPI Broker] Forwarding error from rank "
-                                          << chunk->source_rank << " to client" << std::endl;
-                                client_map_.erase(request_key);
+                                BVERB << "[Rank 0 MPI Broker] Forwarding error from rank "
+                                      << chunk->source_rank << " to client" << std::endl;
+                                client_map_.erase(chunk->request_id);
+                                frame_requests_.erase(chunk->request_id);
                             }
 
                             // Forward to laptop client via CLIENT ROUTER
@@ -1199,6 +1354,198 @@ void ZmqBroker::MessageLoopThread() {
 
     } catch (const zmq::error_t& e) {
         std::cerr << "[Rank 0 MPI Broker THREAD] ZMQ Error in message loop: " << e.what() << std::endl;
+    }
+}
+
+void ZmqBroker::QueueRank0FileTransfer(const std::string& client_id, uint32_t request_id,
+                                       const char* filename, uint32_t requestedChunkSize)
+{
+    // Called from the message loop; the caller has already handled the
+    // "store unavailable" error case for GET_FILE.
+    if (!g_rankMemoryStore) {
+        client_map_.erase(request_id);
+        return;
+    }
+
+    auto entry = g_rankMemoryStore->GetFile(filename);
+    if (!entry) {
+        // File not found (inline: nothing to stream)
+        ZmqFileComplete nofile;
+        memset(&nofile, 0, sizeof(nofile));
+        nofile.magic = USD_FILE_MAGIC;
+        nofile.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_NO_FILE);
+        nofile.request_id = request_id;
+        nofile.source_rank = 0;
+        strncpy(nofile.filename, filename, sizeof(nofile.filename) - 1);
+
+        client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(&nofile, sizeof(nofile)), zmq::send_flags::none);
+
+        std::cout << "Rank 0 (MPI Broker): Rank 0 file not found: " << filename << std::endl;
+        client_map_.erase(request_id);
+        return;
+    }
+
+    const size_t kMaxChunkSize = 128 * 1024 * 1024;
+    PendingFileTransfer t;
+    t.client_id = client_id;
+    t.request_id = request_id;
+    t.entry = std::move(entry);  // immutable shared snapshot; valid for the transfer's life
+    strncpy(t.filename, filename, sizeof(t.filename) - 1);
+    t.chunk_size = (requestedChunkSize > 0)
+        ? std::min<size_t>(requestedChunkSize, kMaxChunkSize)
+        : DEFAULT_CHUNK_SIZE;
+    pending_transfers_.push_back(std::move(t));
+}
+
+void ZmqBroker::TickPendingTransfers(int maxTransfers)
+{
+    if (pending_transfers_.empty() || maxTransfers <= 0) {
+        return;
+    }
+
+    int advanced = 0;
+
+    for (auto it = pending_transfers_.begin(); it != pending_transfers_.end() && advanced < maxTransfers; ) {
+        PendingFileTransfer& t = *it;
+
+        // ----- Terminal frame marker -------------------------------------
+        if (t.is_marker) {
+            ZmqFileComplete complete;
+            memset(&complete, 0, sizeof(complete));
+            complete.magic = USD_FILE_MAGIC;
+            complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
+            complete.request_id = t.request_id;
+            complete.source_rank = 0;
+            strncpy(complete.filename, "__frame_complete__", sizeof(complete.filename) - 1);
+            complete.total_size = t.marker_total;
+
+            client_router_->send(zmq::buffer(t.client_id), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+
+            std::cout << "Rank 0 (MPI Broker): Frame complete (" << t.marker_total
+                      << " files) for client " << t.client_id.substr(0, 8) << "..." << std::endl;
+
+            client_map_.erase(t.request_id);
+            it = pending_transfers_.erase(it);
+            continue;
+        }
+
+        // ----- Frame transfer: resolve the next queued file into this slot -----
+        if (!t.entry) {
+            while (!t.entry && !t.files_in_frame.empty()) {
+                std::string next = std::move(t.files_in_frame.front());
+                t.files_in_frame.erase(t.files_in_frame.begin());
+                auto e = g_rankMemoryStore ? g_rankMemoryStore->GetFile(next) : nullptr;
+                if (e) {
+                    strncpy(t.filename, next.c_str(), sizeof(t.filename) - 1);
+                    t.entry = std::move(e);
+                    t.offset = 0;
+                }
+            }
+            if (!t.entry) {
+                // All queued files are gone (store was updated in parallel) or the
+                // frame had no files: emit the terminal marker to close the request.
+                t.is_marker = true;
+                continue;  // re-enter the same slot once so the marker is sent/erased
+            }
+        }
+
+        const size_t total = t.entry->data.size();
+        const uint8_t* buf = t.entry->data.data();
+
+        // ----- Single zero-byte file: one empty COMPLETE (legacy behavior) -----
+        if (total == 0) {
+            ZmqFileComplete complete;
+            memset(&complete, 0, sizeof(complete));
+            complete.magic = USD_FILE_MAGIC;
+            complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
+            complete.request_id = t.request_id;
+            complete.source_rank = 0;
+            strncpy(complete.filename, t.filename, sizeof(complete.filename) - 1);
+            complete.total_size = 0;
+
+            client_router_->send(zmq::buffer(t.client_id), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+
+            if (t.marker_total > 0) {
+                t.entry.reset();
+                t.filename[0] = '\0';
+                t.offset = 0;
+                ++advanced;
+                ++it;
+                continue;
+            }
+
+            client_map_.erase(t.request_id);
+            it = pending_transfers_.erase(it);
+            continue;
+        }
+
+        // ----- Send exactly one chunk, then let other transfers make progress -----
+        const size_t sendSize = std::min(t.chunk_size, total - t.offset);
+
+        ZmqFileChunk response;
+        memset(&response, 0, sizeof(response));
+        response.magic = USD_FILE_MAGIC;
+        response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
+        response.request_id = t.request_id;
+        response.source_rank = 0;
+        strncpy(response.filename, t.filename, sizeof(response.filename) - 1);
+        response.file_size = total;
+        response.chunk_offset = t.offset;
+        response.chunk_size = sendSize;
+
+        const size_t totalSize = sizeof(response) + sendSize;
+        std::vector<uint8_t> msgData(totalSize);
+        memcpy(msgData.data(), &response, sizeof(response));
+        memcpy(msgData.data() + sizeof(response), buf + t.offset, sendSize);
+
+        client_router_->send(zmq::buffer(t.client_id), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+
+        t.offset += sendSize;
+        ++advanced;
+
+        if (t.offset < total) {
+            ++it;
+            continue;
+        }
+
+        // ----- File fully sent: completion ------------------------------------
+        ZmqFileComplete complete;
+        memset(&complete, 0, sizeof(complete));
+        complete.magic = USD_FILE_MAGIC;
+        complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
+        complete.request_id = t.request_id;
+        complete.source_rank = 0;
+        strncpy(complete.filename, t.filename, sizeof(complete.filename) - 1);
+        complete.total_size = total;
+
+        client_router_->send(zmq::buffer(t.client_id), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+        client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+
+        BVERB << "Rank 0 (MPI Broker): Sent rank 0 file: " << t.filename
+              << " (" << total << " bytes)" << std::endl;
+
+        if (t.marker_total > 0) {
+            // One file of a frame done: keep the client mapping alive and reuse this
+            // slot for the next file on a later tick, so other transfers stay fair.
+            t.entry.reset();
+            t.filename[0] = '\0';
+            t.offset = 0;
+            ++it;
+            continue;
+        }
+
+        // Standalone file: request done — drop the routing mapping and the transfer.
+        client_map_.erase(t.request_id);
+        it = pending_transfers_.erase(it);
     }
 }
 
@@ -1616,8 +1963,8 @@ bool ZmqWorker::CheckForFileRequest(ZmqFileRequest& request, bool blocking) {
             return false;  // No message available
         }
 
-        // DEBUG: Message received
-        std::cout << "[DEBUG Worker Rank " << rank_ << "] Received message on DEALER socket" << std::endl;
+        // DEBUG: Message received (verbose-only: fires on every poll hit when idle)
+        WVERB << "[DEBUG Worker Rank " << rank_ << "] Received message on DEALER socket" << std::endl;
 
         result = dealer_->recv(payload, zmq::recv_flags::none);
         if (!result || payload.size() < sizeof(ZmqFileRequest)) {
@@ -1636,9 +1983,9 @@ bool ZmqWorker::CheckForFileRequest(ZmqFileRequest& request, bool blocking) {
             return false;
         }
 
-        // DEBUG: Valid request received
-        std::cout << "[DEBUG Worker Rank " << rank_ << "] Valid file request: "
-                  << request.filename << " (req_id=" << request.request_id << ")" << std::endl;
+        // DEBUG: Valid request received (verbose-only)
+        WVERB << "[DEBUG Worker Rank " << rank_ << "] Valid file request: "
+              << request.filename << " (req_id=" << request.request_id << ")" << std::endl;
 
         return true;
     } catch (const zmq::error_t& e) {
@@ -1680,8 +2027,9 @@ bool ZmqWorker::SendFileChunk(uint32_t requestId, const std::string& filename,
         dealer_->send(empty, zmq::send_flags::sndmore);
         dealer_->send(message, zmq::send_flags::none);
 
-        std::cout << "[Worker Rank " << rank_ << "] Sent file chunk: " << filename
-                  << " [" << offset << "-" << (offset + dataSize) << " / " << totalSize << "]" << std::endl;
+        // Hot path: one line per chunk. Verbose-only (BROKER_VERBOSE=1).
+        WVERB << "[Worker Rank " << rank_ << "] Sent file chunk: " << filename
+              << " [" << offset << "-" << (offset + dataSize) << " / " << totalSize << "]" << std::endl;
 
         return true;
     } catch (const zmq::error_t& e) {

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <cstdint>
 #include <ctime>
@@ -37,7 +38,11 @@ public:
     };
     
 private:
-    std::map<std::string, FileEntry> files_;
+    // Entries are immutable, shared snapshots. StoreFile/UpdateFile REPLACE the
+    // pointer for a filename instead of mutating the entry, so consumers that
+    // hold a shared_ptr (e.g. a chunked ZMQ transfer in flight) always see one
+    // consistent frame of data even while the writer commits the next frame.
+    std::map<std::string, std::shared_ptr<const FileEntry>> files_;
     mutable std::mutex mutex_;
     int rank_;
     size_t total_memory_usage_;
@@ -73,9 +78,13 @@ public:
     /**
      * @brief Retrieve a file from memory
      * @param filename Relative path to file
-     * @return Pointer to FileEntry, or nullptr if not found
+     * @return Shared ownership to the FileEntry, or nullptr if not found.
+     *         Callers may hold the snapshot across store mutations (updates
+     *         replace the entry, they never mutate it in place), which makes
+     *         long-running chunked ZMQ serve loops safe against concurrent
+     *         frame commits overwriting the same file.
      */
-    const FileEntry* GetFile(const std::string& filename) const;
+    std::shared_ptr<const FileEntry> GetFile(const std::string& filename) const;
     
     /**
      * @brief List all files in the store

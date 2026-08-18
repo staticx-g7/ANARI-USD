@@ -25,7 +25,7 @@ void UsdBridgeDiffCapture::CapturePreStore(const std::string& filename) {
     if (!g_rankMemoryStore)
         return;
 
-    const auto* oldEntry = g_rankMemoryStore->GetFile(filename);
+    auto oldEntry = g_rankMemoryStore->GetFile(filename);
     if (!oldEntry) {
         // File doesn't exist yet in store — nothing to capture
         return;

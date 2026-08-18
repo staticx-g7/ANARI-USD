@@ -278,6 +278,27 @@ target_link_libraries(UsdBridge
     ${USD_PYTHON_TARGETS}
 )
 
+# zstd — USD payloads are zstd-compressed at store time (UsdBridgeMemoryStore).
+# The compression is self-describing on the wire (client sniffs the zstd magic),
+# so no wire-protocol change is involved. Missing zstd falls back to raw payloads.
+option(USD_BRIDGE_ENABLE_ZSTD "Compress USD payloads in the broker memory store with zstd" ON)
+if(USD_BRIDGE_ENABLE_ZSTD)
+  find_library(ZSTD_LIBRARY NAMES zstd libzstd
+      HINTS /usr/lib /usr/lib64 /usr/local/lib $ENV{ZSTD_ROOT}/lib)
+  find_path(ZSTD_INCLUDE_DIR NAMES zstd.h
+      HINTS /usr/include /usr/local/include $ENV{ZSTD_ROOT}/include)
+  if(ZSTD_LIBRARY AND ZSTD_INCLUDE_DIR)
+    message(STATUS "UsdBridge: Found zstd at ${ZSTD_LIBRARY}")
+    target_include_directories(UsdBridge PRIVATE ${ZSTD_INCLUDE_DIR})
+    target_link_libraries(UsdBridge PRIVATE ${ZSTD_LIBRARY})
+    target_compile_definitions(UsdBridge PRIVATE BRIDGE_HAS_ZSTD=1)
+  else()
+    message(WARNING "UsdBridge: zstd not found (set ZSTD_ROOT or install libzstd-dev) - USD payloads will be stored uncompressed")
+  endif()
+else()
+  message(STATUS "UsdBridge: zstd disabled via USD_BRIDGE_ENABLE_ZSTD=OFF")
+endif()
+
 # USDRT/CarbSDK
 
 option(USD_DEVICE_USE_USDRT "Enable usage of USDRT by supplying <USDRT/CARBSDK>_<INCLUDE/BIN>_DIR and CUDAToolkit_ROOT" OFF)

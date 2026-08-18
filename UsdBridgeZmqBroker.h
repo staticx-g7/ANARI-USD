@@ -7,10 +7,13 @@
 #include <map>
 #include <set>
 #include <cstdint>
+#include <chrono>
 #include <mutex>
 #include <thread>
 #include <atomic>
 #include <zmq.hpp>
+
+#include "UsdBridge/UsdBridgeMemoryStore.h"
 
 namespace usd_bridge {
 
@@ -143,10 +146,34 @@ public:
     bool GetPropertyAsInt32(const std::string& propertyName, int32_t& value);
     bool GetPropertyAsString(const std::string& propertyName, std::string& value);
 
+    // In-flight rank-0 local file transfer (interleaved, non-blocking):
+    // the request handler queues one of these and the message loop advances
+    // every transfer a few chunks on each iteration, so the loop can service
+    // worker traffic / other clients between chunks instead of stalling on
+    // one long blocking stream.
+    struct PendingFileTransfer {
+        std::string client_id;
+        std::shared_ptr<const UsdBridgeMemoryStore::FileEntry> entry;  // immutable snapshot
+        uint32_t request_id = 0;
+        char filename[256] = {0};
+        size_t chunk_size = 0;
+        size_t offset = 0;
+        bool is_marker = false;  // zero-chunk "complete" (e.g. __frame_complete__)
+        std::string marker_name;  // filename for a marker transfer
+        std::vector<std::string> files_in_frame;  // frame transfers: remaining files to queue
+        int marker_total = 0;  // total file count for the frame marker
+    };
+
 private:
     void MessageLoopThread();  // Background thread for message routing
     void SSHReminderThread();  // Periodic SSH command reminder
     void StatusPrinterThread();  // Periodic status table (every 10s)
+
+    // Advance up to `maxTransfers` pending rank-0 transfers by one chunk each.
+    // Called from the message loop; safe to call with an empty list.
+    void TickPendingTransfers(int maxTransfers);
+    void QueueRank0FileTransfer(const std::string& client_id, uint32_t request_id,
+                                const char* filename, uint32_t chunk_size);
 
     std::unique_ptr<zmq::context_t> context_;
     std::unique_ptr<zmq::socket_t> router_;        // Port worker_port_ - for workers (DEALER)
@@ -158,8 +185,29 @@ private:
 
     std::vector<WorkerInfo> workers_;
     std::map<std::string, int> worker_map_;
-    std::map<std::string, std::string> client_map_; // request_id -> client_id for response routing
+    // request_id -> client identity, for routing worker responses back to the
+    // requesting laptop client. Numeric key (was std::string): no string
+    // formatting per message, and request_id space is the natural identity.
+    std::map<uint32_t, std::string> client_map_;
     std::set<std::string> client_ids_;              // Unique client identities for notifications
+
+    // Broadcast LIST requests: track how many worker responses are still
+    // outstanding so the mapping can be erased exactly when the last one
+    // arrives (the old "keep forever" behavior grew this map unboundedly).
+    struct BroadcastState {
+        int pending = 0;
+        std::chrono::steady_clock::time_point created;
+    };
+    std::map<uint32_t, BroadcastState> broadcast_state_;
+
+    // Frame requests (REQ_GET_FRAME): the broker must keep the client mapping
+    // alive across every per-file complete and only erase it at the
+    // __frame_complete__ marker (tracked here, since per-file completes for a
+    // frame must NOT drop the mapping). Timestamped so stale state can be reaped.
+    std::map<uint32_t, std::chrono::steady_clock::time_point> frame_requests_;
+
+    // In-flight rank-0 local file transfers (see PendingFileTransfer).
+    std::vector<PendingFileTransfer> pending_transfers_;
 
     // Thread management
     std::thread message_loop_thread_;

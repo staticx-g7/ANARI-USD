@@ -1486,19 +1486,25 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(!stage)
     return;
 
-  // Export authored root layer — captures time-sampled data Catalyst writes in-place
-  // ExportToString is memory-only, zero disk I/O
+  // Export authored root layer — captures time-sampled data Catalyst writes in-place.
+  // Binary USDC (ExportBinary) is memory-only/zero-disk-I/O like the old ASCII
+  // export, but ~2-4x smaller on the wire and parsed natively by the JUSYNC
+  // middleware (tinyusdz auto-detects content by magic, extension-agnostic).
+  // NOTE: the store key keeps its historical ".usda" name on purpose — several
+  // client-side gates (spawn filters, rank-name parsing) key off that suffix,
+  // while the byte payload is binary USDC (optionally zstd-framed by the
+  // memory store). Wire structures are unchanged.
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
 
   auto rootLayer = stage->GetRootLayer();
   if(rootLayer)
   {
-    rootLayer->ExportToString(&fullUsdContent);
+    rootLayer->ExportBinary(&fullUsdContent);
     estimatedBytes = fullUsdContent.size();
   }
 
-  // Always use .usda — ExportToString produces ASCII text
+  // Keep the .usda store key (see note above)
   std::string filename;
   if(stageName == "FullScene")
     filename = "FullScene.usda";
@@ -1516,7 +1522,9 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename += ".usda";
   }
 
-  // Store in memory file store for ZMQ streaming
+  // Store in memory file store for ZMQ streaming.
+  // StoreFile zstd-compresses USD payloads internally (self-describing on the
+  // wire via the zstd magic) and stores the hash/size of the on-the-wire bytes.
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
     // DIFF-CAPTURE-HOOK: capture old file data before StoreFile overwrites
@@ -1526,10 +1534,10 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename,
       fullUsdContent.data(),
       fullUsdContent.size(),
-      "text/plain"
+      "application/vnd.usd+usdc"
     );
 
-    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
+    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes (binary usdc)" << std::endl;
   }
 
   // Add to tracking (dedup by filename to avoid duplicate entries for same stage)
@@ -1570,7 +1578,8 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
   std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
 
-  // Re-export all tracked stages to .usda text format — memory-only, zero disk I/O
+  // Re-export all tracked stages to BINARY USDC format — memory-only, zero disk I/O.
+  // The store key is the tracked ".usda" name (unchanged; see TrackStageMemory note).
   for(auto& info : MemoryTracking)
   {
     if(info.stage)
@@ -1581,7 +1590,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       auto rootLayer = info.stage->GetRootLayer();
       if(rootLayer)
       {
-        rootLayer->ExportToString(&fullUsdContent);
+        rootLayer->ExportBinary(&fullUsdContent);
         estimatedBytes = fullUsdContent.size();
       }
 
@@ -1590,41 +1599,29 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
        // Re-store updated file content to memory store (use stored .usda filename)
        if(g_rankMemoryStore != nullptr)
        {
-         if (fullUsdContent.empty() && info.stage)
-         {
-           // Stage exists but ExportToString returned empty — this can happen if the stage
-           // was just created and has no data yet. Keep the binary .usd available instead.
-           std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
-                     << (info.filename.empty() ? info.name : info.filename)
-                     << "' — keeping binary .usd as fallback" << std::endl;
-         }
-         else if (!fullUsdContent.empty())
-         {
-           std::string filename = info.filename.empty() ? info.name : info.filename;
-           // Always .usda — ExportToString produces ASCII text
-           if (filename.size() >= 5 && filename.substr(filename.size() - 5) != ".usda") {
-             if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".usd") {
-               filename += "a";  // .usd → .usda
-             } else {
-               filename += ".usda";
-             }
-           }
+          if (fullUsdContent.empty() && info.stage)
+          {
+            // Stage exists but ExportBinary returned empty — this can happen if the stage
+            // was just created and has no data yet. Keep the existing entry available.
+            std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
+                      << (info.filename.empty() ? info.name : info.filename)
+                      << "' — keeping previous entry" << std::endl;
+          }
+          else if (!fullUsdContent.empty())
+          {
+            // Store key is the tracked name as-is (TrackStageMemory always stores
+            // under a ".usda" key, so no extension rewriting is needed anymore).
+            const std::string& filename = info.filename.empty() ? info.name : info.filename;
 
-           // Store .usda FIRST, then remove stale .usd. The brief overlap is safe (broker picks .usda),
-           // and avoids a window where neither key exists for mid-flight client requests.
-           // Only one entry in ListFiles() after both ops complete -> no duplicate V2 notifications.
-           g_rankMemoryStore->StoreFile(
-             filename,
-             fullUsdContent.data(),
-             fullUsdContent.size(),
-             "text/plain"
-           );
-           if (filename != info.filename && g_rankMemoryStore->HasFile(info.filename)) {
-             g_rankMemoryStore->RemoveFile(info.filename);
-           }
+            g_rankMemoryStore->StoreFile(
+              filename,
+              fullUsdContent.data(),
+              fullUsdContent.size(),
+              "application/vnd.usd+usdc"
+            );
 
-            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
-         }
+            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes (binary usdc)" << std::endl;
+          }
        }
     }
   }

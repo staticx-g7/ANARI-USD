@@ -293,7 +293,7 @@ void UsdDevice::filterSetParam(
         ss << "MemoryStore: " << files.size() << " files\n";
         for (const auto& f : files)
         {
-          const auto* fe = g_rankMemoryStore->GetFile(f);
+          auto fe = g_rankMemoryStore->GetFile(f);
           ss << "  - " << f << " (" << (fe ? fe->size() : 0) << " bytes)\n";
         }
       }
@@ -904,7 +904,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         auto allFiles = g_rankMemoryStore->ListFiles();
         for (const auto& name : allFiles) {
           if (name.find("clips/") == 0 || name.find("images/") == 0) {
-            auto* entry = g_rankMemoryStore->GetFile(name);
+            auto entry = g_rankMemoryStore->GetFile(name);
             if (entry) {
               zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, nullptr, false);
             }
@@ -919,7 +919,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
           diffCap.Commit(name);
           continue;
         }
-        auto* entry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(name) : nullptr;
+        auto entry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(name) : nullptr;
         if (entry) {
           const uint64_t* oldHash = diffCap.GetOldHash128(name);
           bool hasOld = diffCap.HasOldEntry(name);
@@ -941,7 +941,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     // 3. Last: only rank 0 sends the commit notification to avoid 16 duplicates
     if (mpiRank == 0) {
       const char* frameFilename = "FullScene.usda";
-      auto* fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
+      auto fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
       const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
       zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
@@ -1547,7 +1547,7 @@ void UsdDevice::ServeFileRequests()
         const char* mime = "application/octet-stream";
         uint64_t hLo = 0, hHi = 0;
         if (g_rankMemoryStore) {
-          auto* entry = g_rankMemoryStore->GetFile(filename);
+           auto entry = g_rankMemoryStore->GetFile(filename);
           if (entry) {
             fsize = entry->size();
             mime = entry->mime_type.c_str();
@@ -1567,19 +1567,59 @@ void UsdDevice::ServeFileRequests()
       continue;
     }
 
+    if (request.message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME)) {
+      // Frame = every file currently in this rank's store, streamed under the
+      // single request_id, and terminated by a ZmqFileComplete whose filename
+      // is "__frame_complete__" (same marker convention the rank-0 broker
+      // uses; reuses existing message types, so no protocol change).
+      if (g_rankMemoryStore) {
+        const size_t kMaxChunkSize = 128 * 1024 * 1024;
+        size_t frameChunkSize = (request.chunk_size > 0)
+            ? std::min<size_t>(request.chunk_size, kMaxChunkSize)
+            : DEFAULT_CHUNK_SIZE;
+        int filesSent = 0;
+        for (const auto& filename : g_rankMemoryStore->ListFiles()) {
+          if (filename.find(".usda.usda") != std::string::npos) continue;
+          auto entry = g_rankMemoryStore->GetFile(filename);
+          if (!entry) continue;
+          const size_t total = entry->data.size();
+          uint64_t off = 0;
+          while (off < total) {
+            size_t sendSize = std::min(frameChunkSize, total - off);
+            zmqWorker_->SendFileChunk(request.request_id, filename,
+                entry->data.data() + off, sendSize, total, off);
+            off += sendSize;
+          }
+          zmqWorker_->SendFileComplete(request.request_id, filename, total);
+          ++filesSent;
+        }
+        // Terminal marker: the broker keeps the client mapping alive until this
+        // arrives, then drops it (see frame_requests_ in the broker loop).
+        zmqWorker_->SendFileComplete(request.request_id, "__frame_complete__",
+            static_cast<uint64_t>(filesSent));
+      }
+      continue;
+    }
+
     if (!g_rankMemoryStore) {
       zmqWorker_->SendNoFile(request.request_id, request.filename);
       continue;
     }
 
-    auto* fileEntry = g_rankMemoryStore->GetFile(request.filename);
+    auto fileEntry = g_rankMemoryStore->GetFile(request.filename);
     if (!fileEntry) {
       zmqWorker_->SendNoFile(request.request_id, request.filename);
       continue;
     }
 
     size_t totalSize = fileEntry->data.size();
-    size_t chunkSize = 4 * 1024 * 1024; // 4MB chunks
+    // Honor the client's preferred chunk size (larger chunks = fewer ZMQ
+    // round-trips through the broker loop). Fall back to the default, and cap
+    // at 128MB against a malformed request.
+    const size_t kMaxChunkSize = 128 * 1024 * 1024;
+    size_t chunkSize = (request.chunk_size > 0)
+        ? std::min<size_t>(request.chunk_size, kMaxChunkSize)
+        : DEFAULT_CHUNK_SIZE;
     size_t offset = 0;
 
     while (offset < totalSize) {
@@ -1661,7 +1701,7 @@ void UsdDevice::FlushSceneAndNotify()
       auto allFiles = g_rankMemoryStore->ListFiles();
       for (const auto& name : allFiles) {
         if (name.find("clips/") == 0 || name.find("images/") == 0) {
-          auto* entry = g_rankMemoryStore->GetFile(name);
+          auto entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
             // DIFF-CAPTURE-HOOK: send old-hash-aware notification
             const uint64_t* oldHash = GetDiffCapture().GetOldHash128(name);
@@ -1684,7 +1724,7 @@ void UsdDevice::FlushSceneAndNotify()
 
     // 3. Last: only rank 0 sends commit notification to avoid duplicates
     if (mpiRank == 0 && g_rankMemoryStore) {
-      auto* fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
+      auto fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
       const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
       zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
