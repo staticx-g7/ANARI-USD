@@ -1487,20 +1487,20 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     return;
 
   // Export authored root layer — captures time-sampled data Catalyst writes in-place.
-  // Binary USDC (ExportBinary) is memory-only/zero-disk-I/O like the old ASCII
-  // export, but ~2-4x smaller on the wire and parsed natively by the JUSYNC
-  // middleware (tinyusdz auto-detects content by magic, extension-agnostic).
-  // NOTE: the store key keeps its historical ".usda" name on purpose — several
-  // client-side gates (spawn filters, rank-name parsing) key off that suffix,
-  // while the byte payload is binary USDC (optionally zstd-framed by the
-  // memory store). Wire structures are unchanged.
+  // ASCII export (ExportToString) is memory-only/zero-disk-I/O and present in the
+  // USD builds we target; the in-memory binary API (ExportBinary) is NOT available in
+  // the cluster USD (pxrInternal_v0_24_11), so we export ASCII. The wire-size win
+  // still comes from the memory store zstd-compressing the payload (self-describing
+  // via the zstd magic; the client decompresses before parsing).
+  // NOTE: the store key keeps its historical ".usda" name — several client-side
+  // gates (spawn filters, rank-name parsing) key off that suffix.
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
 
   auto rootLayer = stage->GetRootLayer();
   if(rootLayer)
   {
-    rootLayer->ExportBinary(&fullUsdContent);
+    rootLayer->ExportToString(&fullUsdContent);
     estimatedBytes = fullUsdContent.size();
   }
 
@@ -1534,10 +1534,10 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename,
       fullUsdContent.data(),
       fullUsdContent.size(),
-      "application/vnd.usd+usdc"
+      "text/plain"
     );
 
-    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes (binary usdc)" << std::endl;
+    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
   }
 
   // Add to tracking (dedup by filename to avoid duplicate entries for same stage)
@@ -1578,7 +1578,8 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
   std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
 
-  // Re-export all tracked stages to BINARY USDC format — memory-only, zero disk I/O.
+  // Re-export all tracked stages to ASCII USD (ExportToString) — memory-only, zero
+  // disk I/O, and present in the target USD builds (in-memory ExportBinary is not).
   // The store key is the tracked ".usda" name (unchanged; see TrackStageMemory note).
   for(auto& info : MemoryTracking)
   {
@@ -1590,7 +1591,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       auto rootLayer = info.stage->GetRootLayer();
       if(rootLayer)
       {
-        rootLayer->ExportBinary(&fullUsdContent);
+        rootLayer->ExportToString(&fullUsdContent);
         estimatedBytes = fullUsdContent.size();
       }
 
@@ -1601,7 +1602,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
        {
           if (fullUsdContent.empty() && info.stage)
           {
-            // Stage exists but ExportBinary returned empty — this can happen if the stage
+            // Stage exists but ExportToString returned empty — this can happen if the stage
             // was just created and has no data yet. Keep the existing entry available.
             std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
                       << (info.filename.empty() ? info.name : info.filename)
@@ -1617,10 +1618,10 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
               filename,
               fullUsdContent.data(),
               fullUsdContent.size(),
-              "application/vnd.usd+usdc"
+              "text/plain"
             );
 
-            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes (binary usdc)" << std::endl;
+            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
           }
        }
     }
