@@ -16,11 +16,7 @@
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <atomic>
-#include <unistd.h>
-#include "pxr/usd/sdf/usdcFileFormat.h"
+#include "pxr/usd/sdf/fileFormat.h"
 
 #define PROCESS_PREFIX
 
@@ -1488,12 +1484,12 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
 
 // Export the authored root layer to a string, honoring Settings.BinaryOutput.
 //  - ASCII (default): ExportToString — memory-only, zero disk I/O.
-//  - Binary (usd::serialize.outputBinary=true): the cluster USD
-//    (pxrInternal_v0_24_11) has NO in-memory ExportBinary API, so we round-trip
-//    through a temporary .usdc file via SdfUsdcFileFormat::WriteToFile (the same
-//    code path pxr uses for SdfLayer::Save of .usdc files) and read the bytes
-//    back. Binary crate parses ~2-5x faster than ASCII on the client and stays
-//    compact as geometry grows; the memory store still zstd-compresses either.
+//  - Binary (usd::serialize.outputBinary=true): this USD build has no
+//    in-memory SdfLayer::ExportBinary API, so we ask the usdc file format
+//    (looked up in the SdfFileFormat registry) to serialize the layer
+//    straight to a string — fully in-memory, no temp files. Binary crate
+//    parses ~2-5x faster than ASCII on the client and stays compact as
+//    geometry grows; the memory store still zstd-compresses either.
 //  - Falls back to ASCII automatically if the binary export fails, so the
 //    pipeline never loses a frame's data.
 void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
@@ -1508,25 +1504,8 @@ void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
 
   if(Settings.BinaryOutput)
   {
-    static std::atomic<uint64_t> tmpCounter{0};
-    const std::string tmpPath =
-      std::string("/tmp/usdbridge_") + std::to_string(static_cast<uint64_t>(::getpid())) + "_" +
-      std::to_string(++tmpCounter) + ".usdc";
-
-    SdfUsdcFileFormat usdcFormat;
-    if(usdcFormat.WriteToFile(*rootLayer, tmpPath))
-    {
-      std::ifstream tf(tmpPath, std::ios::binary);
-      if(tf)
-      {
-        std::ostringstream ss;
-        ss << tf.rdbuf();
-        outContent = ss.str();
-      }
-    }
-    std::filesystem::remove(tmpPath);
-
-    if(!outContent.empty())
+    SdfFileFormatConstPtr usdcFormat = SdfFileFormat::FindByExtension("usdc");
+    if(usdcFormat && usdcFormat->WriteToString(*rootLayer, &outContent))
     {
       outIsBinary = true;
       return;
