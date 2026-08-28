@@ -340,7 +340,7 @@ static const void * ANARI_DEVICE_usd__serialize_outputBinary_info(ANARIDataType 
          }
       case 1: // default
          if(paramType == ANARI_BOOL && infoType == ANARI_BOOL) {
-            static const int8_t default_value[1] = {INT8_C(0)};
+            static const int8_t default_value[1] = {INT8_C(1)};
             return default_value;
          } else {
             return nullptr;

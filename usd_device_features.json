@@ -30,7 +30,7 @@
                     "name" : "usd::serialize.outputBinary",
                     "types" : ["ANARI_BOOL"],
                     "tags" : [],
-                    "default" : false,
+                    "default" : true,
                     "description" : "Enable binary .usd output, or ascii-based .usda"
                 }, {
                     "name" : "usd::time",
