@@ -16,6 +16,11 @@
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <atomic>
+#include <unistd.h>
+#include "pxr/usd/sdf/usdcFileFormat.h"
 
 #define PROCESS_PREFIX
 
@@ -1481,26 +1486,79 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
   keys.resize(0);
 }
 
+// Export the authored root layer to a string, honoring Settings.BinaryOutput.
+//  - ASCII (default): ExportToString — memory-only, zero disk I/O.
+//  - Binary (usd::serialize.outputBinary=true): the cluster USD
+//    (pxrInternal_v0_24_11) has NO in-memory ExportBinary API, so we round-trip
+//    through a temporary .usdc file via SdfUsdcFileFormat::WriteToFile (the same
+//    code path pxr uses for SdfLayer::Save of .usdc files) and read the bytes
+//    back. Binary crate parses ~2-5x faster than ASCII on the client and stays
+//    compact as geometry grows; the memory store still zstd-compresses either.
+//  - Falls back to ASCII automatically if the binary export fails, so the
+//    pipeline never loses a frame's data.
+void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
+                                             const std::string& stageName,
+                                             std::string& outContent,
+                                             bool& outIsBinary)
+{
+  outContent.clear();
+  outIsBinary = false;
+  if(!rootLayer)
+    return;
+
+  if(Settings.BinaryOutput)
+  {
+    static std::atomic<uint64_t> tmpCounter{0};
+    const std::string tmpPath =
+      std::string("/tmp/usdbridge_") + std::to_string(static_cast<uint64_t>(::getpid())) + "_" +
+      std::to_string(++tmpCounter) + ".usdc";
+
+    SdfUsdcFileFormat usdcFormat;
+    if(usdcFormat.WriteToFile(*rootLayer, tmpPath))
+    {
+      std::ifstream tf(tmpPath, std::ios::binary);
+      if(tf)
+      {
+        std::ostringstream ss;
+        ss << tf.rdbuf();
+        outContent = ss.str();
+      }
+    }
+    std::filesystem::remove(tmpPath);
+
+    if(!outContent.empty())
+    {
+      outIsBinary = true;
+      return;
+    }
+
+    std::cerr << "[ExportLayerToString] WARNING: binary export failed for '"
+              << stageName << "', falling back to ASCII" << std::endl;
+  }
+
+  rootLayer->ExportToString(&outContent);
+}
+
 void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage)
 {
   if(!stage)
     return;
 
   // Export authored root layer — captures time-sampled data Catalyst writes in-place.
-  // ASCII export (ExportToString) is memory-only/zero-disk-I/O and present in the
-  // USD builds we target; the in-memory binary API (ExportBinary) is NOT available in
-  // the cluster USD (pxrInternal_v0_24_11), so we export ASCII. The wire-size win
-  // still comes from the memory store zstd-compressing the payload (self-describing
-  // via the zstd magic; the client decompresses before parsing).
-  // NOTE: the store key keeps its historical ".usda" name — several client-side
-  // gates (spawn filters, rank-name parsing) key off that suffix.
+  // ExportLayerToString honors Settings.BinaryOutput (usd::serialize.outputBinary):
+  // binary crate when enabled, ASCII by default.
+  // NOTE: the store key keeps its historical ".usda" name in BOTH modes — several
+  // client-side gates (spawn filters, rank-name parsing) key off that suffix, and
+  // clients (e.g. the JUSYNC middleware) detect the real format by content
+  // (zstd magic, then crate binary vs "#usda").
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
+  bool isBinaryContent = false;
 
   auto rootLayer = stage->GetRootLayer();
   if(rootLayer)
   {
-    rootLayer->ExportToString(&fullUsdContent);
+    ExportLayerToString(rootLayer, stageName, fullUsdContent, isBinaryContent);
     estimatedBytes = fullUsdContent.size();
   }
 
@@ -1534,10 +1592,11 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename,
       fullUsdContent.data(),
       fullUsdContent.size(),
-      "text/plain"
+      isBinaryContent ? "model/vnd.usd-crate" : "text/plain"
     );
 
-    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
+    std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size()
+              << " bytes (" << (isBinaryContent ? "binary .usdc" : "ascii .usda") << ")" << std::endl;
   }
 
   // Add to tracking (dedup by filename to avoid duplicate entries for same stage)
@@ -1587,11 +1646,13 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
     {
       size_t estimatedBytes = 0;
       std::string fullUsdContent;
+      bool isBinaryContent = false;
 
       auto rootLayer = info.stage->GetRootLayer();
       if(rootLayer)
       {
-        rootLayer->ExportToString(&fullUsdContent);
+        ExportLayerToString(rootLayer, info.filename.empty() ? info.name : info.filename,
+                            fullUsdContent, isBinaryContent);
         estimatedBytes = fullUsdContent.size();
       }
 
@@ -1602,7 +1663,7 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
        {
           if (fullUsdContent.empty() && info.stage)
           {
-            // Stage exists but ExportToString returned empty — this can happen if the stage
+            // Stage exists but export returned empty — this can happen if the stage
             // was just created and has no data yet. Keep the existing entry available.
             std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
                       << (info.filename.empty() ? info.name : info.filename)
@@ -1618,10 +1679,11 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
               filename,
               fullUsdContent.data(),
               fullUsdContent.size(),
-              "text/plain"
+              isBinaryContent ? "model/vnd.usd-crate" : "text/plain"
             );
 
-            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size() << " bytes" << std::endl;
+            std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size()
+                      << " bytes (" << (isBinaryContent ? "binary .usdc" : "ascii .usda") << ")" << std::endl;
           }
        }
     }

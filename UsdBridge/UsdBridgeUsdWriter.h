@@ -173,6 +173,12 @@ public:
   bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
 
   void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
+  // Export the authored root layer to a string, honoring Settings.BinaryOutput
+  // (binary .usdc crate when enabled, ASCII by default; ASCII fallback on failure).
+  void ExportLayerToString(const SdfLayerRefPtr& rootLayer,
+                           const std::string& stageName,
+                           std::string& outContent,
+                           bool& outIsBinary);
   void RecalculateAllMemoryUsage();
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
