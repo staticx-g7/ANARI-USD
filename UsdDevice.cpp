@@ -403,6 +403,18 @@ void UsdDevice::initializeBridge()
 
   bridgeInitAttempt = true;
 
+  // Scene-boundary cleanup: the in-memory file store is a process-lifetime global and is
+  // never otherwise cleared. When a fresh bridge is being created and the store still holds
+  // files from a previous scene/device, clear them so stale geometry is not re-served to
+  // clients after a scene replacement. (No-op for the very first device, whose store is empty.)
+  if (g_rankMemoryStore && g_rankMemoryStore->GetFileCount() > 0)
+  {
+    reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+      "USDRMNG: initializeBridge — clearing %zu stale file(s) from previous scene",
+      g_rankMemoryStore->GetFileCount());
+    g_rankMemoryStore->Clear();
+  }
+
   statusFunc = userSetStatusFunc ? userSetStatusFunc : defaultStatusCallback();
   statusUserData = userSetStatusUserData ? userSetStatusUserData : defaultStatusCallbackUserPtr();
 
@@ -880,6 +892,15 @@ void UsdDevice::renderFrame(ANARIFrame frame)
     }
     
     frameObjPtr->renderFrame(this);
+  }
+
+  // Auto-garbage-collect: purge prims no longer referenced by the current scene and
+  // their clips from the in-memory store, so a scene replacement (removing a dataset
+  // and adding a new one) does not keep re-serving stale geometry to clients. Runs
+  // after the frame save so the current scene's prims are already committed/referenced.
+  if (!disableGarbageCollect_ && internals->bridge)
+  {
+    internals->bridge->PurgeUnreferencedPrims(/*saveScene=*/false);
   }
 
   // Send ZMQ notifications to laptop client (only from rank 0 to avoid duplicates)

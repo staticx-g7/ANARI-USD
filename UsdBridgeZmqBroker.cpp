@@ -13,6 +13,7 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 
 #ifdef ANARI_USD_ENABLE_MPI
 #include <mpi.h>
@@ -199,9 +200,30 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 
     try {
 #ifdef ANARI_USD_ENABLE_MPI
-        // Get MPI rank
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        // Get MPI rank. The host process may not have called MPI_Init
+        // (standalone ANARI apps, ParaView without MPI); OpenMPI aborts on
+        // any MPI call before MPI_INIT, so check first and fall back to
+        // env-based rank detection (same sources UsdBridgeUsdWriter uses),
+        // defaulting to a single-process rank 0.
+        int rank = 0;
+        {
+          int initialized = 0;
+          MPI_Initialized(&initialized);
+          if (initialized)
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+          else
+          {
+            const char* e_slurm = getenv("SLURM_PROCID");
+            const char* e_ompi = getenv("OMPI_COMM_WORLD_RANK");
+            const char* e_pmi = getenv("PMI_RANK");
+            if (e_slurm)
+              rank = std::atoi(e_slurm);
+            else if (e_ompi)
+              rank = std::atoi(e_ompi);
+            else if (e_pmi)
+              rank = std::atoi(e_pmi);
+          }
+        }
 
         const char* slurm_procid = getenv("SLURM_PROCID");
         const char* ompi_rank = getenv("OMPI_COMM_WORLD_RANK");
@@ -223,10 +245,16 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         std::string ib_ip;  // Declare here so it's available in both branches
         
         if (isSingleRankMode) {
-            // Single rank mode: use localhost for simpler SSH tunneling
-            ib_ip = "127.0.0.1";
+            // Single rank mode: bind to all interfaces so remote clients
+            // (laptop JUSYNC client over docker port-forwarding or SSH
+            // tunneling) can reach the broker. Loopback-only binding
+            // (127.0.0.1) is unreachable through docker -p port mapping.
+            // Override with DIFFCAPTURE_BIND_IP when a specific interface
+            // is required (e.g. InfiniBand on a cluster).
+            const char* bind_ip_env = getenv("DIFFCAPTURE_BIND_IP");
+            ib_ip = (bind_ip_env && bind_ip_env[0]) ? bind_ip_env : "0.0.0.0";
             broker_ip_ = ib_ip;
-            std::cout << "[Rank 0 MPI Broker] Single-rank mode detected - using localhost IP: " << ib_ip << std::endl;
+            std::cout << "[Rank 0 MPI Broker] Single-rank mode detected - using bind IP: " << ib_ip << std::endl;
         } else {
             // Multi-rank MPI mode: use InfiniBand IP
             // Broadcast broker address to all workers via MPI

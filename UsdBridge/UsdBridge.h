@@ -114,7 +114,12 @@ class UsdBridge
 
     void ResetResourceUpdateState(); // Eg. clears all dirty flags on shared resources
 
-    void GarbageCollect(); // Deletes all handles without parents (from Set<X>Refs) 
+    void GarbageCollect(); // Deletes all handles without parents (from Set<X>Refs)
+    // Remove unreferenced prim caches and purge their clips from the in-memory store
+    // + MemoryTracking. saveScene=true re-saves the scene after purging (explicit
+    // usd::garbageCollect param); false skips the save (per-renderFrame auto-cleanup,
+    // which already saved this frame).
+    void PurgeUnreferencedPrims(bool saveScene);
 
     const char* GetPrimPath(UsdBridgeHandle* handle);
 

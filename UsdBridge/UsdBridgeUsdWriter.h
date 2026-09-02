@@ -182,6 +182,9 @@ public:
   void RecalculateAllMemoryUsage();
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
+  // Map a stage logical name to the key used in the in-memory file store
+  // (keeps the historical ".usda" suffix that client-side gates key off).
+  std::string StoreKeyForStageName(const std::string& stageName) const;
 
   TfToken& AttributeNameToken(const char* attribName);
 

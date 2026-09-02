@@ -589,10 +589,39 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
 
 void UsdBridgeUsdWriter::RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry)
 {
-  // Only remove files if we were actually saving them
+  // Memory/ZMQ streaming mode: there are no on-disk files, but the in-memory store and
+  // MemoryTracking DO hold the clips. Purge both so unreferenced clips are not re-served
+  // to clients (and are not resurrected by RecalculateAllMemoryUsage on the next render).
   if(!this->EnableSaving)
-    return;
+  {
+    auto purgeStoreAndTracking = [this](const std::string& stageName)
+    {
+      if (stageName.empty())
+        return;
+      const std::string storeKey = StoreKeyForStageName(stageName);
+      if (g_rankMemoryStore && g_rankMemoryStore->RemoveFile(storeKey))
+        UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+          "[Purge] removed stale clip from memory store: " << storeKey);
+      for (auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
+      {
+        if (it->filename == storeKey)
+        {
+          MemoryTracking.erase(it);
+          break; // store keys are unique in MemoryTracking (deduped by filename)
+        }
+      }
+    };
 
+    if (!cacheEntry->ManifestStage.first.empty())
+      purgeStoreAndTracking(cacheEntry->ManifestStage.first);
+
+    for (auto& x : cacheEntry->ClipStages)
+      purgeStoreAndTracking(x.second.first);
+
+    return;
+  }
+
+  // Disk-save mode (existing behavior): remove the on-disk files.
   // May be superfluous
   if(cacheEntry->ManifestStage.second)
   {
@@ -1516,6 +1545,27 @@ void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
   }
 
   rootLayer->ExportToString(&outContent);
+}
+
+std::string UsdBridgeUsdWriter::StoreKeyForStageName(const std::string& stageName) const
+{
+  std::string filename;
+  if(stageName == "FullScene")
+    filename = "FullScene.usda";
+  else
+  {
+    filename = stageName;
+    if (filename.length() >= 4)
+    {
+      std::string ext4 = filename.substr(filename.length() - 4);
+      std::string ext5 = filename.substr(filename.length() - 5);
+      if (ext4 != ".usd" && ext4 != ".usda" && ext5 != ".usda")
+        filename += ".usda";
+    }
+    else
+      filename += ".usda";
+  }
+  return filename;
 }
 
 void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage)
