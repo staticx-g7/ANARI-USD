@@ -1203,6 +1203,25 @@ void ZmqBroker::MessageLoopThread() {
                 std::vector<uint8_t> data;
 
                 if (ReceiveFromWorker(workerId, data)) {
+                    // Check if this is a typed scene / property update
+                    if (data.size() >= sizeof(ZmqSceneUpdate)) {
+                        ZmqSceneUpdate* sceneUpdate = reinterpret_cast<ZmqSceneUpdate*>(data.data());
+
+                        if (sceneUpdate->magic == USD_FILE_MAGIC &&
+                            (sceneUpdate->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_SCENE_UPDATE) ||
+                             sceneUpdate->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_PROPERTY_UPDATE))) {
+
+                            std::cout << "[Rank 0 MPI Broker] Received scene update from rank "
+                                      << sceneUpdate->source_rank
+                                      << ": prim='" << sceneUpdate->getPrimPath()
+                                      << "' property='" << sceneUpdate->getPropertyName()
+                                      << "' change=" << sceneUpdate->change_type << std::endl;
+
+                            ForwardSceneUpdateToClient(*sceneUpdate);
+                            continue;
+                        }
+                    }
+
                     // Check if this is a notification message (NOTIFY_FILE_UPDATE or NOTIFY_COMMIT_COMPLETE)
                     if (data.size() >= sizeof(ZmqFileNotification)) {
                         ZmqFileNotification* notification = reinterpret_cast<ZmqFileNotification*>(data.data());
@@ -1213,8 +1232,8 @@ void ZmqBroker::MessageLoopThread() {
                               notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_COMMIT_COMPLETE))) {
 
                              std::string notif_type = (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE))
-                                 ? "FILE_UPDATE" : (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE_V2))
-                                 ? "FILE_UPDATE_V2" : "COMMIT_COMPLETE";
+                                  ? "FILE_UPDATE" : (notification->message_type == static_cast<uint32_t>(ZmqMessageType::NOTIFY_FILE_UPDATE_V2))
+                                  ? "FILE_UPDATE_V2" : "COMMIT_COMPLETE";
 
                             std::cout << "[Rank 0 MPI Broker] Received " << notif_type
                                       << " notification from rank " << notification->source_rank
@@ -2225,6 +2244,71 @@ bool ZmqBroker::ForwardNotificationToClient(const ZmqFileNotification& notificat
     }
 
     return success;
+}
+
+bool ZmqBroker::ForwardSceneUpdateToClient(const ZmqSceneUpdate& update) {
+    bool success = true;
+
+    for (const auto& client_id : client_ids_) {
+        try {
+            client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+            client_router_->send(zmq::message_t(&update, sizeof(update)), zmq::send_flags::none);
+
+            std::cout << "[Rank 0 MPI Broker] Forwarded scene update to client: prim='"
+                      << update.getPrimPath()
+                      << "' property='" << update.getPropertyName()
+                      << "' change=" << update.change_type
+                      << " rank " << update.source_rank << std::endl;
+        } catch (const zmq::error_t& e) {
+            std::cerr << "[Rank 0 MPI Broker] ForwardSceneUpdateToClient error: " << e.what() << std::endl;
+            success = false;
+        }
+    }
+
+    return success;
+}
+
+bool ZmqWorker::SendSceneUpdate(const ZmqSceneUpdate& updateIn) {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+
+    try {
+        ZmqSceneUpdate msg = updateIn;
+        msg.magic = USD_FILE_MAGIC;
+        msg.source_rank = rank_;
+
+        zmq::message_t empty;
+        zmq::message_t payload(&msg, sizeof(msg));
+
+        dealer_->send(empty, zmq::send_flags::sndmore);
+        dealer_->send(payload, zmq::send_flags::none);
+
+        std::cout << "[Worker Rank " << rank_ << "] Sent scene update: prim='"
+                  << msg.getPrimPath()
+                  << "' property='" << msg.getPropertyName()
+                  << "' change=" << msg.change_type
+                  << " type=" << msg.value_type
+                  << " commit=" << msg.commit_id
+                  << " revision=" << msg.revision << std::endl;
+
+        return true;
+    } catch (const zmq::error_t& e) {
+        std::cerr << "[Worker Rank " << rank_ << "] SendSceneUpdate error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool ZmqWorker::SendCommitSceneUpdate(uint64_t commitId, uint64_t revision, uint64_t timestamp) {
+    ZmqSceneUpdate msg;
+    msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_SCENE_UPDATE);
+    msg.timestamp = timestamp;
+    msg.commit_id = commitId;
+    msg.revision = revision;
+    msg.change_type = static_cast<int32_t>(ZmqSceneChangeType::Commit);
+    msg.value_type = static_cast<int32_t>(ZmqPropertyValuetype::None);
+    msg.setPrimPath("/Scene");
+    msg.setPropertyName("usd::commit");
+    return SendSceneUpdate(msg);
 }
 
 } // namespace usd_bridge

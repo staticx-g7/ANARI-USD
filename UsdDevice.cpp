@@ -966,6 +966,10 @@ void UsdDevice::renderFrame(ANARIFrame frame)
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
       const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
       zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
+
+      static std::atomic<uint64_t> sceneRevisionCounter{0};
+      const uint64_t sceneRevision = sceneRevisionCounter.fetch_add(1, std::memory_order_relaxed) + 1;
+      zmqWorker_->SendCommitSceneUpdate(timestamp, sceneRevision, timestamp);
     }
   }
 
@@ -1749,6 +1753,10 @@ void UsdDevice::FlushSceneAndNotify()
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
       const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
       zmqWorker_->SendCommitNotification("FullScene.usda", fileSize, timestamp, fileHash);
+
+      static std::atomic<uint64_t> sceneRevisionCounter{0};
+      const uint64_t sceneRevision = sceneRevisionCounter.fetch_add(1, std::memory_order_relaxed) + 1;
+      zmqWorker_->SendCommitSceneUpdate(timestamp, sceneRevision, timestamp);
     }
 
     // Serve any pending file requests
