@@ -7,9 +7,11 @@
 #include "UsdBridgeUsdWriter_Common.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 #include "UsdBridgeMemoryStore.h"
+#include "UsdBridgeBenchmark.h"
 #include "UsdBridgeDiffCapture.h"
 #include "Common/UsdBridgeParallelController.h"
 
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <set>
@@ -225,7 +227,9 @@ void UsdBridgeUsdWriter::SetSelectiveFileSaving(bool selectiveFileSaving)
 void UsdBridgeUsdWriter::SaveScene()
 {
   if(this->EnableSaving)
-    this->SceneStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [this]{ this->SceneStage->Save(); }, "scene",
+      std::string(this->SceneStage->GetRootLayer()->GetIdentifier()));
 }
 
 int UsdBridgeUsdWriter::FindSessionNumber()
@@ -434,7 +438,9 @@ void UsdBridgeUsdWriter::CreateParallelEncapsulatingFile()
     rankPrim.GetReferences().AddReference(rankRelPath, SdfPath("/Root"));
   }
 
-  encStage->Save();
+  usd_bridge_benchmark::TimedDiskSave(
+    [&]{ encStage->Save(); }, "encapsulate",
+    std::string(encStage->GetRootLayer()->GetIdentifier()));
 
   UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
     "Created parallel encapsulating USD file at " << absEncFilePath
@@ -514,7 +520,9 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
   }
 
   if(this->EnableSaving)
-    this->SceneStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [this]{ this->SceneStage->Save(); }, "scene_commit",
+      std::string(this->SceneStage->GetRootLayer()->GetIdentifier()));
   else
     this->TrackStageMemory("FullScene", this->SceneStage);
 
@@ -1583,11 +1591,15 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
   bool isBinaryContent = false;
+  double benchSerializeMs = 0.0;
 
   auto rootLayer = stage->GetRootLayer();
   if(rootLayer)
   {
+    auto benchT0 = std::chrono::steady_clock::now();
     ExportLayerToString(rootLayer, stageName, fullUsdContent, isBinaryContent);
+    benchSerializeMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - benchT0).count();
     estimatedBytes = fullUsdContent.size();
   }
 
@@ -1617,12 +1629,23 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     // DIFF-CAPTURE-HOOK: capture old file data before StoreFile overwrites
     GetDiffCapture().CapturePreStore(filename);
 
+    auto benchStoreT0 = std::chrono::steady_clock::now();
     g_rankMemoryStore->StoreFile(
       filename,
       fullUsdContent.data(),
       fullUsdContent.size(),
       isBinaryContent ? "model/vnd.usd-crate" : "text/plain"
     );
+    double benchStoreMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - benchStoreT0).count();
+
+    // On-the-wire size (post-zstd) is what the client actually receives.
+    size_t benchWireBytes = 0;
+    auto benchEntry = g_rankMemoryStore->GetFile(filename);
+    if (benchEntry) benchWireBytes = benchEntry->size();
+
+    usd_bridge_benchmark::UsdBridgeBenchmark::Instance().RecordMemoryCommit(
+      stageName, fullUsdContent.size(), benchWireBytes, benchSerializeMs, benchStoreMs);
 
     std::cout << "[TrackStageMemory] Stored '" << filename << "': " << fullUsdContent.size()
               << " bytes (" << (isBinaryContent ? "binary .usdc" : "ascii .usda") << ")" << std::endl;
@@ -1676,12 +1699,16 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
       size_t estimatedBytes = 0;
       std::string fullUsdContent;
       bool isBinaryContent = false;
+      double benchSerializeMs = 0.0;
 
       auto rootLayer = info.stage->GetRootLayer();
       if(rootLayer)
       {
+        auto benchT0 = std::chrono::steady_clock::now();
         ExportLayerToString(rootLayer, info.filename.empty() ? info.name : info.filename,
                             fullUsdContent, isBinaryContent);
+        benchSerializeMs = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - benchT0).count();
         estimatedBytes = fullUsdContent.size();
       }
 
@@ -1704,12 +1731,23 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
             // under a ".usda" key, so no extension rewriting is needed anymore).
             const std::string& filename = info.filename.empty() ? info.name : info.filename;
 
+            auto benchStoreT0 = std::chrono::steady_clock::now();
             g_rankMemoryStore->StoreFile(
               filename,
               fullUsdContent.data(),
               fullUsdContent.size(),
               isBinaryContent ? "model/vnd.usd-crate" : "text/plain"
             );
+            double benchStoreMs = std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - benchStoreT0).count();
+
+            size_t benchWireBytes = 0;
+            auto benchEntry = g_rankMemoryStore->GetFile(filename);
+            if (benchEntry) benchWireBytes = benchEntry->size();
+
+            usd_bridge_benchmark::UsdBridgeBenchmark::Instance().RecordMemoryCommit(
+              info.name + " (recalc)", fullUsdContent.size(), benchWireBytes,
+              benchSerializeMs, benchStoreMs);
 
             std::cout << "[RecalculateAllMemoryUsage] Updated '" << filename << "': " << fullUsdContent.size()
                       << " bytes (" << (isBinaryContent ? "binary .usdc" : "ascii .usda") << ")" << std::endl;

@@ -354,6 +354,11 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
     uint32_t frameCounter_{0};
     void NotifyFrameReady(double timestep);
+
+    // Benchmark: bytes/chunks/files this rank actually sent to clients.
+    std::atomic<uint64_t> servedBytes_{0};
+    std::atomic<uint64_t> servedChunks_{0};
+    std::atomic<uint64_t> servedFiles_{0};
   #endif
 };
 

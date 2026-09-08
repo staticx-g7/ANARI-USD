@@ -134,6 +134,12 @@ private:
     // Thread management
     std::thread message_loop_thread_;
     std::atomic<bool> message_loop_active_{false};
+
+    // Benchmark: total relayed to clients (bytes / messages). Dumped as
+    // benchmark_broker.json at shutdown when ANARI_USD_BENCHMARK_OUT is set.
+    std::atomic<uint64_t> clientBytes_{0};
+    std::atomic<uint64_t> clientMessages_{0};
+    std::chrono::steady_clock::time_point start_time_{};
     std::thread ssh_reminder_thread_;
     std::atomic<bool> ssh_reminder_active_{false};
     std::thread status_printer_thread_;

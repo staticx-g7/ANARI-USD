@@ -19,6 +19,7 @@
 #include "UsdCamera.h"
 #include "UsdDevice_queries.h"
 #include "UsdBridge/UsdBridgeMemoryStore.h"
+#include "UsdBridge/UsdBridgeBenchmark.h"
 #include "UsdBridge/xxhash/xxhash.h"
 #include "UsdBridge/UsdBridgeDiffCapture.h"
 
@@ -148,8 +149,17 @@ UsdDevice::UsdDevice(ANARILibrary library)
 
 UsdDevice::~UsdDevice()
 {
+  // Benchmark: flush the per-rank report (no-op unless ANARI_USD_BENCHMARK_OUT is set)
+#ifdef ANARI_USD_ENABLE_MPI
+  usd_bridge_benchmark::UsdBridgeBenchmark::Instance().AddServingStats(
+    servedBytes_.load(std::memory_order_relaxed),
+    servedChunks_.load(std::memory_order_relaxed),
+    servedFiles_.load(std::memory_order_relaxed));
+#endif
+  usd_bridge_benchmark::UsdBridgeBenchmark::Instance().WriteReports();
+
   // Make sure no more references are held before cleaning up the device (and checking for memleaks)
-  clearCommitList(); 
+  clearCommitList();
 
   clearDeviceParameters(); // Release device parameters with object references
 
@@ -574,10 +584,20 @@ void UsdDevice::initializeBridge()
         "Non-MPI ZMQ broker started");
   }
   InitializeMemoryStore(0);
-  reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO,
-               ANARI_STATUS_NO_ERROR,
-               "Memory store initialized for local file serving");
+  reportStatus(this, ANARI_DEVICE, ANARI_STATUS_NO_ERROR,
+                ANARI_STATUS_NO_ERROR,
+                "Memory store initialized for local file serving");
   #endif
+
+  // Benchmark recorder: enabled via ANARI_USD_BENCHMARK_OUT=<dir> (no-op otherwise).
+  {
+    const char* benchOut = getenv("ANARI_USD_BENCHMARK_OUT");
+#ifdef ANARI_USD_ENABLE_MPI
+    usd_bridge_benchmark::UsdBridgeBenchmark::Instance().Init(mpiRank, benchOut ? benchOut : "");
+#else
+    usd_bridge_benchmark::UsdBridgeBenchmark::Instance().Init(0, benchOut ? benchOut : "");
+#endif
+  }
 }
 
 ANARIArray UsdDevice::CreateDataArray(const void *appMemory,
@@ -1613,9 +1633,12 @@ void UsdDevice::ServeFileRequests()
             size_t sendSize = std::min(frameChunkSize, total - off);
             zmqWorker_->SendFileChunk(request.request_id, filename,
                 entry->data.data() + off, sendSize, total, off);
+            servedBytes_.fetch_add(sendSize, std::memory_order_relaxed);
+            servedChunks_.fetch_add(1, std::memory_order_relaxed);
             off += sendSize;
           }
           zmqWorker_->SendFileComplete(request.request_id, filename, total);
+          servedFiles_.fetch_add(1, std::memory_order_relaxed);
           ++filesSent;
         }
         // Terminal marker: the broker keeps the client mapping alive until this
@@ -1624,6 +1647,26 @@ void UsdDevice::ServeFileRequests()
             static_cast<uint64_t>(filesSent));
       }
       continue;
+    }
+
+    // Benchmark telemetry: expose this worker's live benchmark summary as a
+    // synthetic file so the JuSync client can record per-worker + combined
+    // cluster numbers for each run over the existing chunked file path (no
+    // protocol change). Serving counters are snapshotted first; serving this
+    // control file is deliberately not counted in serving stats.
+    if (request.message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE) &&
+        strcmp(request.filename, "__benchmark_rank__.json") == 0)
+    {
+        usd_bridge_benchmark::UsdBridgeBenchmark::Instance().AddServingStats(
+            servedBytes_.load(std::memory_order_relaxed),
+            servedChunks_.load(std::memory_order_relaxed),
+            servedFiles_.load(std::memory_order_relaxed));
+        const std::string jsonStr =
+            usd_bridge_benchmark::UsdBridgeBenchmark::Instance().SummaryJson();
+        zmqWorker_->SendFileChunk(request.request_id, request.filename,
+            jsonStr.data(), jsonStr.size(), jsonStr.size(), 0);
+        zmqWorker_->SendFileComplete(request.request_id, request.filename, jsonStr.size());
+        continue;
     }
 
     if (!g_rankMemoryStore) {
@@ -1651,11 +1694,14 @@ void UsdDevice::ServeFileRequests()
       size_t sendSize = std::min(chunkSize, totalSize - offset);
       zmqWorker_->SendFileChunk(request.request_id, request.filename,
           fileEntry->data.data() + offset, sendSize, totalSize, offset);
+      servedBytes_.fetch_add(sendSize, std::memory_order_relaxed);
+      servedChunks_.fetch_add(1, std::memory_order_relaxed);
       offset += sendSize;
     }
 
     if (offset == totalSize) {
       zmqWorker_->SendFileComplete(request.request_id, request.filename, totalSize);
+      servedFiles_.fetch_add(1, std::memory_order_relaxed);
     }
   }
 }

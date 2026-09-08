@@ -3,6 +3,7 @@
 #include "UsdBridge/UsdBridgeMemoryStore.h"
 #include "UsdBridge/xxhash/xxhash.h"
 #include "UsdBridge/DiffCaptureStatus.h"
+#include "UsdBridge/UsdBridgeBenchmark.h"
 
 #include <zmq.hpp>
 #include <iostream>
@@ -475,6 +476,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 #endif
 
         initialized_ = true;
+        start_time_ = std::chrono::steady_clock::now();
         std::cout << "[Rank 0 MPI Broker] Broker ready on WORKER_ROUTER:" << worker_port_
                   << " and CLIENT_ROUTER:" << client_port_ << std::endl;
 
@@ -921,7 +923,66 @@ void ZmqBroker::MessageLoopThread() {
                                      }
                                      else if (fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FILE))
                                      {
-                                         // Get specific file from rank 0.
+                                         // Benchmark telemetry (live, over the wire so each JuSync run can record the
+                                         // cluster side without waiting for report files). Served inline from the rank-0
+                                         // process; serving these control files is not counted in any serving stats.
+                                         auto SendInlineBenchmarkFile = [&](const std::string& fileBody)
+                                         {
+                                             ZmqFileChunk response;
+                                             memset(&response, 0, sizeof(response));
+                                             response.magic = USD_FILE_MAGIC;
+                                             response.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_CHUNK);
+                                             response.request_id = fileReq->request_id;
+                                             response.source_rank = 0;
+                                             strncpy(response.filename, fileReq->filename, sizeof(response.filename) - 1);
+                                             response.file_size = fileBody.size();
+                                             response.chunk_offset = 0;
+                                             response.chunk_size = fileBody.size();
+                                             size_t totalSize = sizeof(response) + fileBody.size();
+                                             std::vector<uint8_t> msgData(totalSize);
+                                             memcpy(msgData.data(), &response, sizeof(response));
+                                             memcpy(msgData.data() + sizeof(response), fileBody.data(), fileBody.size());
+                                             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+                                             ZmqFileComplete complete;
+                                             memset(&complete, 0, sizeof(complete));
+                                             complete.magic = USD_FILE_MAGIC;
+                                             complete.message_type = static_cast<uint32_t>(ZmqMessageType::RESP_FILE_COMPLETE);
+                                             complete.request_id = fileReq->request_id;
+                                             complete.source_rank = 0;
+                                             strncpy(complete.filename, fileReq->filename, sizeof(complete.filename) - 1);
+                                             complete.total_size = fileBody.size();
+                                             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
+                                             client_router_->send(zmq::message_t(&complete, sizeof(complete)), zmq::send_flags::none);
+                                             client_map_.erase(fileReq->request_id);
+                                         };
+                                         if (strcmp(fileReq->filename, "__benchmark_rank__.json") == 0)
+                                         {
+                                             const std::string jsonStr =
+                                                 usd_bridge_benchmark::UsdBridgeBenchmark::Instance().SummaryJson();
+                                             SendInlineBenchmarkFile(jsonStr);
+                                             continue;
+                                         }
+                                         if (strcmp(fileReq->filename, "__benchmark_broker__.json") == 0)
+                                         {
+                                             std::ostringstream j;
+                                             const double durationS = std::chrono::duration<double>(
+                                                 std::chrono::steady_clock::now() - start_time_).count();
+                                             j << "{\n"
+                                               << "  \"role\": \"broker_rank0\",\n"
+                                               << "  \"workers\": " << workers_.size() << ",\n"
+                                               << "  \"duration_s\": " << durationS << ",\n"
+                                               << "  \"relayed_to_clients\": {\n"
+                                               << "    \"bytes\": " << clientBytes_.load(std::memory_order_relaxed) << ",\n"
+                                               << "    \"messages\": " << clientMessages_.load(std::memory_order_relaxed) << "\n"
+                                               << "  }\n"
+                                               << "}\n";
+                                             SendInlineBenchmarkFile(j.str());
+                                             continue;
+                                         }
+// Get specific file from rank 0.
                                          // Queue it for interleaved streaming (TickPendingTransfers)
                                          // instead of blocking the loop thread for the whole file —
                                          // this lets worker traffic and other clients make progress
@@ -1699,6 +1760,8 @@ bool ZmqBroker::SendToClient(const std::string& clientId, const void* data, size
         client_router_->send(identity, zmq::send_flags::sndmore);
         client_router_->send(empty, zmq::send_flags::sndmore);
         client_router_->send(payload, zmq::send_flags::none);
+        clientBytes_.fetch_add(size, std::memory_order_relaxed);
+        clientMessages_.fetch_add(1, std::memory_order_relaxed);
         return true;
     } catch (const zmq::error_t& e) {
         std::cerr << "[Rank 0 MPI Broker] Send to client error: " << e.what() << std::endl;
@@ -1765,6 +1828,35 @@ bool ZmqBroker::ReplyToClient(const std::string& reply) {
 void ZmqBroker::Shutdown() {
     if (initialized_) {
         std::cout << "[Rank 0 MPI Broker] Shutting down..." << std::endl;
+
+        // Benchmark: dump the broker relay report (no-op without ANARI_USD_BENCHMARK_OUT)
+        {
+            const char* benchDir = getenv("ANARI_USD_BENCHMARK_OUT");
+            if (benchDir && benchDir[0]) {
+                const uint64_t bytes = clientBytes_.load(std::memory_order_relaxed);
+                const uint64_t msgs = clientMessages_.load(std::memory_order_relaxed);
+                const double durationS = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - start_time_).count();
+                const int workers = static_cast<int>(workers_.size());
+                const std::string path = std::string(benchDir) + "/benchmark_broker.json";
+                std::ofstream out(path);
+                if (out) {
+                    out << "{\n"
+                        << "  \"role\": \"broker_rank0\",\n"
+                        << "  \"workers\": " << workers << ",\n"
+                        << "  \"duration_s\": " << durationS << ",\n"
+                        << "  \"relayed_to_clients\": {\n"
+                        << "    \"bytes\": " << bytes << ",\n"
+                        << "    \"messages\": " << msgs << "\n"
+                        << "  }\n"
+                        << "}\n";
+                    std::cout << "[Benchmark] Broker: wrote " << path << " ("
+                              << (bytes / 1048576.0) << " MB relayed to clients)" << std::endl;
+                } else {
+                    std::cerr << "[Benchmark] Broker: FAILED to write " << path << std::endl;
+                }
+            }
+        }
 
         // Stop SSH reminder thread
         ssh_reminder_active_ = false;

@@ -8,6 +8,7 @@
 #include "UsdBridgeRenderContext.h"
 #include "UsdRenderManager.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
+#include "UsdBridgeBenchmark.h"
 #include "Common/UsdBridgeParallelController.h"	
 #include "Common/UsdBridgeUtils.h"
 
@@ -872,7 +873,9 @@ void UsdBridge::SetSamplerRefs(UsdMaterialHandle material, const UsdSamplerHandl
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    materialStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ materialStage->Save(); }, "material_bind",
+      std::string(materialStage->GetRootLayer()->GetIdentifier()));
 #endif
 }
 
@@ -1014,7 +1017,9 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    geomStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ geomStage->Save(); }, "geom",
+      std::string(geomStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1064,7 +1069,9 @@ void UsdBridge::SetSpatialFieldData(UsdSpatialFieldHandle field, const UsdBridge
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    volumeStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ volumeStage->Save(); }, "volume",
+      std::string(volumeStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1095,7 +1102,9 @@ void UsdBridge::SetMaterialData(UsdMaterialHandle material, const UsdBridgeMater
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    materialStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ materialStage->Save(); }, "material",
+      std::string(materialStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1124,7 +1133,9 @@ void UsdBridge::SetSamplerData(UsdSamplerHandle sampler, const UsdBridgeSamplerD
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    samplerStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ samplerStage->Save(); }, "sampler",
+      std::string(samplerStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1157,7 +1168,9 @@ void UsdBridge::SetLightDataTemplate(UsdLightHandle light, const LightDataType& 
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    lightStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ lightStage->Save(); }, "light",
+      std::string(lightStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1204,7 +1217,9 @@ void UsdBridge::SetCameraData(UsdCameraHandle camera, const UsdBridgeCameraData&
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    cameraStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ cameraStage->Save(); }, "camera",
+      std::string(cameraStage->GetRootLayer()->GetIdentifier()));
   else
   {
     auto it = cache->ClipStages.find(timeStep);
@@ -1261,7 +1276,9 @@ void UsdBridge::ChangeInAttribute(UsdSamplerHandle sampler, const char* newName,
 
 #ifdef VALUE_CLIP_RETIMING
   if(this->EnableSaving)
-    samplerStage->Save();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ samplerStage->Save(); }, "sampler_attr",
+      std::string(samplerStage->GetRootLayer()->GetIdentifier()));
 #endif
 }
 
@@ -1271,7 +1288,10 @@ void UsdBridge::SaveScene()
 
   if(this->EnableSaving)
   {
-    BRIDGE_USDWRITER.GetSceneStage()->Save();
+    auto sceneStage = BRIDGE_USDWRITER.GetSceneStage();
+    usd_bridge_benchmark::TimedDiskSave(
+      [&]{ sceneStage->Save(); }, "scene",
+      std::string(sceneStage->GetRootLayer()->GetIdentifier()));
   }
   else
   {

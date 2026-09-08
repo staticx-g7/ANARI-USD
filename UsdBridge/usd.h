@@ -11,7 +11,6 @@
 #define NOMINMAX // Make sure nobody #defines min or max
 // Python must be included first because it monkeys with macros that cause
 // TBB to fail to compile in debug mode if TBB is included before Python
-#include <boost/python/object.hpp>
 #include <pxr/pxr.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/base/tf/diagnosticMgr.h>
