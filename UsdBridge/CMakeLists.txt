@@ -220,6 +220,7 @@ target_include_directories(UsdBridge
     ${CMAKE_CURRENT_LIST_DIR}/Mdl
     ${CMAKE_CURRENT_LIST_DIR}/xxhash
     ${Boost_SEP_INCLUDE_DIR}
+    ${USD_ROOT_DIR_CURRENT}/include
   )
 
 # Defs
