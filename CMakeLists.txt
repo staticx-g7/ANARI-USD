@@ -73,6 +73,16 @@ find_package(anari 0.10 REQUIRED
   PATHS ${ANARI_ROOT_DIR}
 )
 
+# Imported-target include propagation for anari::anari is unreliable across
+# ANARI-SDK builds (e.g. EasyBuild modules), so pin the ANARI header location
+# directly for the device sources.
+find_path(ANARI_INCLUDE_DIR NAMES anari/backend/DeviceImpl.h
+  HINTS ${ANARI_ROOT_DIR} ${ANARI_ROOT_DIR}/include)
+message(STATUS "UsdDevice: ANARI_INCLUDE_DIR=${ANARI_INCLUDE_DIR}")
+if(NOT ANARI_INCLUDE_DIR)
+  message(WARNING "UsdDevice: ANARI headers (anari/backend/DeviceImpl.h) not found under ANARI_ROOT_DIR=${ANARI_ROOT_DIR}; check the ANARI-SDK install layout / ANARI_ROOT_DIR")
+endif()
+
 ## Code generation
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.12")
@@ -188,6 +198,7 @@ target_compile_definitions(anari_library_usd
 target_include_directories(anari_library_usd PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/UsdBridge
     ${CMAKE_CURRENT_LIST_DIR}/UsdBridge/xxhash
+    ${ANARI_INCLUDE_DIR}
 )
 target_sources(anari_library_usd PRIVATE UsdBridge/xxhash/xxhash.c)
 

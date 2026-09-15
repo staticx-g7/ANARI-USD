@@ -133,6 +133,16 @@ endif()
 flatten_and_cleanup_targets(USD_TARGETS "${USD_INIT_TARGETS}")
 message(STATUS "USD_TARGETS: ${USD_TARGETS}")
 
+# Imported-target include propagation via flatten_and_cleanup_targets is
+# unreliable across USD builds (e.g. EasyBuild/OpenUSD modules), so pin the
+# pxr header location directly.
+find_path(PXR_INCLUDE_DIR NAMES pxr/pxr.h
+  HINTS ${USD_ROOT_DIR_CURRENT} ${USD_ROOT_DIR_CURRENT}/include)
+message(STATUS "UsdBridge: PXR_INCLUDE_DIR=${PXR_INCLUDE_DIR}")
+if(NOT PXR_INCLUDE_DIR)
+  message(WARNING "UsdBridge: pxr/pxr.h not found under USD_ROOT_DIR_CURRENT=${USD_ROOT_DIR_CURRENT}; check the USD install layout / USD_ROOT_DIR")
+endif()
+
 # Find out whether USD was compiled with or without the CXX11 ABI
 if(NOT WIN32)
   set(CXX11_COMPILE_OFF OFF)
@@ -220,7 +230,7 @@ target_include_directories(UsdBridge
     ${CMAKE_CURRENT_LIST_DIR}/Mdl
     ${CMAKE_CURRENT_LIST_DIR}/xxhash
     ${Boost_SEP_INCLUDE_DIR}
-    ${USD_ROOT_DIR_CURRENT}/include
+    ${PXR_INCLUDE_DIR}
   )
 
 # Defs
