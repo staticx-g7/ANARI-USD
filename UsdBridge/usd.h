@@ -10,8 +10,15 @@
 #pragma warning(disable:4996) // call to std::copy with parameters that may be unsafe
 #define NOMINMAX // Make sure nobody #defines min or max
 // Python must be included first because it monkeys with macros that cause
-// TBB to fail to compile in debug mode if TBB is included before Python
-#include <boost/python/object.hpp>
+// TBB to fail to compile in debug mode if TBB is included before Python.
+// Only relevant when this USD build actually has Python support; pick the
+// available Python header (pySafePython.h exists only in python-enabled USD
+// builds). Skipped entirely for python-free builds.
+#if defined(PXR_SUPPORT_PYTHON)
+#include <pxr/base/tf/pySafePython.h>
+#elif __has_include(<Python.h>)
+#include <Python.h>
+#endif
 #include <pxr/pxr.h>
 #include <pxr/base/tf/token.h>
 #include <pxr/base/tf/diagnosticMgr.h>
