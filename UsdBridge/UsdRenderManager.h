@@ -31,6 +31,8 @@ public:
     void RegisterFrame(const char* frameName);
     void UnregisterFrame(const char* frameName);
     void UnregisterFrameByState(void* frameState); // For unregistering when name changed
+    // Intentional USD deletion (usd::removePrim): remove RenderContext + entry stage.
+    void DeleteFrame(const char* frameName);
 
     // Configure a frame's rendering setup
     void SetFrameRenderer(const char* frameName, const char* hydraRendererName);
@@ -57,6 +59,9 @@ private:
     // Internal frame state access
     struct FrameState;
     FrameState* GetFrameStateInternal(const char* frameName);
+
+    // Emit Frame_<name>.usda once world + camera are both known.
+    void CreateFrameEntryStage(const char* frameName, FrameState* state);
 
     struct FrameState
     {

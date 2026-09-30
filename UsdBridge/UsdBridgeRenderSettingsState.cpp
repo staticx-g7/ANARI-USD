@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeRenderSettingsState.h"
+#include "UsdBridgeTimeEvaluator.h"
+#include "UsdBridgeUsdWriter_Common.h"
 
 #include <pxr/base/vt/value.h>
 
@@ -9,27 +11,19 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
-namespace
-{
-    template<typename T>
-    T GetOrDefinePrim(const UsdStageRefPtr& stage, const SdfPath& path)
-    {
-        T prim = T::Get(stage, path);
-        if (!prim)
-        {
-            prim = T::Define(stage, path);
-        }
-        assert(prim);
-        return prim;
-    }
-}
-
 void UsdBridgeRenderSettingsState::InitializePaths(const SdfPath& contextId)
 {
-    std::string contextName = contextId.GetName();
-    SettingsPath = "/Render/" + contextName + "/Settings";
-    ProductPath = "/Render/" + contextName + "/Product";
-    VarPath = "/Render/" + contextName + "/Vars/LdrColor";
+    ContextPath = SdfPath::AbsoluteRootPath().AppendChild(UsdBridgeRenderTokens->Render)
+      .AppendChild(contextId.GetNameToken());
+    SettingsPath = ContextPath.AppendChild(UsdBridgeRenderTokens->Settings);
+    ProductPath = ContextPath.AppendChild(UsdBridgeRenderTokens->Product);
+    VarPath = ContextPath.AppendChild(UsdBridgeRenderTokens->Vars)
+      .AppendChild(UsdBridgeRenderTokens->LdrColor);
+}
+
+const SdfPath& UsdBridgeRenderSettingsState::GetContextPath() const
+{
+    return ContextPath;
 }
 
 void UsdBridgeRenderSettingsState::CreatePrims(UsdStageRefPtr stage)
@@ -39,19 +33,31 @@ void UsdBridgeRenderSettingsState::CreatePrims(UsdStageRefPtr stage)
         return;
     }
 
-    Settings = GetOrDefinePrim<UsdRenderSettings>(stage, SdfPath(SettingsPath));
+    Settings = GetOrDefinePrim<UsdRenderSettings>(stage, SettingsPath);
     Settings.CreateResolutionAttr();
     Settings.CreateCameraRel();
 
-    Product = GetOrDefinePrim<UsdRenderProduct>(stage, SdfPath(ProductPath));
+    Product = GetOrDefinePrim<UsdRenderProduct>(stage, ProductPath);
     Product.CreateResolutionAttr();
     Product.CreateCameraRel();
     Product.CreateOrderedVarsRel();
 
-    SdfPath renderVarSdf(VarPath);
-    UsdRenderVar renderVarPrim = GetOrDefinePrim<UsdRenderVar>(stage, renderVarSdf);
-    renderVarPrim.CreateSourceNameAttr(VtValue(std::string("LdrColor")));
-    Product.GetOrderedVarsRel().AddTarget(renderVarSdf);
+    UsdRenderVar renderVarPrim = GetOrDefinePrim<UsdRenderVar>(stage, VarPath);
+    renderVarPrim.CreateSourceNameAttr(
+      VtValue(UsdBridgeRenderTokens->LdrColor.GetString()));
+    Product.GetOrderedVarsRel().AddTarget(VarPath);
+}
+
+void UsdBridgeRenderSettingsState::RemovePrims(UsdStageRefPtr stage)
+{
+    if (!stage || ContextPath.IsEmpty())
+    {
+        return;
+    }
+
+    Settings = UsdRenderSettings();
+    Product = UsdRenderProduct();
+    stage->RemovePrim(ContextPath);
 }
 
 bool UsdBridgeRenderSettingsState::SetResolution(uint32_t width, uint32_t height)

@@ -11,6 +11,10 @@
 #include "Common/UsdBridgeParallelController.h"
 
 #include <cstring>
+
+#include <pxr/usd/usdRender/product.h>
+#include <pxr/usd/usdRender/settings.h>
+
 #include <filesystem>
 #include <set>
 #include <typeinfo>
@@ -31,6 +35,12 @@ TF_DEFINE_PUBLIC_TOKENS(
   VOLUME_TOKEN_SEQ
   INDEX_TOKEN_SEQ
   MISC_TOKEN_SEQ
+);
+
+TF_DEFINE_PUBLIC_TOKENS(
+  UsdBridgeRenderTokens,
+
+  RENDER_TOKEN_SEQ
 );
 
 #undef PROCESS_PREFIX
@@ -439,6 +449,84 @@ void UsdBridgeUsdWriter::CreateParallelEncapsulatingFile()
   UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
     "Created parallel encapsulating USD file at " << absEncFilePath
     << " referencing " << Settings.MpiSize << " ranks");
+}
+
+void UsdBridgeUsdWriter::CreateFrameEntryStage(
+  const char* frameName,
+  const SdfPath& worldPath,
+  const SdfPath& cameraPath,
+  const SdfPath& contextPath)
+{
+  if(!this->EnableSaving || !frameName || worldPath.IsEmpty() || cameraPath.IsEmpty() || contextPath.IsEmpty())
+    return;
+
+  if(!this->Connect || this->SessionDirectory.empty())
+    return;
+
+  bool binary = this->Settings.BinaryOutput;
+  const char* sceneFileName = binary ? constring::fullSceneNameBin : constring::fullSceneNameAscii;
+  const char* entryExt = binary ? ".usd" : ".usda";
+
+  std::string entryRelPath = this->SessionDirectory + std::string(frameName) + entryExt;
+  this->Connect->RemoveFile(entryRelPath.c_str(), true);
+
+  const char* absEntryPath = this->Connect->GetUrl(entryRelPath.c_str());
+  UsdStageRefPtr entryStage = UsdStage::CreateNew(absEntryPath);
+  if(!entryStage)
+  {
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR,
+      "Failed to create frame entry USD file at " << absEntryPath);
+    return;
+  }
+
+  // Entry stage sits next to FullScene in the session directory.
+  std::string fullSceneRef = std::string("./") + sceneFileName;
+
+  UsdPrim worldPrim = entryStage->DefinePrim(worldPath);
+  worldPrim.GetReferences().AddReference(fullSceneRef, worldPath);
+
+  UsdPrim cameraPrim = entryStage->DefinePrim(cameraPath);
+  cameraPrim.GetReferences().AddReference(fullSceneRef, cameraPath);
+
+  UsdPrim contextPrim = entryStage->DefinePrim(contextPath);
+  contextPrim.GetReferences().AddReference(fullSceneRef, contextPath);
+
+  // Camera rels on Settings/Product target /Root/cameras/... which is outside
+  // the RenderContext subtree, so USD drops them when the context is referenced
+  // across a file boundary. Re-state them as local overs on the entry stage.
+  SdfPath settingsPath = contextPath.AppendChild(UsdBridgeRenderTokens->Settings);
+  SdfPath productPath = contextPath.AppendChild(UsdBridgeRenderTokens->Product);
+
+  UsdRenderSettings settings = UsdRenderSettings(entryStage->OverridePrim(settingsPath));
+  UsdRelationship settingsCamRel = settings.CreateCameraRel();
+  settingsCamRel.SetTargets({cameraPath});
+
+  UsdRenderProduct product = UsdRenderProduct(entryStage->OverridePrim(productPath));
+  UsdRelationship productCamRel = product.CreateCameraRel();
+  productCamRel.SetTargets({cameraPath});
+
+  UsdPrim rootPrim = entryStage->GetPrimAtPath(
+    SdfPath::AbsoluteRootPath().AppendChild(UsdBridgeTokens->Root));
+  if(rootPrim)
+    entryStage->SetDefaultPrim(rootPrim);
+
+  entryStage->Save();
+
+  UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+    "Created frame entry USD file at " << absEntryPath
+    << " (world=" << worldPath << ", camera=" << cameraPath
+    << ", context=" << contextPath << ")");
+}
+
+void UsdBridgeUsdWriter::RemoveFrameEntryStage(const char* frameName)
+{
+  if(!this->EnableSaving || !frameName || !this->Connect || this->SessionDirectory.empty())
+    return;
+
+  bool binary = this->Settings.BinaryOutput;
+  const char* entryExt = binary ? ".usd" : ".usda";
+  std::string entryRelPath = this->SessionDirectory + std::string(frameName) + entryExt;
+  this->Connect->RemoveFile(entryRelPath.c_str(), true);
 }
 
 bool UsdBridgeUsdWriter::OpenSceneStage()

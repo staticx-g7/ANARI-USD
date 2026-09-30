@@ -1024,6 +1024,12 @@
                     "default" : true,
                     "description" : "Time varying volume bit"
                 }, {
+                    "name" : "usd::timeVarying.light",
+                    "types" : ["ANARI_BOOL"],
+                    "tags" : [],
+                    "default" : true,
+                    "description" : "Time varying light bit"
+                }, {
                     "name" : "usd::removePrim",
                     "types" : ["ANARI_BOOL"],
                     "tags" : [],
@@ -1079,6 +1085,12 @@
                     "tags" : [],
                     "default" : true,
                     "description" : "Time varying volume bit"
+                }, {
+                    "name" : "usd::timeVarying.light",
+                    "types" : ["ANARI_BOOL"],
+                    "tags" : [],
+                    "default" : true,
+                    "description" : "Time varying light bit"
                 }, {
                     "name" : "usd::removePrim",
                     "types" : ["ANARI_BOOL"],
@@ -1167,6 +1179,12 @@
                     "tags" : [],
                     "default" : 0.0,
                     "description" : "Timestep used for rendering a frame"
+                }, {
+                    "name" : "usd::removePrim",
+                    "types" : ["ANARI_BOOL"],
+                    "tags" : [],
+                    "default" : false,
+                    "description" : "Explicitly delete frame RenderContext and entry stage from USD output after commit"
                 }
             ]
         }

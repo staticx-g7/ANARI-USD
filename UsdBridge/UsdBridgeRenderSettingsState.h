@@ -10,8 +10,6 @@
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdRender/var.h>
 
-#include <string>
-
 //
 // Owns UsdRenderSettings / UsdRenderProduct / RenderVar prims for one frame.
 // Managed by UsdRenderManager; render contexts do not interact with this class.
@@ -21,13 +19,16 @@ class UsdBridgeRenderSettingsState
 public:
     void InitializePaths(const pxr::SdfPath& contextId);
     void CreatePrims(pxr::UsdStageRefPtr stage);
+    void RemovePrims(pxr::UsdStageRefPtr stage);
     bool SetResolution(uint32_t width, uint32_t height);
     bool SetCameraPath(const pxr::SdfPath& cameraPath);
+    const pxr::SdfPath& GetContextPath() const;
 
 private:
-    std::string SettingsPath;
-    std::string ProductPath;
-    std::string VarPath;
+    pxr::SdfPath ContextPath;
+    pxr::SdfPath SettingsPath;
+    pxr::SdfPath ProductPath;
+    pxr::SdfPath VarPath;
 
     pxr::UsdRenderSettings Settings;
     pxr::UsdRenderProduct Product;

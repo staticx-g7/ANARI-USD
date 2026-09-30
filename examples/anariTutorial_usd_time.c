@@ -19,6 +19,19 @@ int main(int argc, const char **argv)
 {
   parseArgs(argc, argv);
 
+  // Phase control: the scene is built in two passes. Pass 1 creates all
+  // timesteps; pass 2 revisits the first half of the timeline and changes the
+  // scene (removes instance_0, swaps geometry/material times). "--phases 1"
+  // stops after the create pass so the intermediate result can be captured;
+  // "--phases 2" (default) runs the full sequence.
+  int numPhases = 2;
+  for (int argi = 1; argi < argc; ++argi)
+  {
+    if (strcmp(argv[argi], "--phases") == 0 && argi + 1 < argc)
+      numPhases = atoi(argv[argi + 1]);
+  }
+  printf("time phases: %d\n", numPhases);
+
   stbi_flip_vertically_on_write(1);
 
   // image size
@@ -325,10 +338,10 @@ int main(int argc, const char **argv)
     anariRelease(dev, group);
 
     // create and setup light for Ambient Occlusion
-    ANARILight light = anariNewLight(dev, "ambient");
+    ANARILight light = anariNewLight(dev, "hdri");
     anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
-    float lightIntensity = 1000.0f;
-    anariSetParameter(dev, light, "intensity", ANARI_FLOAT32, &lightIntensity);
+    float lightRadiance = 1.0f;
+    anariSetParameter(dev, light, "radiance", ANARI_FLOAT32, &lightRadiance);
     anariCommitParameters(dev, light);
     array = anariNewArray1D(dev, &light, 0, 0, ANARI_LIGHT, 1);
     anariCommitParameters(dev, array);
@@ -522,7 +535,10 @@ int main(int argc, const char **argv)
 
 
   // CHANGE THE SCENE: Attach only the instance_1 to the world, so instance_0 gets removed.
+  // Only performed when a second phase is requested (see --phases).
 
+  if (numPhases >= 2)
+  {
   for (int timeIdx = 0; timeIdx < numTimeSteps/2; ++timeIdx)
   {
     anariSetParameter(dev, dev, "usd::time", ANARI_FLOAT64, timeValues + timeIdx);
@@ -630,10 +646,10 @@ int main(int argc, const char **argv)
     anariRelease(dev, array);
 
     // Add the light as well
-    light = anariNewLight(dev, "ambient");
+    light = anariNewLight(dev, "hdri");
     anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
-    float lightIntensity = 1000.0f;
-    anariSetParameter(dev, light, "intensity", ANARI_FLOAT32, &lightIntensity);
+    float lightRadiance = 1.0f;
+    anariSetParameter(dev, light, "radiance", ANARI_FLOAT32, &lightRadiance);
     anariCommitParameters(dev, light);
     array = anariNewArray1D(dev, &light, 0, 0, ANARI_LIGHT, 1);
     anariCommitParameters(dev, array);
@@ -689,11 +705,13 @@ int main(int argc, const char **argv)
 
     // ~
   }
+  } // end of phase 2 (numPhases >= 2)
 
   anariRelease(dev, camera);
   anariRelease(dev, texArray);
 
   anariRelease(dev, dev);
+  anariUnloadLibrary(lib);
 
   freeTexture(textureData);
 

@@ -49,6 +49,16 @@ public:
 
   void CreateParallelEncapsulatingFile();
 
+  // Write a frame-centric entry stage next to FullScene that references only
+  // the given world, camera, and /Render/RenderContext_<frameName> prims.
+  // Selecting that file mirrors ANARI's frame->world+camera binding.
+  void CreateFrameEntryStage(
+    const char* frameName,
+    const SdfPath& worldPath,
+    const SdfPath& cameraPath,
+    const SdfPath& contextPath);
+  void RemoveFrameEntryStage(const char* frameName);
+
   bool OpenSceneStage();
   UsdStageRefPtr GetSceneStage() const;
   UsdStageRefPtr GetTimeVarStage(UsdBridgePrimCache* cache

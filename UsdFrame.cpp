@@ -46,9 +46,14 @@ UsdFrame::~UsdFrame()
 
 void UsdFrame::remove(UsdDevice* device)
 {
+  // Called only via usd::removePrim (intentional USD deletion).
+  // Normal anariRelease uses the destructor, which UnregisterFrame in memory only.
   if (registeredFrameState)
   {
-    frameBridge->UnregisterFrame(getName());
+    if (!frameBridge)
+      frameBridge = device->getUsdBridge();
+    if (frameBridge)
+      frameBridge->DeleteFrame(getName());
     registeredFrameState = nullptr;
   }
 }
@@ -176,10 +181,6 @@ void UsdFrame::renderFrame(UsdDevice* device)
 {
   const UsdFrameData& paramData = getReadParams();
 
-  // Ensure camera has a valid handle before rendering
-  if(UsdObjectNotInitialized<CameraUsdType>(paramData.camera))
-    return;
-
   if (!frameBridge)
     frameBridge = device->getUsdBridge();
   if (!frameBridge || !registeredFrameState)
@@ -187,33 +188,31 @@ void UsdFrame::renderFrame(UsdDevice* device)
 
   const char* frameName = getName();
 
-  // Only render when a hydra-subtype renderer is assigned
-  if(!paramData.renderer)
-    return;
-  if(!paramData.renderer->isHydraRenderer())
-    return;
-
-  const char* hydraRendererName = paramData.renderer->getHydraRendererName();
-  frameBridge->SetFrameRenderer(frameName, hydraRendererName);
-
-  // Set world path if world is provided and has a valid handle
-  if(!UsdObjectNotInitialized<WorldUsdType>(paramData.world))
+  // Always author world/camera onto the RenderContext when present.
+  if (paramData.world && !UsdObjectNotInitialized<WorldUsdType>(paramData.world))
   {
     UsdWorldHandle worldHandle = paramData.world->getUsdHandle();
     frameBridge->SetFrameWorld(frameName, worldHandle);
   }
 
-  // Set camera
-  UsdCameraHandle cameraHandle = paramData.camera->getUsdHandle();
-  frameBridge->SetFrameCamera(frameName, cameraHandle);
+  if (paramData.camera && !UsdObjectNotInitialized<CameraUsdType>(paramData.camera))
+  {
+    UsdCameraHandle cameraHandle = paramData.camera->getUsdHandle();
+    frameBridge->SetFrameCamera(frameName, cameraHandle);
+  }
 
   // Cache the renderbuffer properties belonging to this frame
   renderBufferSize = paramData.size;
   renderBufferColorFormat = paramData.color;
   renderBufferDepthFormat = paramData.depth;
 
-  // Render (to a renderbuffer)
-  frameBridge->RenderFrame(frameName, paramData.time);
+  // Only the draw path needs hydra.
+  if (paramData.renderer && paramData.renderer->isHydraRenderer())
+  {
+    const char* hydraRendererName = paramData.renderer->getHydraRendererName();
+    frameBridge->SetFrameRenderer(frameName, hydraRendererName);
+    frameBridge->RenderFrame(frameName, paramData.time);
+  }
 }
 
 bool UsdFrame::frameReady(ANARIWaitMask mask, UsdDevice* device)

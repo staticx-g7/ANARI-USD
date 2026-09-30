@@ -60,6 +60,7 @@ class UsdBridge
     void SetVolumeRefs(UsdWorldHandle world, const UsdVolumeHandle* volumes, uint64_t numVolumes, bool timeVarying, double timeStep, const int* instanceableValues);
     void SetVolumeRefs(UsdGroupHandle group, const UsdVolumeHandle* volumes, uint64_t numVolumes, bool timeVarying, double timeStep, const int* instanceableValues);
     void SetLightRefs(UsdWorldHandle world, const UsdLightHandle* lights, uint64_t numLights, bool timeVarying, double timeStep, const int* instanceableValues);
+    void SetLightRefs(UsdGroupHandle group, const UsdLightHandle* lights, uint64_t numLights, bool timeVarying, double timeStep, const int* instanceableValues);
     void SetGeometryRef(UsdSurfaceHandle surface, UsdGeometryHandle geometry, double timeStep, double geomTimeStep);
     void SetGeometryMaterialRef(UsdSurfaceHandle surface, UsdGeometryHandle geometry, UsdMaterialHandle material, double timeStep, double geomTimeStep, double matTimeStep, std::function<void()> updateBoundParamsFunc = nullptr);
     void SetSpatialFieldRef(UsdVolumeHandle volume, UsdSpatialFieldHandle field, double timeStep, double fieldTimeStep);
@@ -73,6 +74,7 @@ class UsdBridge
     void DeleteVolumeRefs(UsdWorldHandle world, bool timeVarying, double timeStep);
     void DeleteVolumeRefs(UsdGroupHandle group, bool timeVarying, double timeStep);
     void DeleteLightRefs(UsdWorldHandle world, bool timeVarying, double timeStep);
+    void DeleteLightRefs(UsdGroupHandle group, bool timeVarying, double timeStep);
     void DeleteGeometryRef(UsdSurfaceHandle surface, double timeStep);
     void DeleteSpatialFieldRef(UsdVolumeHandle volume, double timeStep);
     void DeleteMaterialRef(UsdSurfaceHandle surface, double timeStep);
@@ -102,6 +104,7 @@ class UsdBridge
     void RegisterFrame(const char* frameName);
     void UnregisterFrame(const char* frameName);
     void UnregisterFrameByState(void* frameState); // Unregister by state pointer (for name changes)
+    void DeleteFrame(const char* frameName); // usd::removePrim: delete RenderContext + entry stage
     void* GetFrameState(const char* frameName); // Returns opaque pointer for identity comparison
     void SetFrameRenderer(const char* frameName, const char* hydraRendererName);
     void SetFrameWorld(const char* frameName, UsdWorldHandle world);

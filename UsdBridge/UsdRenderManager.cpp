@@ -44,6 +44,8 @@ void UsdRenderManager::UnregisterFrame(const char* frameName)
     if (!frameName)
         return;
 
+    // Memory-only: leave RenderContext + entry stage as session artifacts
+    // (same lifetime model as primstages on normal anariRelease).
     Frames.erase(std::string(frameName));
 }
 
@@ -56,10 +58,29 @@ void UsdRenderManager::UnregisterFrameByState(void* frameState)
     {
         if (&it->second == frameState)
         {
+            // Frame renamed: the old entry stage filename is obsolete.
+            // Normal release/destructor uses UnregisterFrame and leaves the
+            // session artifact on disk (same lifetime model as primstages).
+            UsdWriter.RemoveFrameEntryStage(it->first.c_str());
             Frames.erase(it);
             return;
         }
     }
+}
+
+void UsdRenderManager::DeleteFrame(const char* frameName)
+{
+    if (!frameName)
+        return;
+
+    auto it = Frames.find(std::string(frameName));
+    if (it == Frames.end())
+        return;
+
+    it->second.UsdRenderState.RemovePrims(UsdWriter.GetSceneStage());
+    UsdWriter.RemoveFrameEntryStage(frameName);
+    Frames.erase(it);
+    UsdWriter.SaveScene();
 }
 
 void* UsdRenderManager::GetFrameState(const char* frameName)
@@ -79,6 +100,21 @@ UsdRenderManager::FrameState* UsdRenderManager::GetFrameStateInternal(const char
     return &it->second;
 }
 
+void UsdRenderManager::CreateFrameEntryStage(const char* frameName, FrameState* state)
+{
+    if (!frameName || !state)
+        return;
+
+    if (state->WorldPath.IsEmpty() || state->CameraPath.IsEmpty())
+        return;
+
+    UsdWriter.CreateFrameEntryStage(
+        frameName,
+        state->WorldPath,
+        state->CameraPath,
+        state->UsdRenderState.GetContextPath());
+}
+
 void UsdRenderManager::SetFrameCamera(const char* frameName, const pxr::SdfPath& cameraPath)
 {
     FrameState* state = GetFrameStateInternal(frameName);
@@ -95,6 +131,8 @@ void UsdRenderManager::SetFrameCamera(const char* frameName, const pxr::SdfPath&
         if (state->Context)
             state->Context->SetCameraPath(cameraPath);
     }
+
+    CreateFrameEntryStage(frameName, state);
 }
 
 void UsdRenderManager::SetFrameWorld(const char* frameName, const pxr::SdfPath& worldPath)
@@ -107,6 +145,8 @@ void UsdRenderManager::SetFrameWorld(const char* frameName, const pxr::SdfPath& 
 
     if (state->Context)
         state->Context->SetWorldPath(worldPath);
+
+    CreateFrameEntryStage(frameName, state);
 }
 
 void UsdRenderManager::SetFrameRenderSize(const char* frameName, uint32_t width, uint32_t height)
