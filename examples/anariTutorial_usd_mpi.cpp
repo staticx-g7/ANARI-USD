@@ -13,6 +13,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
+#include <thread>
+#include <chrono>
 #include <array>
 #include <mpi.h>
 
@@ -195,17 +198,26 @@ int main(int argc, char **argv)
   anari::setParameter(d, frame, "size", imgSize);
   anari::setParameter(d, frame, "channel.color", ANARI_UFIXED8_RGBA_SRGB);
   anari::setAndReleaseParameter(d, frame, "renderer", renderer);
-  anari::setAndReleaseParameter(d, frame, "camera", camera);
+  anari::setParameter(d, frame, "camera", camera); // kept alive for the anim loop below
   anari::setAndReleaseParameter(d, frame, "world", world);
   anari::commitParameters(d, frame);
 
   printf("[rank %d] Rendering...\n", rank);
 
-  // render one frame — this triggers USD output
-  anari::render(d, frame);
-  anari::wait(d, frame);
+  // render a small animated sequence — each frame triggers USD output +
+  // notifications (clips from every rank, commit/scene-update from rank 0)
+  for (int i = 0; i < 12; ++i) {
+    const float a = 0.35f * float(i);
+    vec3 anim_pos = {20.f * cosf(a), 20.f * sinf(a), 8.f};
+    anari::setParameter(d, camera, "position", anim_pos);
+    anari::commitParameters(d, camera);
+    anari::render(d, frame);
+    anari::wait(d, frame);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
 
   printf("[rank %d] Done rendering, cleaning up...\n", rank);
+  anari::release(d, camera);
 
   // cleanup
   anari::release(d, frame);
