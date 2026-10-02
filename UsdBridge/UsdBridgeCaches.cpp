@@ -185,28 +185,32 @@ void UsdBridgePrimCacheManager::RemoveUnreferencedPrimCaches(AtRemoveFunc atRemo
   // Can only be performed at garbage collect.
   // If this is done during RemoveChild, an unreferenced parent cannot subsequently be revived with an AddChild.
   //
-  // Two-strike rule: a cache is only torn down when it was already observed
-  // with zero references by the previous pass as well. Scene updates where a
-  // parent (e.g. the world) is re-committed momentarily orphan their still-live
-  // children; the revival re-sets the strike counter via IncRef before the
-  // next pass, so those children survive.
+  // NOTE: teardown happens in the SAME pass the cache became unreferenced.
+  // Producers (VTK) commit orphaning work during a render and only render once
+  // per interaction event (e.g. hiding an actor); a deferred/strike-based rule
+  // would keep the hidden actor's clip on the wire until an unrelated next
+  // render. The hazards this protects against are covered differently:
+  //  - caches orphaned by scene churn are genuinely replaced (a *new* cache is
+  //    created for the re-synced object), and
+  //  - double cascade deletes via shared children are made idempotent by the
+  //    IsGcDeleted marker, stale ANARI handles are tolerated by
+  //    FindAndDeletePrim, and all store key twins (.usd/.usda) are purged.
   PrimCacheContainer::iterator it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {
-    if (it->second->RefCount == 0 && it->second->TakeGcStrike() >= 2)
+    if (it->second->RefCount == 0)
     {
       it->second->RemoveUnreferencedChildTree(atRemove);
     }
     ++it;
   }
 
-  // Now delete all prims whose teardown already ran (tree removal above marks
-  // the entry and all cascaded children). Entries that are unreferenced but
-  // still on their first strike keep their cache entry until the next pass.
+  // Now delete all prims whose teardown ran (tree removal marks the entry and
+  // all cascaded children via atRemove).
   it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {
-    if (it->second->RefCount == 0 && (it->second->GcStrikes >= 2 || it->second->IsGcDeleted()))
+    if (it->second->RefCount == 0 && it->second->IsGcDeleted())
       it = UsdPrimCaches.erase(it);
     else
       ++it;
