@@ -95,7 +95,7 @@ int main(int argc, const char **argv)
       2.0f,
       0.3f,
       0.05f };
-  int32_t index[] = {0, 1, 2, 1, 2, 3};
+  int32_t indices[] = {0, 1, 2, 1, 2, 3};
 
   float protoVertex[] = {-3.0f,
       -1.0f,
@@ -273,7 +273,7 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, mesh, "vertex.attribute0", ANARI_ARRAY, &array);
     anariRelease(dev, array);
 
-    array = anariNewArray1D(dev, index, 0, 0, ANARI_INT32_VEC3, 2);
+    array = anariNewArray1D(dev, indices, 0, 0, ANARI_INT32_VEC3, 2);
     anariCommitParameters(dev, array);
     anariSetParameter(dev, mesh, "primitive.index", ANARI_ARRAY, &array);
     anariRelease(dev, array);
