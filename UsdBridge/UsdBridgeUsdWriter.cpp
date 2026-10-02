@@ -681,36 +681,63 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
     this->TrackStageMemory(std::string(name) + primPostfix + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
+void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
+{
+  // A single stage/file can exist in the memory store under multiple keys:
+  // the raw ".usd" resource name (clip/primstage save paths) and the
+  // ".usda" streaming key used by TrackStageMemory, plus the ".usda"-suffixed
+  // variant of manifest names ("...(manifest).usda"). All variants must be
+  // dropped when the last reference goes away; any survivor keeps serving a
+  // stale mesh/image to clients (hidden actors that never disappear).
+  if(relativeName.empty())
+    return;
+
+  auto endsWith = [](const std::string& s, const char* suf) {
+    size_t n = strlen(suf);
+    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+  };
+
+  std::vector<std::string> keys;
+  keys.push_back(relativeName);
+  if(endsWith(relativeName, ".usd"))
+    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
+  else if(endsWith(relativeName, ".usda"))
+    keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".usd");
+  else if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
+          !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
+    keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
+
+  for(const std::string& key : keys)
+  {
+    if(g_rankMemoryStore && g_rankMemoryStore->RemoveFile(key))
+    {
+      UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+        "[Purge] removed stale file from memory store: " << key);
+    }
+    for(auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
+    {
+      if(it->filename == key)
+      {
+        MemoryTracking.erase(it);
+        break; // store keys are unique in MemoryTracking (deduped by filename)
+      }
+    }
+  }
+}
+
 void UsdBridgeUsdWriter::RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry)
 {
   // Memory/ZMQ streaming mode: there are no on-disk files, but the in-memory store and
-  // MemoryTracking DO hold the clips. Purge both so unreferenced clips are not re-served
-  // to clients (and are not resurrected by RecalculateAllMemoryUsage on the next render).
+  // MemoryTracking DO hold the clips. Purge both (including the ".usd"/".usda" twin keys)
+  // so unreferenced clips are not re-served to clients (and are not resurrected by
+  // RecalculateAllMemoryUsage on the next render).
   if(!this->EnableSaving)
   {
-    auto purgeStoreAndTracking = [this](const std::string& stageName)
-    {
-      if (stageName.empty())
-        return;
-      const std::string storeKey = StoreKeyForStageName(stageName);
-      if (g_rankMemoryStore && g_rankMemoryStore->RemoveFile(storeKey))
-        UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
-          "[Purge] removed stale clip from memory store: " << storeKey);
-      for (auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
-      {
-        if (it->filename == storeKey)
-        {
-          MemoryTracking.erase(it);
-          break; // store keys are unique in MemoryTracking (deduped by filename)
-        }
-      }
-    };
-
     if (!cacheEntry->ManifestStage.first.empty())
-      purgeStoreAndTracking(cacheEntry->ManifestStage.first);
+      RemoveStoreEntriesForFile(StoreKeyForStageName(cacheEntry->ManifestStage.first));
 
     for (auto& x : cacheEntry->ClipStages)
-      purgeStoreAndTracking(x.second.first);
+      RemoveStoreEntriesForFile(StoreKeyForStageName(x.second.first));
 
     return;
   }
@@ -1333,12 +1360,31 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
           );
 #ifdef TIME_BASED_CACHING
         {
-          // Remove *referencing* prim if no visible timecode exists anymore
-          bool wasRemoved = !oldChildCache || parentCache->SetChildInvisibleAtTime(oldChildCache, timeCode.GetValue());
-          if (wasRemoved)
+          // Remove *referencing* prim if no visible timecode exists anymore.
+          //
+          // NOTE: For time-varying refs the timeset must be updated exactly
+          // once; PrimRemoveIfInvisibleAnytime() does it internally and drops
+          // the child cache ref + removes the prim only when the visible
+          // timeset becomes empty. An earlier version removed the timecode
+          // here first, so the inner call saw a missing timecode and skipped
+          // ref-removal and prim-removal entirely - orphaned surface/geometry
+          // prims kept their reference count and their clip files were never
+          // purged from the stream (hidden actors persisted in clients).
+          if(timeVarying)
+          {
             PrimRemoveIfInvisibleAnytime(stage, oldChild, timeVarying, timeCode, atRemoveRef,
               parentCache, oldChildCache);
-          removedCount += wasRemoved;
+            if(!stage->GetPrimAtPath(oldChild.GetPath()))
+              removedCount++;
+          }
+          else
+          {
+            // Non-time-varying ref: remove it right away
+            if(oldChildCache)
+              atRemoveRef(parentCache, oldChildCache);
+            stage->RemovePrim(oldChild.GetPath());
+            removedCount++;
+          }
         }
 #else
         {// remove the whole referencing prim
@@ -1608,6 +1654,15 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
       // "basic_string::_M_construct null not valid".
       const std::string& resFileName = usdWriter.GetResourceFileName(basePath.c_str(), key.name, cache->Name.GetString(), timeStep, fileExtension);
       usdWriter.Connect->RemoveFile(resFileName.c_str(), true);
+
+      // Also drop the streaming in-memory store key(s) for this resource,
+      // otherwise clients keep receiving stale images/files after the prim
+      // owning them is garbage collected.
+      std::string rel = resFileName;
+      const std::string& dir = usdWriter.SessionDirectory;
+      if(!dir.empty() && rel.size() > dir.size() && rel.compare(0, dir.size(), dir) == 0)
+        rel.erase(0, dir.size());
+      usdWriter.RemoveStoreEntriesForFile(rel);
     }
   }
   keys.resize(0);

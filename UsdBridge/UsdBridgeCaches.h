@@ -56,11 +56,25 @@ struct UsdBridgeRefCache
 public:
   friend class UsdBridgePrimCacheManager;
 
+  unsigned int GetRefCount() const { return RefCount; }
+
+  // Garbage-collect bookkeeping: a cache must be observed unreferenced by two
+  // consecutive RemoveUnreferencedPrimCaches() passes before it is actually
+  // torn down. This protects against scene churn where a parent object (e.g.
+  // the world) is re-committed as a new cache, momentarily leaving live
+  // children at ref-count 0 until the next pass. Any new reference resets
+  // the strikes.
+  unsigned int TakeGcStrike() { return ++GcStrikes; }
+  bool IsGcDeleted() const { return GcDeleted; }
+  void MarkGcDeleted() { GcDeleted = true; }
+
 protected:
-  void IncRef() { ++RefCount; }
+  void IncRef() { ++RefCount; if(RefCount > 0) GcStrikes = 0; }
   void DecRef() { --RefCount; }
 
   unsigned int RefCount = 0;
+  unsigned int GcStrikes = 0;
+  bool GcDeleted = false;
 };
 
 struct UsdBridgePrimCache : public UsdBridgeRefCache

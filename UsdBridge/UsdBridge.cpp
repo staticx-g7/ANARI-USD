@@ -179,7 +179,13 @@ BoolEntryPair UsdBridgeInternals::FindOrCreatePrim(const char* category, const c
 void UsdBridgeInternals::FindAndDeletePrim(const UsdBridgeHandle& handle)
 {
   ConstPrimCacheIterator it = Cache.FindPrimCache(handle);
-  assert(Cache.ValidIterator(it));
+  // The cache entry may already have been garbage-collected while the owning
+  // ANARI object outlived it (GC erases caches of unreferenced prims; the
+  // object's stored handle then points to freed memory and is no longer
+  // registered). Bail out instead of dereferencing the end iterator.
+  if(!Cache.ValidIterator(it))
+    return;
+
   UsdBridgePrimCache* cacheEntry = (*it).second.get();
 
   UsdWriter.DeletePrim(cacheEntry);
@@ -1413,6 +1419,13 @@ void UsdBridge::PurgeUnreferencedPrims(bool saveScene)
   BRIDGE_CACHE.RemoveUnreferencedPrimCaches(
     [this, &deletedPrimNames](UsdBridgePrimCache* cacheEntry)
     {
+      // A shared child (e.g. one geometry referenced by two orphaned surfaces)
+      // can be reached by multiple RemoveUnreferencedChildTree cascades in the
+      // same pass - delete it only once.
+      if(cacheEntry->IsGcDeleted())
+        return;
+      cacheEntry->MarkGcDeleted();
+
       deletedPrimNames.push_back(cacheEntry->PrimPath.GetString());
 
       if(cacheEntry->ResourceCollect)

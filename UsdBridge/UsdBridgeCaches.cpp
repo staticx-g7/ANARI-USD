@@ -184,21 +184,29 @@ void UsdBridgePrimCacheManager::RemoveUnreferencedPrimCaches(AtRemoveFunc atRemo
   // First recursively remove all the child references for unreferenced prims
   // Can only be performed at garbage collect.
   // If this is done during RemoveChild, an unreferenced parent cannot subsequently be revived with an AddChild.
+  //
+  // Two-strike rule: a cache is only torn down when it was already observed
+  // with zero references by the previous pass as well. Scene updates where a
+  // parent (e.g. the world) is re-committed momentarily orphan their still-live
+  // children; the revival re-sets the strike counter via IncRef before the
+  // next pass, so those children survive.
   PrimCacheContainer::iterator it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {
-    if (it->second->RefCount == 0)
+    if (it->second->RefCount == 0 && it->second->TakeGcStrike() >= 2)
     {
       it->second->RemoveUnreferencedChildTree(atRemove);
     }
     ++it;
   }
 
-  // Now delete all prims without references from the cache
+  // Now delete all prims whose teardown already ran (tree removal above marks
+  // the entry and all cascaded children). Entries that are unreferenced but
+  // still on their first strike keep their cache entry until the next pass.
   it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {
-    if (it->second->RefCount == 0)
+    if (it->second->RefCount == 0 && (it->second->GcStrikes >= 2 || it->second->IsGcDeleted()))
       it = UsdPrimCaches.erase(it);
     else
       ++it;

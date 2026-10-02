@@ -71,6 +71,11 @@ public:
   void CreateManifestStage(const char* name, const char* primPostfix, UsdBridgePrimCache* cacheEntry);
   void RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry);
 
+  // Removes a streamed resource from the in-memory file store under every key
+  // variant that may have been written for it (raw name, ".usd"/".usda" twins,
+  // manifest-derived name) plus the matching MemoryTracking entry.
+  void RemoveStoreEntriesForFile(const std::string& relativeName);
+
   const UsdStagePair& FindOrCreatePrimStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix) const;
   const UsdStagePair& FindOrCreateClipStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix, double timeStep, bool& exists) const;
   const UsdStagePair& FindOrCreatePrimClipStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix, bool isClip, double timeStep, bool& exists) const;

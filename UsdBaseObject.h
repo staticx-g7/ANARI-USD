@@ -7,7 +7,20 @@
 #include "UsdCommonMacros.h"
 #include "UsdParameterizedObject.h"
 
+#include <string>
+
 class UsdDevice;
+
+// USD-compatible name sanitization (same rules as UsdParameterizedObject::formatUsdName)
+std::string SanitizeUsdName(const char* name);
+
+// Claims a USD object name for the given owner, making it unique within this
+// process by appending "_u<n>" if another live object already holds the name.
+// Returns the (possibly modified) name that the owner now holds.
+std::string UsdNameRegistryClaim(const std::string& desired, const void* owner);
+
+// Releases a previously claimed name (called on object destruction).
+void UsdNameRegistryRelease(const std::string& claimed, const void* owner);
 
 // Base parameterized class without being derived as such - nontemplated to allow for polymorphic use
 class UsdBaseObject : public helium::RefCounted
@@ -70,6 +83,12 @@ class UsdParameterizedBaseObject : public UsdBaseObject, public UsdParameterized
     UsdParameterizedBaseObject(ANARIDataType t, UsdDevice* device = nullptr)
       : UsdBaseObject(t, device)
     {}
+
+    virtual ~UsdParameterizedBaseObject()
+    {
+      if(!claimedUsdName.empty())
+        UsdNameRegistryRelease(claimedUsdName, this);
+    }
 
     void filterSetParam(
       const char *name,
@@ -156,9 +175,22 @@ class UsdParameterizedBaseObject : public UsdBaseObject, public UsdParameterized
           }
           else
           {
-            ParamClass::setParam(name, type, mem, device);
-            ParamClass::setParam("usd::name", type, mem, device);
+            // Claim a unique USD name for this object. Producers may hand the
+            // same name to two simultaneously live objects (e.g. VTK's ANARI
+            // scene graph resets per-actor prop ids before each render while
+            // existing nodes keep their cached actor names, so a hidden-then
+            // re-shown actor re-assigns an id still owned by a live node).
+            // Duplicate names would resolve to the same USD prim and the same
+            // clip file, interleaving both actors' arrays into one corrupted
+            // mesh. Colliding objects get a "_u<n>" suffix instead; the plain
+            // name stays with its first owner while that owner is alive.
+            std::string uniqueName =
+              UsdNameRegistryClaim(SanitizeUsdName(objectName), this);
+
+            ParamClass::setParam(name, type, uniqueName.c_str(), device);
+            ParamClass::setParam("usd::name", type, uniqueName.c_str(), device);
             this->formatUsdName(this->getWriteParams().usdName);
+            claimedUsdName = uniqueName;
           }
           return true;
         }
@@ -194,4 +226,7 @@ class UsdParameterizedBaseObject : public UsdBaseObject, public UsdParameterized
       }
       return 0;
     }
+
+    // Name currently claimed in the process-wide USD name registry ("" if none)
+    std::string claimedUsdName;
 };

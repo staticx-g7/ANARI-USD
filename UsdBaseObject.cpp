@@ -5,6 +5,101 @@
 #include "UsdDevice.h"
 
 #include <algorithm>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+// --------------------------------------------------------------------------
+// Process-wide USD object name registry
+//
+// Guarantees that no two simultaneously live ANARI objects are written to USD
+// under the same name (same prim path / same clip file). See
+// UsdParameterizedBaseObject::setNameParam() for the rationale.
+// --------------------------------------------------------------------------
+namespace
+{
+struct UsdNameRegistry
+{
+  std::mutex mutex;
+  std::unordered_map<std::string, const void*> claims; // name -> owning object
+};
+
+UsdNameRegistry& usdNameRegistry()
+{
+  static UsdNameRegistry registry;
+  return registry;
+}
+} // namespace
+
+std::string SanitizeUsdName(const char* name)
+{
+  std::string out = name ? std::string(name) : std::string();
+
+  auto letter = [](unsigned c) { return ((c - 'A') < 26) || ((c - 'a') < 26); };
+  auto number = [](unsigned c) { return (c - '0') < 10; };
+  auto under  = [](unsigned c) { return c == '_'; };
+
+  for(size_t i = 0; i < out.size(); ++i)
+  {
+    unsigned x = static_cast<unsigned char>(out[i]);
+    if(i == 0)
+    {
+      if(!letter(x) && !under(x))
+        out[i] = '_';
+    }
+    else if(!letter(x) && !number(x) && !under(x))
+      out[i] = '_';
+  }
+  if(out.empty())
+    out = "_";
+  return out;
+}
+
+std::string UsdNameRegistryClaim(const std::string& desired, const void* owner)
+{
+  UsdNameRegistry& reg = usdNameRegistry();
+  std::lock_guard<std::mutex> lock(reg.mutex);
+
+  // An object holds at most one claim; drop a claim held under a previous name.
+  for(auto it = reg.claims.begin(); it != reg.claims.end(); )
+  {
+    if(it->second == owner && it->first != desired)
+      it = reg.claims.erase(it);
+    else
+      ++it;
+  }
+
+  auto it = reg.claims.find(desired);
+  if(it == reg.claims.end())
+  {
+    reg.claims.emplace(desired, owner);
+    return desired;
+  }
+  if(it->second == owner)
+    return desired; // already claimed by this object (name re-set unchanged)
+
+  // Name is held by another live object - find a unique variant.
+  std::string candidate;
+  unsigned int counter = 1;
+  do
+  {
+    candidate = desired + "_u" + std::to_string(counter++);
+    it = reg.claims.find(candidate);
+  } while(it != reg.claims.end());
+
+  reg.claims.emplace(candidate, owner);
+  return candidate;
+}
+
+void UsdNameRegistryRelease(const std::string& claimed, const void* owner)
+{
+  UsdNameRegistry& reg = usdNameRegistry();
+  std::lock_guard<std::mutex> lock(reg.mutex);
+
+  auto it = reg.claims.find(claimed);
+  if(it != reg.claims.end() && it->second == owner)
+    reg.claims.erase(it);
+}
 
 UsdBaseObject::UsdBaseObject(ANARIDataType t, UsdDevice* device)
       : type(t)
