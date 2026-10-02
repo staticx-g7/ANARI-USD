@@ -139,6 +139,16 @@ std::string GetBrokerAddress(int rank, int port) {
     if (rank == 0) {
         // Rank 0: detect IB IP and format address
         std::string ib_ip = GetInfiniBandIPImpl();
+        // Explicit bind-IP override (single-node MPI tests, or clusters without
+        // an InfiniBand interface). Keep binding reachable, but never hand the
+        // workers a wildcard address: ZmqWorker rejects "0.0.0.0" as unroutable.
+        const char* bind_ip_env = getenv("DIFFCAPTURE_BIND_IP");
+        if (bind_ip_env && bind_ip_env[0]) {
+            ib_ip = bind_ip_env;
+        }
+        if (ib_ip == "0.0.0.0") {
+            ib_ip = "127.0.0.1"; // workers co-located (single-node); wildcard is bind-only
+        }
         std::stringstream ss;
         ss << ib_ip << ":" << port;
         std::string addr = ss.str();
