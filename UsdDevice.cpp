@@ -148,6 +148,15 @@ UsdDevice::UsdDevice(ANARILibrary library)
 
 UsdDevice::~UsdDevice()
 {
+  // Stop the background file-serving thread first: a joinable std::thread member
+  // destroyed with its owner calls std::terminate ("terminate called without an
+  // active exception" on MPI shutdown, where this thread exists on rank 0 / workers).
+#ifdef ANARI_USD_ENABLE_MPI
+  fileServingActive_ = false;
+  if (fileServingThread_.joinable())
+    fileServingThread_.join();
+#endif
+
   // Make sure no more references are held before cleaning up the device (and checking for memleaks)
   clearCommitList(); 
 
