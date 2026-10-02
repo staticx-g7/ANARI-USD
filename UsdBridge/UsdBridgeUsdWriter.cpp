@@ -471,6 +471,12 @@ void UsdBridgeUsdWriter::CreateFrameEntryStage(
   this->Connect->RemoveFile(entryRelPath.c_str(), true);
 
   const char* absEntryPath = this->Connect->GetUrl(entryRelPath.c_str());
+  if(!absEntryPath) // omniClientCombineUrls can fail; UsdStage::CreateNew would build a std::string from null
+  {
+    UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR,
+      "Failed to resolve URL for frame entry stage '" << entryRelPath << "'");
+    return;
+  }
   UsdStageRefPtr entryStage = UsdStage::CreateNew(absEntryPath);
   if(!entryStage)
   {
@@ -1575,6 +1581,9 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
   //fileAttr.GetTimeSamples(&fileTimes);
 
   assert(cache->ResourceKeys);
+  // Release-build safety: a prim cache may exist without a resource-key container.
+  if(!cache || !cache->ResourceKeys)
+    return;
   UsdBridgePrimCache::ResourceContainer& keys = *(cache->ResourceKeys);
 
   std::string basePath = usdWriter.SessionDirectory; basePath.append(resourceFolder);
@@ -1592,7 +1601,12 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
 #else
         0.0;
 #endif
-      const std::string& resFileName = usdWriter.GetResourceFileName(basePath.c_str(), key.name, timeStep, fileExtension);
+      // key.name may legitimately be null (default-constructed resource keys): use the
+      // null-safe overload and fall back to the prim name, matching how the volume/sampler
+      // files were named when written (UsdBridgeUsdWriter_Volume.cpp). Passing a null
+      // const char* directly into the std::string overload aborts with
+      // "basic_string::_M_construct null not valid".
+      const std::string& resFileName = usdWriter.GetResourceFileName(basePath.c_str(), key.name, cache->Name.GetString(), timeStep, fileExtension);
       usdWriter.Connect->RemoveFile(resFileName.c_str(), true);
     }
   }
