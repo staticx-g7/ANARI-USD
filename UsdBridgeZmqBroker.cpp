@@ -530,11 +530,19 @@ void ZmqBroker::MessageLoopThread() {
 
             // ========== Handle Laptop Client Request (CLIENT ROUTER socket) ==========
             if (items[1].revents & ZMQ_POLLIN) {
-                zmq::message_t client_identity, empty, request;
-                
+                zmq::message_t client_identity, first, request;
+
                 (void)client_router_->recv(client_identity, zmq::recv_flags::none);
-                (void)client_router_->recv(empty, zmq::recv_flags::none);
-                (void)client_router_->recv(request, zmq::recv_flags::none);
+                (void)client_router_->recv(first, zmq::recv_flags::none);
+                // libzmq 4.x DEALER->ROUTER delivers [identity, body], while older
+                // clients (ZMQ-3-era framing) send [identity, empty, body].
+                // Tolerate both: if the first frame after identity is an empty
+                // delimiter, the actual request follows; otherwise it IS the request.
+                if (first.size() == 0) {
+                    (void)client_router_->recv(request, zmq::recv_flags::none);
+                } else {
+                    request = std::move(first);
+                }
                 
                 std::string client_id(static_cast<const char*>(client_identity.data()), 
                                      client_identity.size());
@@ -2309,6 +2317,53 @@ bool ZmqWorker::SendCommitSceneUpdate(uint64_t commitId, uint64_t revision, uint
     msg.setPrimPath("/Scene");
     msg.setPropertyName("usd::commit");
     return SendSceneUpdate(msg);
+}
+
+// -----------------------------------------------------------------------------
+// ZmqBroker direct push (single-rank / non-MPI path)
+//
+// The renderFrame notification block normally sends via ZmqWorker, but the
+// worker socket is only created for MPI ranks > 0. With a single ParaView
+// process (the common docker/workstation case) there is no worker, so the
+// broker composes and broadcasts the identical wire messages itself.
+// -----------------------------------------------------------------------------
+
+bool ZmqBroker::SendFileNotificationToClients(const std::string& filename, uint64_t fileSize, uint64_t timestamp,
+                                              uint32_t messageType, const uint64_t* hash128,
+                                              const uint64_t* hashPrev128, bool hasOldData) {
+    ZmqFileNotification msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.magic = USD_FILE_MAGIC;
+    msg.message_type = messageType;
+    msg.source_rank = 0;
+    strncpy(msg.filename, filename.c_str(), sizeof(msg.filename) - 1);
+    msg.filename[sizeof(msg.filename) - 1] = '\0';
+    msg.file_size = fileSize;
+    msg.timestamp = timestamp;
+    msg.hash128[0] = hash128 ? hash128[0] : 0;
+    msg.hash128[1] = hash128 ? hash128[1] : 0;
+    msg.hashPrev128[0] = (hashPrev128 && hasOldData) ? hashPrev128[0] : 0;
+    msg.hashPrev128[1] = (hashPrev128 && hasOldData) ? hashPrev128[1] : 0;
+    msg.hasOldData = hasOldData;
+
+    bool ok = ForwardNotificationToClient(msg);
+    GetDiffCaptureStatus().OnNotification(msg.source_rank, msg.filename, msg.timestamp);
+    return ok;
+}
+
+bool ZmqBroker::SendSceneUpdateToClients(uint64_t commitId, uint64_t revision, uint64_t timestamp) {
+    ZmqSceneUpdate msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.magic = USD_FILE_MAGIC;
+    msg.message_type = static_cast<uint32_t>(ZmqMessageType::NOTIFY_SCENE_UPDATE);
+    msg.timestamp = timestamp;
+    msg.commit_id = commitId;
+    msg.revision = revision;
+    msg.change_type = static_cast<int32_t>(ZmqSceneChangeType::Commit);
+    msg.value_type = static_cast<int32_t>(ZmqPropertyValuetype::None);
+    msg.setPrimPath("/Scene");
+    msg.setPropertyName("usd::commit");
+    return ForwardSceneUpdateToClient(msg);
 }
 
 } // namespace usd_bridge

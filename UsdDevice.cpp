@@ -905,9 +905,24 @@ void UsdDevice::renderFrame(ANARIFrame frame)
 
   // Send ZMQ notifications to laptop client (only from rank 0 to avoid duplicates)
   #ifdef ANARI_USD_ENABLE_MPI
-  if (zmqWorker_ && zmqWorker_->IsConnected() && frame) {
+  // Single-rank (non-MPI) startup creates no ZmqWorker — its DEALER only exists on
+  // MPI ranks > 0. The broker lives in this same process there, so push the same
+  // notifications through it directly; otherwise clients only ever learn about
+  // changes by polling the file list.
+  const bool notifViaWorker = zmqWorker_ && zmqWorker_->IsConnected();
+  const bool notifViaBroker = !notifViaWorker && zmqBroker_ && zmqBroker_->IsInitialized();
+  if ((notifViaWorker || notifViaBroker) && frame) {
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+
+    auto sendFileV2 = [&](const std::string& name, uint64_t size,
+                          const uint64_t* h, const uint64_t* oldh, bool hasOld) {
+      if (notifViaWorker)
+        zmqWorker_->SendFileNotificationV2(name, size, timestamp, h, oldh, hasOld);
+      else
+        zmqBroker_->SendFileNotificationToClients(name, size, timestamp,
+            static_cast<uint32_t>(usd_bridge::ZmqMessageType::NOTIFY_FILE_UPDATE_V2), h, oldh, hasOld);
+    };
 
     // 1. First: notify ONLY about files that were actually written this renderFrame cycle.
     //    DiffCapture holds entries for files whose CapturePreStore() was called right before
@@ -927,7 +942,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
           if (name.find("clips/") == 0 || name.find("images/") == 0) {
             auto entry = g_rankMemoryStore->GetFile(name);
             if (entry) {
-              zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, nullptr, false);
+              sendFileV2(name, entry->data.size(), entry->hash128, nullptr, false);
             }
           }
         }
@@ -944,7 +959,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         if (entry) {
           const uint64_t* oldHash = diffCap.GetOldHash128(name);
           bool hasOld = diffCap.HasOldEntry(name);
-          zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
+          sendFileV2(name, entry->data.size(), entry->hash128, oldHash, hasOld);
         }
         diffCap.Commit(name);
       }
@@ -965,11 +980,18 @@ void UsdDevice::renderFrame(ANARIFrame frame)
       auto fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
       const uint64_t* fileHash = fileEntry ? fileEntry->hash128 : nullptr;
-      zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
+      if (notifViaWorker)
+        zmqWorker_->SendCommitNotification(frameFilename, fileSize, timestamp, fileHash);
+      else
+        zmqBroker_->SendFileNotificationToClients(frameFilename, fileSize, timestamp,
+            static_cast<uint32_t>(usd_bridge::ZmqMessageType::NOTIFY_COMMIT_COMPLETE), fileHash, nullptr, false);
 
       static std::atomic<uint64_t> sceneRevisionCounter{0};
       const uint64_t sceneRevision = sceneRevisionCounter.fetch_add(1, std::memory_order_relaxed) + 1;
-      zmqWorker_->SendCommitSceneUpdate(timestamp, sceneRevision, timestamp);
+      if (notifViaWorker)
+        zmqWorker_->SendCommitSceneUpdate(timestamp, sceneRevision, timestamp);
+      else
+        zmqBroker_->SendSceneUpdateToClients(timestamp, sceneRevision, timestamp);
     }
   }
 

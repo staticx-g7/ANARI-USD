@@ -60,6 +60,15 @@ public:
     bool ForwardNotificationToClient(const ZmqFileNotification& notification);
     bool ForwardSceneUpdateToClient(const ZmqSceneUpdate& update);
 
+    // Direct notification push for the single-rank (non-MPI / rank-0-in-process)
+    // case, where no sibling ZmqWorker exists to send NOTIFY_* messages on the
+    // worker socket. Composes the same wire messages the worker would send and
+    // broadcasts them to all connected laptop clients.
+    bool SendFileNotificationToClients(const std::string& filename, uint64_t fileSize, uint64_t timestamp,
+                                       uint32_t messageType, const uint64_t* hash128,
+                                       const uint64_t* hashPrev128, bool hasOldData);
+    bool SendSceneUpdateToClients(uint64_t commitId, uint64_t revision, uint64_t timestamp);
+
     std::string GetInfiniBandIP();
     bool IsInitialized() const { return initialized_; }
     const std::vector<WorkerInfo>& GetConnectedWorkers() const { return workers_; }
