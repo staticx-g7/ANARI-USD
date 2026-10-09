@@ -125,6 +125,25 @@ std::string GetInfiniBandIPImpl() {
 // MPI-Based Broker Discovery
 // ============================================================================
 
+#ifdef ANARI_USD_ENABLE_MPI
+// ANARI apps are not required to be MPI-aware (most examples never call
+// MPI_Init). Bring MPI up lazily so the broker-address Bcast below works for
+// any application launched under mpirun. No-op when the app already
+// initialized MPI, and when MPI_Finalize already ran.
+static void EnsureMpiInitialized()
+{
+    int initialized = 0;
+    MPI_Initialized(&initialized);
+    if (initialized)
+        return;
+    int finalized = 0;
+    MPI_Finalized(&finalized);
+    if (finalized)
+        return;
+    MPI_Init(nullptr, nullptr);
+}
+#endif
+
 /**
  * Get broker address for connection.
  * MPI mode: Broadcast rank 0's InfiniBand address to all ranks via MPI.
@@ -133,6 +152,7 @@ std::string GetInfiniBandIPImpl() {
  */
 std::string GetBrokerAddress(int rank, int port) {
 #ifdef ANARI_USD_ENABLE_MPI
+    EnsureMpiInitialized();
     char broker_address[256];
     memset(broker_address, 0, sizeof(broker_address));
 
@@ -253,6 +273,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         // Check if we're in "MPI but 0 workers" mode (essentially non-MPI mode)
         bool isSingleRankMode = (expectedWorkers == 0);
         std::string ib_ip;  // Declare here so it's available in both branches
+        std::string bind_ip;  // interface the ROUTER sockets actually bind
         
         if (isSingleRankMode) {
             // Single rank mode: bind to all interfaces so remote clients
@@ -263,6 +284,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             // is required (e.g. InfiniBand on a cluster).
             const char* bind_ip_env = getenv("DIFFCAPTURE_BIND_IP");
             ib_ip = (bind_ip_env && bind_ip_env[0]) ? bind_ip_env : "0.0.0.0";
+            bind_ip = ib_ip;
             broker_ip_ = ib_ip;
             std::cout << "[Rank 0 MPI Broker] Single-rank mode detected - using bind IP: " << ib_ip << std::endl;
         } else {
@@ -271,6 +293,14 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
 
             // Extract just the IP part for binding
+            // Extract just the IP part — but only as the WORKER-FACING address
+            // (broadcast of a routable IP to ranks >= 1). The BIND must stay
+            // wildcard-capable: loopback-only binds are unreachable through
+            // docker -p port-forwarding (same trap the single-rank branch
+            // documents above). DIFFCAPTURE_BIND_IP overrides on both paths.
+            const char* bind_ip_env = getenv("DIFFCAPTURE_BIND_IP");
+            bind_ip = (bind_ip_env && bind_ip_env[0]) ? bind_ip_env : "0.0.0.0";
+
             size_t colon_pos = broadcast_addr.find(':');
             ib_ip = (colon_pos != std::string::npos)
                 ? broadcast_addr.substr(0, colon_pos)
@@ -279,11 +309,14 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             // Store broker IP for SSH reminder thread
             broker_ip_ = ib_ip;
 
-            std::cout << "[Rank 0 MPI Broker] InfiniBand IP detected: " << ib_ip << std::endl;
+            std::cout << "[Rank 0 MPI Broker] InfiniBand IP detected: " << ib_ip
+                      << " (binding clients on " << bind_ip << ":" << client_port_
+                      << ")" << std::endl;
         }
 #else
         // Non-MPI mode: use localhost
         std::string ib_ip = "127.0.0.1";
+        std::string bind_ip = ib_ip;
         broker_ip_ = ib_ip;
         
         std::cout << "[Non-MPI ZMQ Broker] Using localhost IP: " << ib_ip << std::endl;
@@ -303,7 +336,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
         // In single-rank mode, skip binding worker socket (no workers to connect)
         if (!isSingleRankMode) {
             std::stringstream router_bind_addr;
-            router_bind_addr << "tcp://" << ib_ip << ":" << worker_port_;
+            router_bind_addr << "tcp://" << bind_ip << ":" << worker_port_;
 
             std::cout << "[ZMQ Broker] Binding ROUTER (workers) to " << router_bind_addr.str() << std::endl;
 
@@ -315,7 +348,7 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
 
         // ========== BIND CLIENT ROUTER SOCKET (for laptop client - DEALER) ==========
         std::stringstream client_bind_addr;
-        client_bind_addr << "tcp://" << ib_ip << ":" << client_port_;
+        client_bind_addr << "tcp://" << bind_ip << ":" << client_port_;
 
         std::cout << "[ZMQ Broker] Binding CLIENT ROUTER (laptop DEALER) to "
                   << client_bind_addr.str() << std::endl;
