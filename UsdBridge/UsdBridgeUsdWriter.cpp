@@ -1994,7 +1994,24 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     geoKey.resize(geoKey.size() - 4);
   geoKey += ".geo";
 
-  const uint64_t n = data.NumPoints;
+  const uint64_t nSrc = data.NumPoints;
+
+  // Live LOD without touching the wire format: sample every Sth source point.
+  // The JSG1 header self-describes the (smaller) count, so the client-side
+  // path is completely stride-unaware. One-time read: env per MPI rank works.
+  static const uint64_t stride = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_STRIDE");
+    uint64_t s = (v && v[0]) ? strtoull(v, nullptr, 10) : 1;
+    if(s < 1) s = 1;
+    if(s > 1024) s = 1024;
+    return s;
+  }();
+  static const bool strideLogged = [](){
+    if(stride > 1)
+      fprintf(stderr, "[UsdBridge] RawGeo stride = %llu\n", (unsigned long long)stride);
+    return true;
+  }();
+  const uint64_t n = (stride == 1) ? nSrc : ((nSrc + stride - 1) / stride);
 
   uint32_t colorComponents = data.Colors ? RawGeoFloatComponents(data.ColorsType) : 0;
   if(colorComponents != 3 && colorComponents != 4)
@@ -2053,17 +2070,46 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     memcpy(dst, attrDescs, numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc));
     dst += numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
   }
-  memcpy(dst, data.Points, posBytes);
+  if(stride == 1)
+  {
+    memcpy(dst, data.Points, posBytes);
+  }
+  else
+  {
+    const float* src = static_cast<const float*>(data.Points);
+    for(uint64_t i = 0; i < n; ++i)
+      memcpy(dst + i * 3 * sizeof(float), src + (i * stride) * 3, 3 * sizeof(float));
+  }
   dst += posBytes;
   if(colBytes)
   {
-    memcpy(dst, data.Colors, colBytes);
+    if(stride == 1)
+    {
+      memcpy(dst, data.Colors, colBytes);
+    }
+    else
+    {
+      const float* src = static_cast<const float*>(data.Colors);
+      const uint64_t cc = colorComponents;
+      for(uint64_t i = 0; i < n; ++i)
+        memcpy(dst + i * cc * sizeof(float), src + (i * stride) * cc, cc * sizeof(float));
+    }
     dst += colBytes;
   }
   for(uint32_t a = 0; a < numAttrs; ++a)
   {
-    const uint64_t bytes = n * attrDescs[a].components * sizeof(float);
-    memcpy(dst, data.Attributes[a].Data, bytes);
+    const uint64_t comps = attrDescs[a].components;
+    const uint64_t bytes = n * comps * sizeof(float);
+    if(stride == 1)
+    {
+      memcpy(dst, data.Attributes[a].Data, bytes);
+    }
+    else
+    {
+      const float* src = static_cast<const float*>(data.Attributes[a].Data);
+      for(uint64_t i = 0; i < n; ++i)
+        memcpy(dst + i * comps * sizeof(float), src + (i * stride) * comps, comps * sizeof(float));
+    }
     dst += bytes;
   }
 
