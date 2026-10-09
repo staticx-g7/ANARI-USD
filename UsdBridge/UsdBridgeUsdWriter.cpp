@@ -2113,6 +2113,46 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     dst += bytes;
   }
 
+  // Opt-in offline verification (default off): dump the exact packed payload
+  // as a binary PLY so ParaView can render the frame series independently of
+  // UE. Files: <dir>/cloud_<frame>.ply, every JUSYNC_RAWGEO_SNAPSHOT_EVERY
+  // stores (default 10).
+  static const char* snapDir = getenv("JUSYNC_RAWGEO_SNAPSHOT_DIR");
+  static const uint64_t snapEvery = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_SNAPSHOT_EVERY");
+    uint64_t e = (v && v[0]) ? strtoull(v, nullptr, 10) : 10;
+    return e ? e : 10;
+  }();
+  static std::atomic<uint64_t> snapFrames{0};
+  if(snapDir && snapDir[0])
+  {
+    const uint64_t f = snapFrames.fetch_add(1);
+    if(f % snapEvery == 0)
+    {
+      const uint8_t* pos = buf.data() + sizeof(hdr)
+          + numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
+      const uint8_t* col = pos + posBytes;
+      char path[512];
+      snprintf(path, sizeof(path), "%s/cloud_%08llu.ply", snapDir, (unsigned long long)f);
+      FILE* ply = fopen(path, "wb");
+      if(ply)
+      {
+        fprintf(ply,
+            "ply\nformat binary_little_endian 1.0\nelement vertex %llu\n"
+            "property float x\nproperty float y\nproperty float z\n",
+            (unsigned long long)n);
+        if(colorComponents)
+          fprintf(ply,
+              "property float red\nproperty float green\nproperty float blue\n");
+        fprintf(ply, "end_header\n");
+        fwrite(pos, posBytes, 1, ply);
+        if(colorComponents)
+          fwrite(col, n * colorComponents * sizeof(float), 1, ply);
+        fclose(ply);
+      }
+    }
+  }
+
   GetDiffCapture().CapturePreStore(geoKey);
   g_rankMemoryStore->StoreFile(geoKey, buf.data(), buf.size(), "application/x-jusync-geo");
   return true;
