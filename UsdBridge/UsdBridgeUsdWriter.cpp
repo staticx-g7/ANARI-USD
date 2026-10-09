@@ -20,6 +20,8 @@
 #include <typeinfo>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
+#include <atomic>
 #include "pxr/usd/sdf/fileFormat.h"
 
 #define PROCESS_PREFIX
@@ -1670,14 +1672,19 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
 
 // Export the authored root layer to a string, honoring Settings.BinaryOutput.
 //  - ASCII (default): ExportToString — memory-only, zero disk I/O.
-//  - Binary (usd::serialize.outputBinary=true): this USD build has no
-//    in-memory SdfLayer::ExportBinary API, so we ask the usdc file format
-//    (looked up in the SdfFileFormat registry) to serialize the layer
-//    straight to a string — fully in-memory, no temp files. Binary crate
-//    parses ~2-5x faster than ASCII on the client and stays compact as
-//    geometry grows; the memory store still zstd-compresses either.
-//  - Falls back to ASCII automatically if the binary export fails, so the
-//    pipeline never loses a frame's data.
+//  - Binary (usd::serialize.outputBinary=true): pxr 25.11 has NO in-memory
+//    crate API — SdfLayer::ExportToString and even SdfUsdcFileFormat's
+//    WriteToString override emit "#usda" TEXT while still returning true
+//    (verified empirically against this exact USD build). The only reliable
+//    crate producer is SdfLayer::Export() to a ".usdc" path, so we round-trip
+//    through /dev/shm: a RAM-backed tmpfs. Bytes never touch a block device,
+//    the cost is two memcpys, and the temp file is unlinked immediately.
+//    JUSYNC_CRATE_TMP overrides the directory (empty string forces the ASCII
+//    fallback; point it at other tmpfs-backed mounts if /dev/shm is small).
+//  - The result is validated against the PXR-USDC magic, so the crate MIME
+//    label put on the wire can never again mislabel ASCII bytes.
+//  - Falls back to ASCII automatically if the binary round-trip fails, so
+//    the pipeline never loses a frame's data.
 void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
                                              const std::string& stageName,
                                              std::string& outContent,
@@ -1690,15 +1697,48 @@ void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
 
   if(Settings.BinaryOutput)
   {
-    SdfFileFormatConstPtr usdcFormat = SdfFileFormat::FindByExtension("usdc");
-    if(usdcFormat && usdcFormat->WriteToString(*rootLayer, &outContent))
+#ifdef _WIN32
+    const char* defaultCrateTmp = "";   // no portable RAM-backed fs on Windows
+#else
+    const char* defaultCrateTmp = "/dev/shm";
+#endif
+    const char* envTmp = getenv("JUSYNC_CRATE_TMP");
+    const std::string crateDir(envTmp ? envTmp : defaultCrateTmp);
+    if(!crateDir.empty())
     {
-      outIsBinary = true;
-      return;
-    }
+      // Atomic counter: TrackStageMemory (render thread) and
+      // RecalculateAllMemoryUsage (broker thread) can export concurrently.
+      static std::atomic<uint64_t> tmpCounter{0};
+      const std::string tmpPath = crateDir + "/jusync_crate_" +
+                                  std::to_string(tmpCounter.fetch_add(1)) + ".usdc";
 
-    std::cerr << "[ExportLayerToString] WARNING: binary export failed for '"
-              << stageName << "', falling back to ASCII" << std::endl;
+      bool exported = false;
+      if(rootLayer->Export(tmpPath))
+      {
+        std::ifstream in(tmpPath, std::ios::binary);
+        if(in)
+        {
+          outContent.assign((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+          in.close();
+          exported = !outContent.empty();
+        }
+      }
+      std::error_code ec;
+      std::filesystem::remove(tmpPath, ec);
+
+      if(exported && outContent.size() >= 8 &&
+         std::memcmp(outContent.data(), "PXR-USDC", 8) == 0)
+      {
+        outIsBinary = true;
+        return;
+      }
+
+      std::cerr << "[ExportLayerToString] WARNING: crate export for '" << stageName
+                << "' did not produce PXR-USDC bytes (dir '" << crateDir
+                << "'), falling back to ASCII" << std::endl;
+      outContent.clear();
+    }
   }
 
   rootLayer->ExportToString(&outContent);

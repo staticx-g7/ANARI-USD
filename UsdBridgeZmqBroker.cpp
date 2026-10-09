@@ -1146,6 +1146,12 @@ void ZmqBroker::MessageLoopThread() {
                     if (fileReq->magic == USD_FILE_MAGIC &&
                         fileReq->message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_PROPERTY)) {
 
+                        // P2 keep-warm: heartbeat property pings must also
+                        // register the identity, or a client that idles past
+                        // the next broker restart stops receiving NOTIFY_*
+                        // until its next list/file request.
+                        client_ids_.insert(client_id);
+
                         std::cout << "[Rank 0 MPI Broker] Property request from laptop: request_id="
                                   << fileReq->request_id << std::endl;
 
