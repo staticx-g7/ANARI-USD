@@ -8,15 +8,24 @@ NOVNC_PORT=6080
 
 mkdir -p /root/.vnc /work /tmp/.X11-unix
 
-# VNC password (override with JUSYNC_VNC_PASSWORD)
-echo "${JUSYNC_VNC_PASSWORD:-jusync}" | vncpasswd -f > /root/.vnc/passwd
-chmod 600 /root/.vnc/passwd
+# VNC password (override with JUSYNC_VNC_PASSWORD).
+# NOTE: Ubuntu 24.04's tigervnc packages no longer ship vncpasswd; fall back
+# to unauthenticated VNC on this throwaway Xvnc. run.ps1 / docker-compose bind
+# the mapped ports to 127.0.0.1, so only this machine can reach the desktop.
+VNC_SEC=vncauth
+if command -v vncpasswd >/dev/null 2>&1; then
+    echo "${JUSYNC_VNC_PASSWORD:-jusync}" | vncpasswd -f > /root/.vnc/passwd
+    chmod 600 /root/.vnc/passwd
+else
+    echo "[entrypoint] vncpasswd unavailable (tigervnc on noble) - VNC auth off, relying on 127.0.0.1 port binding" >&2
+    VNC_SEC=none
+fi
 
 cat > /root/.vnc/config <<EOF
 geometry=${JUSYNC_VNC_RESOLUTION:-1600x900x24}
 depth=24
 localhost=no
-securitytypes=vncauth
+securitytypes=${VNC_SEC}
 EOF
 
 # Xstartup: light WM + terminal so ParaView windows behave
@@ -39,7 +48,11 @@ if [ "${JUSYNC_NOVNC:-1}" = "1" ]; then
     websockify --web=/usr/share/novnc/ ${NOVNC_PORT} localhost:${VNC_PORT} >/tmp/websockify.log 2>&1 &
 fi
 
-echo "[entrypoint] desktop ${VNC_DISP} -> VNC ${VNC_PORT}, noVNC http://localhost:${NOVNC_PORT}/vnc.html (password: ${JUSYNC_VNC_PASSWORD:-jusync})"
+if [ "$VNC_SEC" = vncauth ]; then
+    echo "[entrypoint] desktop ${VNC_DISP} -> VNC ${VNC_PORT}, noVNC http://localhost:${NOVNC_PORT}/vnc.html (password: ${JUSYNC_VNC_PASSWORD:-jusync})"
+else
+    echo "[entrypoint] desktop ${VNC_DISP} -> VNC ${VNC_PORT} (no auth), noVNC http://localhost:${NOVNC_PORT}/vnc.html"
+fi
 
 # Optional keep-up mode: never let the container die with the command.
 if [ "${JUSYNC_KEEPUP:-0}" = "1" ]; then

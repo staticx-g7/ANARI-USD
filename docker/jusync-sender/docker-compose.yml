@@ -2,8 +2,10 @@
 #
 #   docker compose up --build            (GPU passthrough if the toolkit is set up)
 #
-# Ports: 5556 = JUSYNC ZMQ broker (UE middleware connects here),
-#        6080 = noVNC web desktop, 5901 = raw VNC, 5555 = inter-rank (unused solo).
+# Ports (all bound to 127.0.0.1; noble tigervnc has no vncpasswd so the VNC
+# desktop itself is unauthenticated - the loopback bind is the boundary):
+#   5556 = JUSYNC ZMQ broker (UE middleware connects here),
+#   6080 = noVNC web desktop, 5901 = raw VNC, 5555 = inter-rank (unused solo).
 services:
   sender:
     build:
@@ -12,9 +14,9 @@ services:
     image: jusync-sender:dev
     container_name: jusync-sender
     ports:
-      - "5556:5556"
-      - "6080:6080"
-      - "5901:5901"
+      - "127.0.0.1:5556:5556"
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:5901:5901"
     volumes:
       - sender-work:/work
     environment:

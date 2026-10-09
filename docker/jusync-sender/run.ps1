@@ -6,7 +6,8 @@
 #   .\docker\jusync-sender\run.ps1 -Interactive     # bash shell instead of sender
 #
 # Then point the UE JUSYNC spawner at tcp://localhost:5556 and open
-# http://localhost:6080/vnc.html (password jusync) for the desktop + ParaView.
+# http://localhost:6080/vnc.html for the desktop + ParaView. (All ports bind
+# 127.0.0.1; noble's tigervnc has no vncpasswd so VNC itself is unauthenticated.)
 param(
     [string]$Tag = "dev",
     [string]$SenderBin = "anariTutorialUsdTime",
@@ -26,7 +27,7 @@ if ($removeOld) { docker rm -f $removeOld | Out-Null }
 
 function Start-Sender([string[] $gpuArgs]) {
     $cmd = @("run", "-d", "--name", "jusync-sender",
-             "-p", "5556:5556", "-p", "6080:6080", "-p", "5901:5901",
+             "-p", "127.0.0.1:5556:5556", "-p", "127.0.0.1:6080:6080", "-p", "127.0.0.1:5901:5901",
              "--shm-size", "1g") + $gpuArgs + $envArgs +
             @("jusync-sender:$Tag")
     if ($Interactive) { $cmd = ($cmd[0..($cmd.Count-2)]) + @("-it") + $cmd[-1] + @("bash") }
@@ -51,7 +52,7 @@ if (-not $id) {
 Write-Host ""
 Write-Host "jusync-sender ($mode mode) running: $id" -ForegroundColor Green
 Write-Host "  ZMQ broker : tcp://localhost:5556   <- UE JUSYNC spawner endpoint"
-Write-Host "  noVNC      : http://localhost:6080/vnc.html   (password: jusync)"
+Write-Host "  noVNC      : http://localhost:6080/vnc.html   (password 'jusync' if VNC auth active)"
 Write-Host "  VNC        : localhost:5901"
 Write-Host "  logs       : docker logs -f jusync-sender"
 if (-not $Interactive) {

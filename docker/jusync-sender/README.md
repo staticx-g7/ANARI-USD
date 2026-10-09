@@ -45,9 +45,14 @@ Endpoints:
 | port | what |
 |------|------|
 | 5556 | JUSYNC ZMQ broker (client) — point the UE spawner at `tcp://localhost:5556` |
-| 6080 | noVNC web desktop (`http://localhost:6080/vnc.html`, password `jusync`) |
+| 6080 | noVNC web desktop (`http://localhost:6080/vnc.html`) |
 | 5901 | raw VNC (TigerVNC, use any VNC client) |
 | 5555 | inter-rank worker port (solo run: unused) |
+
+All mapped ports bind to `127.0.0.1` only. Ubuntu 24.04's tigervnc packages
+ship no `vncpasswd`, so the desktop runs with `securitytypes=none` there (the
+loopback bind is the access boundary); on images where `vncpasswd` exists the
+password `jusync` applies (`JUSYNC_VNC_PASSWORD` to override).
 
 Env knobs: `JUSYNC_SENDER_BIN` (default `anariTutorialUsdTime` — installed
 example binaries are camelCase, see `examples/CMakeLists.txt`), `JUSYNC_LOOP=1`
