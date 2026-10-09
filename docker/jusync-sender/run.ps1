@@ -25,7 +25,9 @@ $envArgs = @("-e", "JUSYNC_LOOP=$(if ($OneShot) { '0' } else { '1' })",
 $removeOld = docker ps -aq -f name=jusync-sender
 if ($removeOld) { docker rm -f $removeOld | Out-Null }
 
-function Start-Sender([string[] $gpuArgs]) {
+# NOTE: parameter is untyped on purpose: this machine's PS 5.1 parser rejects
+# the inline `[string[] $x]` signature form ("Missing ] at end of attribute").
+function Start-Sender($gpuArgs) {
     $cmd = @("run", "-d", "--name", "jusync-sender",
              "-p", "127.0.0.1:5556:5556", "-p", "127.0.0.1:6080:6080", "-p", "127.0.0.1:5901:5901",
              "--shm-size", "1g") + $gpuArgs + $envArgs +
