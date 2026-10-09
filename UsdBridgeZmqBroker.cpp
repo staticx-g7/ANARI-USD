@@ -1571,13 +1571,19 @@ void ZmqBroker::TickPendingTransfers(int maxTransfers)
         response.chunk_size = sendSize;
 
         const size_t totalSize = sizeof(response) + sendSize;
-        std::vector<uint8_t> msgData(totalSize);
-        memcpy(msgData.data(), &response, sizeof(response));
-        memcpy(msgData.data() + sizeof(response), buf + t.offset, sendSize);
+
+        // Single-copy send: build the frame IN the ZMQ message buffer.
+        // (The old vector staging copied the whole chunk twice and churned a
+        // multi-MB allocation per chunk; the worker->broker path already used
+        // this pattern in ZmqWorker::SendFileChunk.)
+        zmq::message_t message(totalSize);
+        memcpy(message.data(), &response, sizeof(response));
+        memcpy(static_cast<uint8_t*>(message.data()) + sizeof(response),
+               buf + t.offset, sendSize);
 
         client_router_->send(zmq::buffer(t.client_id), zmq::send_flags::sndmore);
         client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);
-        client_router_->send(zmq::message_t(msgData.data(), msgData.size()), zmq::send_flags::none);
+        client_router_->send(message, zmq::send_flags::none);
 
         t.offset += sendSize;
         ++advanced;
