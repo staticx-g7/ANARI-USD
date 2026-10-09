@@ -65,7 +65,7 @@ usdDevice = anariNewDevice(usdLibrary, 'usd')
 
 
 # Setting the USD device parameters, which determine where the USD output goes
-usdOutputBinary = 0 # ANARI's spec defines BOOL and INT32 to be of equal size, so playing it safe here by using an explicit int
+usdOutputBinary = 1 # binary crate output: smaller on the wire, faster client parse (was 0 for ASCII)
 usdPreviewSurface = 0
 anariSetParameter(usdDevice, usdDevice, 'usd::serialize.location', ANARI_STRING, './'); # Location on disk, replace with any desired path
 anariSetParameter(usdDevice, usdDevice, 'usd::serialize.outputBinary', ANARI_BOOL, usdOutputBinary); # Output binary files (smaller) or ascii output (for debugging)

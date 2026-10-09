@@ -654,7 +654,7 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
     return;
   }
 
-  int outputBinary = 0;
+  int outputBinary = 1; // binary crate output: smaller on the wire, faster client parse
   int outputOmniverse = 0;
   int connLogVerbosity = 0;
   int outputMaterial = 1;
