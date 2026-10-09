@@ -4,7 +4,10 @@
 # `docker -p 5556:5556` / localhost, standing in for the SSH tunnel to JURECA).
 #
 # usage: run-sender.sh [binary] [args...]
-#   binary default: anariTutorial_usd_time (per-timestep commits -> live updates)
+#   binary default: anariTutorialUsdTime (per-timestep commits -> live updates)
+#   (installed example names are camelCase from examples/CMakeLists.txt
+#    project() targets, e.g. anariTutorialUsd / ...Time / ...Recreate /
+#    ...Volume / ...DualWorld — NOT the .c file names)
 #
 # env:
 #   JUSYNC_SENDER_BIN     sender executable (overridden by $1)
@@ -13,7 +16,7 @@
 #   ANARI_USD_SERIALIZE_LOCATION  where disk-mode assets go (default /work)
 set -e
 
-BIN="${1:-${JUSYNC_SENDER_BIN:-anariTutorial_usd_time}}"
+BIN="${1:-${JUSYNC_SENDER_BIN:-anariTutorialUsdTime}}"
 shift || true
 
 # The UsdDevice starts the ZMQ broker when an MPI rank environment is present

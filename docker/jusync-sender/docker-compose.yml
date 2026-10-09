@@ -18,7 +18,7 @@ services:
     volumes:
       - sender-work:/work
     environment:
-      # JUSYNC_SENDER_BIN: anariTutorial_usd_time
+      # JUSYNC_SENDER_BIN: anariTutorialUsdTime
       JUSYNC_LOOP: "1"          # keep emitting clip updates like a running sim
       JUSYNC_VNC_PASSWORD: jusync
     shm_size: "1g"

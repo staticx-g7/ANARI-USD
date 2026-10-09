@@ -9,7 +9,7 @@
 # http://localhost:6080/vnc.html (password jusync) for the desktop + ParaView.
 param(
     [string]$Tag = "dev",
-    [string]$SenderBin = "anariTutorial_usd_time",
+    [string]$SenderBin = "anariTutorialUsdTime",
     [switch]$OneShot,
     [switch]$Interactive,
     [switch]$NoGpu
@@ -19,6 +19,7 @@ $ErrorActionPreference = "Stop"
 docker version | Out-Null   # fail fast if the daemon is down
 
 $envArgs = @("-e", "JUSYNC_LOOP=$(if ($OneShot) { '0' } else { '1' })",
+             "-e", "JUSYNC_SENDER_BIN=$SenderBin",
              "-e", "JUSYNC_VNC_PASSWORD=jusync")
 $removeOld = docker ps -aq -f name=jusync-sender
 if ($removeOld) { docker rm -f $removeOld | Out-Null }

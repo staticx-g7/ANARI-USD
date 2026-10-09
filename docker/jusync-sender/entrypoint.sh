@@ -16,7 +16,7 @@ cat > /root/.vnc/config <<EOF
 geometry=${JUSYNC_VNC_RESOLUTION:-1600x900x24}
 depth=24
 localhost=no
-securitytypes=vncauth,denyall
+securitytypes=vncauth
 EOF
 
 # Xstartup: light WM + terminal so ParaView windows behave

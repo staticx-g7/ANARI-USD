@@ -10,8 +10,11 @@
 # The device library itself is CPU-only (it records ANARI calls into USD), so
 # a GPU is optional at build AND run; pass --gpus all to use the host GPU for
 # the ANARI scivis/helium render paths or ParaView hardware GL.
-
-ARG BASE_IMAGE=ubuntu:22.04
+#
+# Base is 24.04 (noble): OpenUSD 25.11's TBB backend needs oneTBB >= 2021.6
+# (jammy's 2021.5 fails tbb::task_group(ctx)); noble ships 2021.12 plus the
+# cppzmq headers that jammy lacks.
+ARG BASE_IMAGE=ubuntu:24.04
 
 # --------------------------------------------------------------------------
 # Stage 1: toolchain + ANARI SDK + OpenUSD + this repo's device
@@ -23,11 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gnupg lsb-release \
       python3 python3-dev \
       libopenmpi-dev openmpi-bin \
-      libzmq3-dev \
+      libzmq3-dev cppzmq-dev \
       libtbb-dev zlib1g-dev \
       libgl1-mesa-dev libglu1-mesa-dev xorg-dev libglfw3-dev mesa-common-dev \
     && rm -rf /var/lib/apt/lists/*
-# Ubuntu 22.04 ships CMake 3.22; ANARI-SDK main / OpenUSD 25.x want >= 3.28.
+# CMake >= 3.28 guard: noble ships 3.28.3 (no-op there), older bases get
+# Kitware's latest (also needed for ANARI-SDK main on 22.04 fallback builds).
 RUN set -eux; ver=$(cmake --version | head -n1 | awk '{print $3}'); \
     if [ "$(printf '%s\n' 3.28 "$ver" | sort -V | head -n1)" != "3.28" ]; then \
       wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc \
@@ -38,15 +42,6 @@ RUN set -eux; ver=$(cmake --version | head -n1 | awk '{print $3}'); \
     fi; cmake --version | head -n1
 
 WORKDIR /src
-
-# --- cppzmq (C++ zmq.hpp headers; Ubuntu 22.04 has no cppzmq package) ------
-# Header-only: zmq's C lib comes from libzmq3-dev above. The device's ZmqBroker
-# needs zmq.hpp (find_package(cppzmq) / find_path(zmq.hpp) fallback).
-ARG CPPZMQ_REF=v4.11.0
-RUN git clone --depth 1 --branch ${CPPZMQ_REF} https://github.com/zeromq/cppzmq.git cppzmq \
-    && cmake -S cppzmq -B build/cppzmq -DCMAKE_BUILD_TYPE=Release \
-         -DCMAKE_INSTALL_PREFIX=/usr/local -DCPPZMQ_BUILD_TESTS=OFF \
-    && cmake --build build/cppzmq --target install
 
 # --- Khronos ANARI SDK (same source the repo superbuild fetches: main) ---
 ARG ANARI_SDK_REF=main
@@ -61,6 +56,10 @@ RUN git clone --depth 1 --branch ${ANARI_SDK_REF} \
 
 # --- OpenUSD (device targets 25.11, boost-free; core-only config) ---
 ARG USD_REF=v25.11
+# ninja's default job count (all cores) OOM-killed buildkitd inside the WSL2
+# VM at ~45% of the USD compile once; cap concurrent g++ processes. Declared
+# here (after the ANARI layer) so cached layers stay valid.
+ARG MAX_JOBS=6
 RUN git clone --depth 1 --branch ${USD_REF} \
       https://github.com/PixarAnimationStudios/OpenUSD.git usd \
     && cmake -S usd -B build/usd -G Ninja \
@@ -76,7 +75,7 @@ RUN git clone --depth 1 --branch ${USD_REF} \
          -DPXR_ENABLE_HDF5_SUPPORT=OFF -DPXR_ENABLE_OCIO_SUPPORT=OFF \
          -DPXR_ENABLE_OSL_SUPPORT=OFF -DPXR_ENABLE_PROCEDURAL_SUPPORT=OFF \
          -DPXR_ENABLE_CTF_SUPPORT=OFF \
-    && cmake --build build/usd && cmake --install build/usd
+    && cmake --build build/usd -- -j ${MAX_JOBS} && cmake --install build/usd
 ENV LD_LIBRARY_PATH=/opt/usd/lib
 
 # --- ANARI USD device (this repo), with examples ---
@@ -90,7 +89,7 @@ RUN cmake -S anari-usd -B build/device -G Ninja \
       -DUSD_DEVICE_USE_OMNIVERSE=OFF -DUSD_DEVICE_USE_OPENVDB=OFF \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DCMAKE_PREFIX_PATH="/opt/usd;/usr/local" \
-    && cmake --build build/device && cmake --install build/device
+    && cmake --build build/device -- -j ${MAX_JOBS} && cmake --install build/device
 
 # --------------------------------------------------------------------------
 # Stage 2: runtime + VNC/noVNC desktop + ParaView
@@ -98,7 +97,7 @@ RUN cmake -S anari-usd -B build/device -G Ninja \
 FROM ${BASE_IMAGE} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates libtbb2 zlib1g libzmq5 python3 \
+      ca-certificates libtbb12 zlib1g libzmq5 python3 \
       libopenmpi3 openmpi-bin \
       libgl1 libglu1-mesa mesa-utils x11-utils x11-xserver-utils \
       xterm fluxbox \

@@ -26,9 +26,11 @@ or raw:
 docker build -f docker/jusync-sender/Dockerfile -t jusync-sender:dev .
 ```
 
-What the image builds: Khronos **ANARI-SDK** (`main`, same ref as the repo
-superbuild), **OpenUSD v25.11** core-only (boost-free, no imaging/python), and
-this repo with `-DUSD_DEVICE_BUILD_EXAMPLES=ON`.
+What the image builds on **ubuntu:24.04** (noble — its oneTBB 2021.12 is what
+OpenUSD 25.11's work backend needs; jammy's 2021.5 fails to compile against it):
+Khronos **ANARI-SDK** (`main`, same ref as the repo superbuild), **OpenUSD
+v25.11** core-only (boost-free, no imaging/python), and this repo with
+`-DUSD_DEVICE_BUILD_EXAMPLES=ON`.
 
 ## Run
 
@@ -47,7 +49,8 @@ Endpoints:
 | 5901 | raw VNC (TigerVNC, use any VNC client) |
 | 5555 | inter-rank worker port (solo run: unused) |
 
-Env knobs: `JUSYNC_SENDER_BIN` (default `anariTutorial_usd_time`), `JUSYNC_LOOP=1`
+Env knobs: `JUSYNC_SENDER_BIN` (default `anariTutorialUsdTime` — installed
+example binaries are camelCase, see `examples/CMakeLists.txt`), `JUSYNC_LOOP=1`
 (re-run forever, sim-like continuous clip updates), `JUSYNC_LOOP_DELAY`,
 `JUSYNC_KEEPUP=1` (keep container alive after command exit for `docker exec -it
 jusync-sender bash`), `ANARI_USD_SERIALIZE_LOCATION` (default `/work`),
@@ -61,7 +64,7 @@ rank-0 broker branch without an actual MPI launcher.
 
 1. Build/run the UE sample with a middleware whose host/endpoint is
    `tcp://localhost:5556` (replaces the JURECA SSH-tunnel endpoint).
-2. `run.ps1` starts the looping `anariTutorial_usd_time` sender — it commits
+2. `run.ps1` starts the looping `anariTutorialUsdTime` sender — it commits
    time-varying geometry per timestep, so every ~2 s a clip update is notified.
 3. Watch `jusync.diag` in the UE console: per-file rows should show transfer +
    parse of the binary crates (files keep their historical `.usda` store keys;
