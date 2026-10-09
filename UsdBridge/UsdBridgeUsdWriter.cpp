@@ -8,9 +8,11 @@
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 #include "UsdBridgeMemoryStore.h"
 #include "UsdBridgeDiffCapture.h"
+#include "../AnariUsdProtocol.h" // JusyncRawGeoHeader wire format (shared with the JUSYNC client)
 #include "Common/UsdBridgeParallelController.h"
 
 #include <cstring>
+#include <vector>
 
 #include <pxr/usd/usdRender/product.h>
 #include <pxr/usd/usdRender/settings.h>
@@ -702,9 +704,21 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
   std::vector<std::string> keys;
   keys.push_back(relativeName);
   if(endsWith(relativeName, ".usd"))
+  {
     keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
+    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".geo"); // RawGeo twin
+  }
   else if(endsWith(relativeName, ".usda"))
+  {
     keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".usd");
+    keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".geo"); // RawGeo twin
+  }
+  else if(endsWith(relativeName, ".geo"))
+  {
+    // Removing the RawGeo entry must not orphan the USD twins either.
+    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usd");
+    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
+  }
   else if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
           !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
     keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
@@ -1914,4 +1928,146 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
        }
     }
   }
+}
+
+// ===========================================================================
+// JUSYNC RawGeo streaming (JUSYNC_RAWGEO=1)
+//
+// Mirrors instancer point data straight into the in-memory store under the
+// clip key with a ".geo" extension (self-describing JusyncRawGeoHeader + raw
+// float arrays), letting streaming clients skip USD parsing entirely. The
+// caller (SetGeometryDataTemplate) skips UpdateUsdGeometry/TrackStageMemory
+// when this succeeds, which removes the per-frame crate serialization that
+// dominated sender CPU at multi-million point clouds.
+// ===========================================================================
+
+namespace
+{
+  uint32_t RawGeoFloatComponents(UsdBridgeType type)
+  {
+    switch(type)
+    {
+      case UsdBridgeType::FLOAT:  return 1;
+      case UsdBridgeType::FLOAT2: return 2;
+      case UsdBridgeType::FLOAT3: return 3;
+      case UsdBridgeType::FLOAT4: return 4;
+      default:                    return 0;
+    }
+  }
+
+  bool RawGeoEndsWith(const std::string& s, const char* suf)
+  {
+    size_t n = strlen(suf);
+    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+  }
+}
+
+bool UsdBridgeUsdWriter::RawGeoEnabled()
+{
+  static const bool enabled = [](){
+    const char* v = getenv("JUSYNC_RAWGEO");
+    return v && v[0] == '1';
+  }();
+  return enabled;
+}
+
+bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
+    const UsdBridgeInstancerData& data, double timeStep)
+{
+  if(!RawGeoEnabled() || !g_rankMemoryStore || !cacheEntry)
+    return false;
+
+  // v1 wire format is float3 positions only; anything else silently falls
+  // back to the USD path instead of being dropped.
+  if(!data.Points || data.NumPoints == 0 || RawGeoFloatComponents(data.PointsType) != 3)
+    return false;
+
+  auto clipIt = cacheEntry->ClipStages.find(timeStep);
+  if(clipIt == cacheEntry->ClipStages.end())
+    return false;
+
+  // Store key: the clip stage's relative filename with the extension swapped.
+  std::string geoKey = clipIt->second.first;
+  if(RawGeoEndsWith(geoKey, ".usda"))
+    geoKey.resize(geoKey.size() - 5);
+  else if(RawGeoEndsWith(geoKey, ".usd"))
+    geoKey.resize(geoKey.size() - 4);
+  geoKey += ".geo";
+
+  const uint64_t n = data.NumPoints;
+
+  uint32_t colorComponents = data.Colors ? RawGeoFloatComponents(data.ColorsType) : 0;
+  if(colorComponents != 3 && colorComponents != 4)
+    colorComponents = 0;
+
+  // Per-vertex float attributes (e.g. "attribute0", consumed as the scalar
+  // channel by the client) ride along as plain float blocks.
+  anari_usd_protocol::JusyncRawGeoAttrDesc attrDescs[16];
+  uint32_t numAttrs = 0;
+  if(data.Attributes)
+  {
+    for(uint32_t a = 0; a < data.NumAttributes && numAttrs < 16; ++a)
+    {
+      const UsdBridgeAttribute& src = data.Attributes[a];
+      if(!src.Data || src.PerPrimData)
+        continue;
+      const uint32_t comps = RawGeoFloatComponents(src.DataType);
+      if(comps == 0)
+        continue;
+      memset(&attrDescs[numAttrs], 0, sizeof(attrDescs[numAttrs]));
+      if(src.Name)
+        strncpy(attrDescs[numAttrs].name, src.Name, sizeof(attrDescs[numAttrs].name) - 1);
+      attrDescs[numAttrs].components = comps;
+      ++numAttrs;
+    }
+  }
+
+  anari_usd_protocol::JusyncRawGeoHeader hdr;
+  memset(&hdr, 0, sizeof(hdr));
+  hdr.magic = anari_usd_protocol::JUSYNC_RAWGEO_MAGIC;
+  hdr.version = anari_usd_protocol::JUSYNC_RAWGEO_VERSION;
+  strncpy(hdr.prim_name, cacheEntry->Name.GetString().c_str(), sizeof(hdr.prim_name) - 1);
+  hdr.num_points = n;
+  hdr.time = timeStep;
+  hdr.position_components = 3;
+  hdr.color_components = colorComponents;
+  hdr.num_attributes = numAttrs;
+  hdr.attr_uniform_count = static_cast<uint32_t>(n);
+
+  const uint64_t posBytes = n * 3 * sizeof(float);
+  const uint64_t colBytes = colorComponents ? n * colorComponents * sizeof(float) : 0;
+  uint64_t attrBytes = 0;
+  for(uint32_t a = 0; a < numAttrs; ++a)
+    attrBytes += n * attrDescs[a].components * sizeof(float);
+  hdr.payload_bytes = posBytes + colBytes + attrBytes;
+
+  // One allocation, memcpy everything in — no pxr involvement.
+  std::vector<uint8_t> buf;
+  buf.resize(sizeof(hdr) + numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc)
+      + hdr.payload_bytes);
+  uint8_t* dst = buf.data();
+  memcpy(dst, &hdr, sizeof(hdr));
+  dst += sizeof(hdr);
+  if(numAttrs)
+  {
+    memcpy(dst, attrDescs, numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc));
+    dst += numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
+  }
+  memcpy(dst, data.Points, posBytes);
+  dst += posBytes;
+  if(colBytes)
+  {
+    memcpy(dst, data.Colors, colBytes);
+    dst += colBytes;
+  }
+  for(uint32_t a = 0; a < numAttrs; ++a)
+  {
+    const uint64_t bytes = n * attrDescs[a].components * sizeof(float);
+    memcpy(dst, data.Attributes[a].Data, bytes);
+    dst += bytes;
+  }
+
+  GetDiffCapture().CapturePreStore(geoKey);
+  g_rankMemoryStore->StoreFile(geoKey, buf.data(), buf.size(), "application/x-jusync-geo");
+  return true;
 }

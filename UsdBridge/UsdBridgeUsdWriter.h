@@ -201,6 +201,23 @@ public:
   // (keeps the historical ".usda" suffix that client-side gates key off).
   std::string StoreKeyForStageName(const std::string& stageName) const;
 
+  // --- JUSYNC RawGeo streaming -------------------------------------------
+  // When JUSYNC_RAWGEO=1 and the bridge runs in memory-store mode, instancer
+  // geometries mirror their raw float arrays into the store under the clip
+  // key with a ".geo" extension (see JusyncRawGeoHeader in the protocol
+  // header) and the USD crate export is skipped for them — serializing a
+  // 10M-point layer per frame cost ~1s and dwarfed everything else. The
+  // empty clip stage (created by GetTimeVarStage) stays registered so scene
+  // references remain valid; its sub-kilobyte twins are ignored by the
+  // streaming client's size gate.
+  // Returns true when the payload was stored as RawGeo (caller must then
+  // skip UpdateUsdGeometry/TrackStageMemory for this geometry).
+  bool TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
+                      const UsdBridgeInstancerData& data, double timeStep);
+  template<typename GeomDataType>
+  bool TryStoreRawGeo(UsdBridgePrimCache*, const GeomDataType&, double) { return false; }
+  static bool RawGeoEnabled();
+
   TfToken& AttributeNameToken(const char* attribName);
 
   friend void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);

@@ -1025,7 +1025,15 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
         { usdWriter->InitializeUsdGeometry(geomStage, geomPath, geomData, false); }
 #endif
   );
-  
+
+  // JUSYNC RawGeo (JUSYNC_RAWGEO=1, memory-store mode): mirror the raw float
+  // arrays into the store as "clips/<...>.geo" and skip USD authoring + crate
+  // export for this geometry. The empty clip stage created above keeps the
+  // scene/manifest references valid; streaming clients take the .geo payload
+  // and its sub-size-threshold twins are ignored client-side.
+  if(BRIDGE_USDWRITER.TryStoreRawGeo(cache, geomData, timeStep))
+    return;
+
   BRIDGE_USDWRITER.UpdateUsdGeometry(geomStage, geomPath, geomData, timeStep);
 
 #ifdef VALUE_CLIP_RETIMING
