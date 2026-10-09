@@ -42,7 +42,7 @@ WORKDIR /src
 # --- cppzmq (C++ zmq.hpp headers; Ubuntu 22.04 has no cppzmq package) ------
 # Header-only: zmq's C lib comes from libzmq3-dev above. The device's ZmqBroker
 # needs zmq.hpp (find_package(cppzmq) / find_path(zmq.hpp) fallback).
-ARG CPPZMQ_REF=v4.10.2
+ARG CPPZMQ_REF=v4.11.0
 RUN git clone --depth 1 --branch ${CPPZMQ_REF} https://github.com/zeromq/cppzmq.git cppzmq \
     && cmake -S cppzmq -B build/cppzmq -DCMAKE_BUILD_TYPE=Release \
          -DCMAKE_INSTALL_PREFIX=/usr/local -DCPPZMQ_BUILD_TESTS=OFF \
@@ -55,6 +55,7 @@ RUN git clone --depth 1 --branch ${ANARI_SDK_REF} \
     && cmake -S anari-sdk -B build/anari -G Ninja \
          -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
          -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF \
+         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     && cmake --build build/anari && cmake --install build/anari
 
@@ -64,6 +65,7 @@ RUN git clone --depth 1 --branch ${USD_REF} \
       https://github.com/PixarAnimationStudios/OpenUSD.git usd \
     && cmake -S usd -B build/usd -G Ninja \
          -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/usd \
+         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
          -DPXR_BUILD_TESTS=OFF -DPXR_BUILD_EXAMPLES=OFF -DPXR_BUILD_TUTORIALS=OFF \
          -DPXR_BUILD_USDVIEW=OFF -DPXR_BUILD_IMAGING=OFF -DPXR_BUILD_USD_IMAGING=OFF \
@@ -81,6 +83,7 @@ ENV LD_LIBRARY_PATH=/opt/usd/lib
 COPY . anari-usd
 RUN cmake -S anari-usd -B build/device -G Ninja \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DUSD_ROOT_DIR=/opt/usd -DANARI_ROOT_DIR=/usr/local \
       -DPython3_ROOT_DIR=/usr -DPython3_FIND_STRATEGY=LOCATION \
       -DUSD_DEVICE_BUILD_EXAMPLES=ON -DUSD_DEVICE_BUILD_VERSION_EXPLICIT=1 \
