@@ -2011,7 +2011,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       fprintf(stderr, "[UsdBridge] RawGeo stride = %llu\n", (unsigned long long)stride);
     return true;
   }();
-  const uint64_t n = (stride == 1) ? nSrc : ((nSrc + stride - 1) / stride);
 
   uint32_t colorComponents = data.Colors ? RawGeoFloatComponents(data.ColorsType) : 0;
   if(colorComponents != 3 && colorComponents != 4)
@@ -2039,78 +2038,128 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     }
   }
 
+  // Pack header + stride-sampled attribute blocks. Packing depends only on
+  // the effective point count, so the idle-burst path below can re-pack the
+  // same source arrays at full resolution.
+  const size_t descBytes = numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
+  auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeader &outHdr)
+  {
+    const uint64_t n = (effStride == 1) ? nSrc : ((nSrc + effStride - 1) / effStride);
+
+    memset(&outHdr, 0, sizeof(outHdr));
+    outHdr.magic = anari_usd_protocol::JUSYNC_RAWGEO_MAGIC;
+    outHdr.version = anari_usd_protocol::JUSYNC_RAWGEO_VERSION;
+    strncpy(outHdr.prim_name, cacheEntry->Name.GetString().c_str(),
+        sizeof(outHdr.prim_name) - 1);
+    outHdr.num_points = n;
+    outHdr.time = timeStep;
+    outHdr.position_components = 3;
+    outHdr.color_components = colorComponents;
+    outHdr.num_attributes = numAttrs;
+    outHdr.attr_uniform_count = static_cast<uint32_t>(n);
+
+    const uint64_t posBytes = n * 3 * sizeof(float);
+    const uint64_t colBytes = colorComponents ? n * colorComponents * sizeof(float) : 0;
+    uint64_t attrBytes = 0;
+    for(uint32_t a = 0; a < numAttrs; ++a)
+      attrBytes += n * attrDescs[a].components * sizeof(float);
+    outHdr.payload_bytes = posBytes + colBytes + attrBytes;
+
+    // One allocation, memcpy everything in — no pxr involvement.
+    std::vector<uint8_t> b;
+    b.resize(sizeof(outHdr) + descBytes + outHdr.payload_bytes);
+    uint8_t* d = b.data();
+    memcpy(d, &outHdr, sizeof(outHdr));
+    d += sizeof(outHdr);
+    if(numAttrs)
+    {
+      memcpy(d, attrDescs, descBytes);
+      d += descBytes;
+    }
+    if(effStride == 1)
+    {
+      memcpy(d, data.Points, posBytes);
+    }
+    else
+    {
+      const float* src = static_cast<const float*>(data.Points);
+      for(uint64_t i = 0; i < n; ++i)
+        memcpy(d + i * 3 * sizeof(float), src + (i * effStride) * 3, 3 * sizeof(float));
+    }
+    d += posBytes;
+    if(colBytes)
+    {
+      if(effStride == 1)
+      {
+        memcpy(d, data.Colors, colBytes);
+      }
+      else
+      {
+        const float* src = static_cast<const float*>(data.Colors);
+        const uint64_t cc = colorComponents;
+        for(uint64_t i = 0; i < n; ++i)
+          memcpy(d + i * cc * sizeof(float), src + (i * effStride) * cc, cc * sizeof(float));
+      }
+      d += colBytes;
+    }
+    for(uint32_t a = 0; a < numAttrs; ++a)
+    {
+      const uint64_t comps = attrDescs[a].components;
+      const uint64_t bytes = n * comps * sizeof(float);
+      if(effStride == 1)
+      {
+        memcpy(d, data.Attributes[a].Data, bytes);
+      }
+      else
+      {
+        const float* src = static_cast<const float*>(data.Attributes[a].Data);
+        for(uint64_t i = 0; i < n; ++i)
+          memcpy(d + i * comps * sizeof(float), src + (i * effStride) * comps, comps * sizeof(float));
+      }
+      d += bytes;
+    }
+    return b;
+  };
+
   anari_usd_protocol::JusyncRawGeoHeader hdr;
-  memset(&hdr, 0, sizeof(hdr));
-  hdr.magic = anari_usd_protocol::JUSYNC_RAWGEO_MAGIC;
-  hdr.version = anari_usd_protocol::JUSYNC_RAWGEO_VERSION;
-  strncpy(hdr.prim_name, cacheEntry->Name.GetString().c_str(), sizeof(hdr.prim_name) - 1);
-  hdr.num_points = n;
-  hdr.time = timeStep;
-  hdr.position_components = 3;
-  hdr.color_components = colorComponents;
-  hdr.num_attributes = numAttrs;
-  hdr.attr_uniform_count = static_cast<uint32_t>(n);
+  std::vector<uint8_t> buf = packRawGeo(stride, hdr);
 
-  const uint64_t posBytes = n * 3 * sizeof(float);
-  const uint64_t colBytes = colorComponents ? n * colorComponents * sizeof(float) : 0;
-  uint64_t attrBytes = 0;
-  for(uint32_t a = 0; a < numAttrs; ++a)
-    attrBytes += n * attrDescs[a].components * sizeof(float);
-  hdr.payload_bytes = posBytes + colBytes + attrBytes;
-
-  // One allocation, memcpy everything in — no pxr involvement.
-  std::vector<uint8_t> buf;
-  buf.resize(sizeof(hdr) + numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc)
-      + hdr.payload_bytes);
-  uint8_t* dst = buf.data();
-  memcpy(dst, &hdr, sizeof(hdr));
-  dst += sizeof(hdr);
-  if(numAttrs)
+  // Idle -> full-resolution burst. Byte-compare each commit's sampled payload
+  // against the previous one; after JUSYNC_RAWGEO_IDLE_FRAMES (default 6,
+  // 0 disables) consecutive identical commits emit ONE full-resolution store
+  // so a paused scene settles at full density in the viewer, then suppress
+  // further identical stores until the geometry changes again. The baseline
+  // always holds the STRIDED payload, so the burst frame itself does not
+  // re-arm the detector. Suppression also saves bandwidth on paused sims.
+  static const uint64_t idleFrames = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
+    uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
+    return n > 1000000 ? 1000000 : n;
+  }();
+  if(idleFrames > 0)
   {
-    memcpy(dst, attrDescs, numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc));
-    dst += numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
-  }
-  if(stride == 1)
-  {
-    memcpy(dst, data.Points, posBytes);
-  }
-  else
-  {
-    const float* src = static_cast<const float*>(data.Points);
-    for(uint64_t i = 0; i < n; ++i)
-      memcpy(dst + i * 3 * sizeof(float), src + (i * stride) * 3, 3 * sizeof(float));
-  }
-  dst += posBytes;
-  if(colBytes)
-  {
-    if(stride == 1)
+    struct IdleState { std::vector<uint8_t> baseline; uint64_t same = 0; bool burstDone = false; };
+    static std::map<std::string, IdleState> idleStates;
+    IdleState &st = idleStates[geoKey];
+    const uint8_t* payload = buf.data() + sizeof(hdr) + descBytes;
+    const bool identical = st.baseline.size() == hdr.payload_bytes
+        && memcmp(payload, st.baseline.data(), hdr.payload_bytes) == 0;
+    st.baseline.assign(payload, payload + hdr.payload_bytes);
+    st.same = identical ? st.same + 1 : 0;
+    if(!identical)
+      st.burstDone = false;
+    if(st.same >= idleFrames)
     {
-      memcpy(dst, data.Colors, colBytes);
+      if(!st.burstDone && stride > 1)
+      {
+        buf = packRawGeo(1, hdr);
+        st.burstDone = true;
+        fprintf(stderr, "[UsdBridge] RawGeo idle burst: full-res %llu points (%.1f MB) for '%s'\n",
+            (unsigned long long)hdr.num_points, buf.size() / (1024.0 * 1024.0), geoKey.c_str());
+      }
+      else
+        return true; // quiet + already full density: no store, no notification
     }
-    else
-    {
-      const float* src = static_cast<const float*>(data.Colors);
-      const uint64_t cc = colorComponents;
-      for(uint64_t i = 0; i < n; ++i)
-        memcpy(dst + i * cc * sizeof(float), src + (i * stride) * cc, cc * sizeof(float));
-    }
-    dst += colBytes;
-  }
-  for(uint32_t a = 0; a < numAttrs; ++a)
-  {
-    const uint64_t comps = attrDescs[a].components;
-    const uint64_t bytes = n * comps * sizeof(float);
-    if(stride == 1)
-    {
-      memcpy(dst, data.Attributes[a].Data, bytes);
-    }
-    else
-    {
-      const float* src = static_cast<const float*>(data.Attributes[a].Data);
-      for(uint64_t i = 0; i < n; ++i)
-        memcpy(dst + i * comps * sizeof(float), src + (i * stride) * comps, comps * sizeof(float));
-    }
-    dst += bytes;
   }
 
   // Opt-in offline verification (default off): dump the exact packed payload
@@ -2129,8 +2178,9 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     const uint64_t f = snapFrames.fetch_add(1);
     if(f % snapEvery == 0)
     {
-      const uint8_t* pos = buf.data() + sizeof(hdr)
-          + numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
+      const uint64_t n = hdr.num_points;
+      const uint64_t posBytes = n * 3 * sizeof(float);
+      const uint8_t* pos = buf.data() + sizeof(hdr) + descBytes;
       const uint8_t* col = pos + posBytes;
       char path[512];
       snprintf(path, sizeof(path), "%s/cloud_%08llu.ply", snapDir, (unsigned long long)f);

@@ -17,6 +17,10 @@
 //   ANARI_BIG_POINTS   points per cloud   (default 10000000)
 //   ANARI_BIG_FPS      commits per second (default 2)
 //   ANARI_BIG_SECONDS  run duration, 0 = forever (default 0)
+//   ANARI_BIG_FREEZE_SEC  after N seconds positions stop changing while
+//                    commits continue at the same cadence: models a paused
+//                    sim / scene under inspection, which the UsdDevice
+//                    sender turns into one full-resolution RawGeo burst
 //   ANARI_BIG_COLORS   1 = add per-vertex float3 colors (default 0)
 //   ANARI_BIG_RADIUS   constant point radius (default 1.0)
 
@@ -102,6 +106,7 @@ int main(int argc, const char **argv)
   const long numPoints = envLong("ANARI_BIG_POINTS", 10000000L);
   const long fps = envLong("ANARI_BIG_FPS", 2L);
   const long seconds = envLong("ANARI_BIG_SECONDS", 0L);
+  const long freezeSec = envLong("ANARI_BIG_FREEZE_SEC", 0L);
   const int useColors = envLong("ANARI_BIG_COLORS", 0L) != 0;
   float radius = (float)envLong("ANARI_BIG_RADIUS", 1L);
 
@@ -261,16 +266,27 @@ int main(int argc, const char **argv)
   anariCommitParameters(dev, frame);
 
   int frameIdx = 0;
+  int frozen = 0;
   for (;;)
   {
     const double commitStart = nowMs();
 
+    if (!frozen && freezeSec > 0 && (nowMs() - startMs) > freezeSec * 1000.0) {
+      frozen = 1;
+      printf("bigcloud: FROZEN at frame %d - positions static, commits continue\n",
+          frameIdx);
+      fflush(stdout);
+    }
+
     // Cheap memory-bound animation: uniform scale pulse (real sims change far
     // more of the buffer than this; the streaming cost is byte volume, not
-    // which bytes changed).
-    const float scale = 1.0f + 0.15f * sinf(frameIdx * 0.35f);
-    for (long i = 0; i < numPoints * 3; ++i)
-      positions[i] = base[i] * scale;
+    // which bytes changed). While frozen the buffer is left untouched so every
+    // commit carries an identical payload (the RawGeo idle detector's signal).
+    if (!frozen) {
+      const float scale = 1.0f + 0.15f * sinf(frameIdx * 0.35f);
+      for (long i = 0; i < numPoints * 3; ++i)
+        positions[i] = base[i] * scale;
+    }
 
     // Re-set the position array on the retained mesh: the SDK takes the
     // device-side data snapshot at set/commit of the ARRAY parameter, so
