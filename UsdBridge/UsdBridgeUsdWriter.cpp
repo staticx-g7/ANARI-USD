@@ -1996,9 +1996,8 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
 
   const uint64_t nSrc = data.NumPoints;
 
-  // Live LOD without touching the wire format: sample every Sth source point.
-  // The JSG1 header self-describes the (smaller) count, so the client-side
-  // path is completely stride-unaware. One-time read: env per MPI rank works.
+  // Sender-side LOD: sample every Sth point. The JSG1 header self-describes
+  // the (smaller) count, so the client-side path is completely stride-unaware.
   static const uint64_t stride = [](){
     const char* v = getenv("JUSYNC_RAWGEO_STRIDE");
     uint64_t s = (v && v[0]) ? strtoull(v, nullptr, 10) : 1;
@@ -2016,9 +2015,9 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(colorComponents != 3 && colorComponents != 4)
     colorComponents = 0;
 
-  // Per-vertex float attributes (e.g. "attribute0", consumed as the scalar
-  // channel by the client) ride along as plain float blocks.
+  // Per-vertex float attributes ride along as plain float blocks.
   anari_usd_protocol::JusyncRawGeoAttrDesc attrDescs[16];
+  uint32_t attrSrcIdx[16];
   uint32_t numAttrs = 0;
   if(data.Attributes)
   {
@@ -2034,13 +2033,13 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       if(src.Name)
         strncpy(attrDescs[numAttrs].name, src.Name, sizeof(attrDescs[numAttrs].name) - 1);
       attrDescs[numAttrs].components = comps;
+      attrSrcIdx[numAttrs] = a;
       ++numAttrs;
     }
   }
 
-  // Pack header + stride-sampled attribute blocks. Packing depends only on
-  // the effective point count, so the idle-burst path below can re-pack the
-  // same source arrays at full resolution.
+  // Packing depends only on the effective point count, so the idle-burst
+  // path can re-pack the same source arrays at full resolution.
   const size_t descBytes = numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
   auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeader &outHdr)
   {
@@ -2106,15 +2105,15 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       const uint64_t comps = attrDescs[a].components;
       const uint64_t bytes = n * comps * sizeof(float);
+      const float* attrData = static_cast<const float*>(data.Attributes[attrSrcIdx[a]].Data);
       if(effStride == 1)
       {
-        memcpy(d, data.Attributes[a].Data, bytes);
+        memcpy(d, attrData, bytes);
       }
       else
       {
-        const float* src = static_cast<const float*>(data.Attributes[a].Data);
         for(uint64_t i = 0; i < n; ++i)
-          memcpy(d + i * comps * sizeof(float), src + (i * effStride) * comps, comps * sizeof(float));
+          memcpy(d + i * comps * sizeof(float), attrData + (i * effStride) * comps, comps * sizeof(float));
       }
       d += bytes;
     }
@@ -2124,13 +2123,11 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   anari_usd_protocol::JusyncRawGeoHeader hdr;
   std::vector<uint8_t> buf = packRawGeo(stride, hdr);
 
-  // Idle -> full-resolution burst. Byte-compare each commit's sampled payload
-  // against the previous one; after JUSYNC_RAWGEO_IDLE_FRAMES (default 6,
-  // 0 disables) consecutive identical commits emit ONE full-resolution store
-  // so a paused scene settles at full density in the viewer, then suppress
-  // further identical stores until the geometry changes again. The baseline
-  // always holds the STRIDED payload, so the burst frame itself does not
-  // re-arm the detector. Suppression also saves bandwidth on paused sims.
+  // Idle -> full-resolution burst: after JUSYNC_RAWGEO_IDLE_FRAMES (default 6,
+  // 0 disables) byte-identical sampled payloads, store ONE full-res frame so a
+  // paused scene settles at full density, then suppress identical stores until
+  // the geometry changes again. The baseline always holds the STRIDED payload,
+  // so the burst frame itself does not re-arm the detector.
   static const uint64_t idleFrames = [](){
     const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
     uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
@@ -2162,10 +2159,8 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     }
   }
 
-  // Opt-in offline verification (default off): dump the exact packed payload
-  // as a binary PLY so ParaView can render the frame series independently of
-  // UE. Files: <dir>/cloud_<frame>.ply, every JUSYNC_RAWGEO_SNAPSHOT_EVERY
-  // stores (default 10).
+  // Opt-in: dump every JUSYNC_RAWGEO_SNAPSHOT_EVERY-th packed payload as a
+  // binary PLY (cloud_<frame>.ply) for offline ParaView inspection.
   static const char* snapDir = getenv("JUSYNC_RAWGEO_SNAPSHOT_DIR");
   static const uint64_t snapEvery = [](){
     const char* v = getenv("JUSYNC_RAWGEO_SNAPSHOT_EVERY");

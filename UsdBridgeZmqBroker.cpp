@@ -126,10 +126,8 @@ std::string GetInfiniBandIPImpl() {
 // ============================================================================
 
 #ifdef ANARI_USD_ENABLE_MPI
-// ANARI apps are not required to be MPI-aware (most examples never call
-// MPI_Init). Bring MPI up lazily so the broker-address Bcast below works for
-// any application launched under mpirun. No-op when the app already
-// initialized MPI, and when MPI_Finalize already ran.
+// ANARI apps need not be MPI-aware; bring MPI up lazily so the broker-address
+// Bcast works for any app launched under mpirun. No-op if already init/final.
 static void EnsureMpiInitialized()
 {
     int initialized = 0;
@@ -292,12 +290,10 @@ bool ZmqBroker::Initialize(int expectedWorkers) {
             // Broadcast broker address to all workers via MPI
             std::string broadcast_addr = GetBrokerAddress(rank, worker_port_);
 
-            // Extract just the IP part for binding
-            // Extract just the IP part — but only as the WORKER-FACING address
-            // (broadcast of a routable IP to ranks >= 1). The BIND must stay
-            // wildcard-capable: loopback-only binds are unreachable through
-            // docker -p port-forwarding (same trap the single-rank branch
-            // documents above). DIFFCAPTURE_BIND_IP overrides on both paths.
+            // The broadcast address is worker-facing only (ranks >= 1 need a
+            // routable IP). The client bind must stay wildcard-capable: a
+            // loopback-only bind is unreachable through docker -p forwarding.
+            // DIFFCAPTURE_BIND_IP overrides both.
             const char* bind_ip_env = getenv("DIFFCAPTURE_BIND_IP");
             bind_ip = (bind_ip_env && bind_ip_env[0]) ? bind_ip_env : "0.0.0.0";
 
@@ -1605,10 +1601,9 @@ void ZmqBroker::TickPendingTransfers(int maxTransfers)
 
         const size_t totalSize = sizeof(response) + sendSize;
 
-        // Single-copy send: build the frame IN the ZMQ message buffer.
-        // (The old vector staging copied the whole chunk twice and churned a
-        // multi-MB allocation per chunk; the worker->broker path already used
-        // this pattern in ZmqWorker::SendFileChunk.)
+        // Single-copy send: build the frame inside the ZMQ message buffer
+        // (as ZmqWorker::SendFileChunk does; the staged vector copied each
+        // chunk twice).
         zmq::message_t message(totalSize);
         memcpy(message.data(), &response, sizeof(response));
         memcpy(static_cast<uint8_t*>(message.data()) + sizeof(response),
