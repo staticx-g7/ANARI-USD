@@ -127,18 +127,25 @@ std::string GetInfiniBandIPImpl() {
 
 #ifdef ANARI_USD_ENABLE_MPI
 // ANARI apps need not be MPI-aware; bring MPI up lazily so the broker-address
-// Bcast works for any app launched under mpirun. No-op if already init/final.
-static void EnsureMpiInitialized()
+// Bcast works for any app launched under mpirun. Returns false when MPI is
+// unusable (already finalized, or Init failed) so callers can fall back.
+static bool EnsureMpiInitialized()
 {
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (initialized)
-        return;
+        return true;
     int finalized = 0;
     MPI_Finalized(&finalized);
     if (finalized)
-        return;
-    MPI_Init(nullptr, nullptr);
+        return false;
+    if (MPI_Init(nullptr, nullptr) != MPI_SUCCESS)
+    {
+        std::cerr << "[UsdBridge] MPI_Init failed; falling back to loopback broker address"
+                  << std::endl;
+        return false;
+    }
+    return true;
 }
 #endif
 
@@ -150,7 +157,11 @@ static void EnsureMpiInitialized()
  */
 std::string GetBrokerAddress(int rank, int port) {
 #ifdef ANARI_USD_ENABLE_MPI
-    EnsureMpiInitialized();
+    if (!EnsureMpiInitialized()) {
+        std::stringstream ss;
+        ss << "127.0.0.1:" << port;
+        return ss.str();
+    }
     char broker_address[256];
     memset(broker_address, 0, sizeof(broker_address));
 

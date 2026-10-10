@@ -685,6 +685,18 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
     this->TrackStageMemory(std::string(name) + primPostfix + " (manifest)", cacheEntry->ManifestStage.second);
 }
 
+namespace {
+// Per-store-key state of the RawGeo idle detector (see TryStoreRawGeo);
+// pruned with the store entries in RemoveStoreEntriesForFile.
+struct RawGeoIdleState
+{
+  std::vector<uint8_t> baseline;
+  uint64_t same = 0;
+  bool burstDone = false;
+};
+std::map<std::string, RawGeoIdleState> g_rawGeoIdleStates;
+} // namespace
+
 void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
 {
   // A single stage/file can exist in the memory store under multiple keys:
@@ -730,6 +742,10 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
         "[Purge] removed stale file from memory store: " << key);
     }
+    // RawGeo idle baselines are keyed by store key; a purged clip must not
+    // leave its (multi-MB) baseline behind, and time-rolling clip schemes
+    // mint a new key per frame, so prune here or idleStates grows unbounded.
+    g_rawGeoIdleStates.erase(key);
     for(auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
     {
       if(it->filename == key)
@@ -2123,11 +2139,26 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   anari_usd_protocol::JusyncRawGeoHeader hdr;
   std::vector<uint8_t> buf = packRawGeo(stride, hdr);
 
+  // Client download buffers and per-point blocks are int32-indexed; refuse
+  // RawGeo rather than hand the client an unloadable payload.
+  static const uint64_t kMaxRawGeoPayload = 1536ull * 1024 * 1024;
+  if(hdr.payload_bytes > kMaxRawGeoPayload)
+  {
+    static const bool cappedLogged = [](){
+      fprintf(stderr, "[UsdBridge] RawGeo payload exceeds cap, falling back to USD path\n");
+      return true;
+    }();
+    (void)cappedLogged;
+    return false;
+  }
+
   // Idle -> full-resolution burst: after JUSYNC_RAWGEO_IDLE_FRAMES (default 6,
   // 0 disables) byte-identical sampled payloads, store ONE full-res frame so a
   // paused scene settles at full density, then suppress identical stores until
   // the geometry changes again. The baseline always holds the STRIDED payload,
-  // so the burst frame itself does not re-arm the detector.
+  // so the burst frame itself does not re-arm the detector. Known limit: motion
+  // that only touches indices the stride sampler skips reads as idle until a
+  // sampled point moves.
   static const uint64_t idleFrames = [](){
     const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
     uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
@@ -2135,9 +2166,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   }();
   if(idleFrames > 0)
   {
-    struct IdleState { std::vector<uint8_t> baseline; uint64_t same = 0; bool burstDone = false; };
-    static std::map<std::string, IdleState> idleStates;
-    IdleState &st = idleStates[geoKey];
+    RawGeoIdleState &st = g_rawGeoIdleStates[geoKey];
     const uint8_t* payload = buf.data() + sizeof(hdr) + descBytes;
     const bool identical = st.baseline.size() == hdr.payload_bytes
         && memcmp(payload, st.baseline.data(), hdr.payload_bytes) == 0;
@@ -2149,10 +2178,15 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       if(!st.burstDone && stride > 1)
       {
-        buf = packRawGeo(1, hdr);
+        // All blocks are per-point uniform, so payload/point is exact.
+        const uint64_t perPoint = hdr.payload_bytes / hdr.num_points;
         st.burstDone = true;
-        fprintf(stderr, "[UsdBridge] RawGeo idle burst: full-res %llu points (%.1f MB) for '%s'\n",
-            (unsigned long long)hdr.num_points, buf.size() / (1024.0 * 1024.0), geoKey.c_str());
+        if(nSrc * perPoint <= kMaxRawGeoPayload)
+        {
+          buf = packRawGeo(1, hdr);
+          fprintf(stderr, "[UsdBridge] RawGeo idle burst: full-res %llu points (%.1f MB) for '%s'\n",
+              (unsigned long long)hdr.num_points, buf.size() / (1024.0 * 1024.0), geoKey.c_str());
+        }
       }
       else
         return true; // quiet + already full density: no store, no notification
@@ -2186,7 +2220,11 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
             "ply\nformat binary_little_endian 1.0\nelement vertex %llu\n"
             "property float x\nproperty float y\nproperty float z\n",
             (unsigned long long)n);
-        if(colorComponents)
+        if(colorComponents == 4)
+          fprintf(ply,
+              "property float red\nproperty float green\nproperty float blue\n"
+              "property float alpha\n");
+        else if(colorComponents)
           fprintf(ply,
               "property float red\nproperty float green\nproperty float blue\n");
         fprintf(ply, "end_header\n");
