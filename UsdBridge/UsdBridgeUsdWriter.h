@@ -284,6 +284,7 @@ protected:
     std::string filename;     // Actual filename in memory store (preserves extension)
     size_t estimatedBytes;
     UsdStageRefPtr stage;     // Keep reference to stage for recalculation
+    uint64_t lastExportedHash = 0; // content hash of the last StoreFile (skip identical re-stores)
   };
   std::vector<StageMemoryInfo> MemoryTracking;
 };

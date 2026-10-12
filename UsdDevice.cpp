@@ -21,6 +21,7 @@
 #include "UsdBridge/UsdBridgeMemoryStore.h"
 #include "UsdBridge/xxhash/xxhash.h"
 #include "UsdBridge/UsdBridgeDiffCapture.h"
+#include "UsdBridge/UsdBridgeAnimPlayer.h"
 
 #include "UsdBridge/Common/UsdBridgeParallelController.h"
 
@@ -890,6 +891,13 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         "USDRMNG: renderFrame — MemoryStore has %zu files before save", files.size());
     }
     
+    // JUSYNC: advance time-sample playback (no-op unless JUSYNC_ANIM_USD is
+    // set). Runs before the save so samples committed through
+    // SetGeometryData here get their clip stages saved and their RawGeo
+    // payloads DiffCapture'd, then dispatched by the notification block at
+    // the bottom of this function — same frame, same machinery as VTK.
+    jusync_anim::Tick();
+
     frameObjPtr->saveUsd(this);
     
     // Debug: log post-save file state

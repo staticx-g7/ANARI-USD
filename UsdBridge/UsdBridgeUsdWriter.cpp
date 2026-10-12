@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeUsdWriter.h"
+#include "xxhash/xxhash.h"
 #include "UsdBridgeCaches.h"
 #include "UsdBridgeMdlStrings.h"
 #include "UsdBridgeUsdWriter_Common.h"
@@ -718,12 +719,16 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
   if(endsWith(relativeName, ".usd"))
   {
     keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".geo"); // RawGeo twin
+    // NOTE: the RawGeo ".geo" twin is deliberately NOT removed. In
+    // JUSYNC_RAWGEO mode the .usd/.usda clip twins are empty placeholders and
+    // the ".geo" payload IS the streamed time step; ParaView re-creates its
+    // geometry on every commit, so this GC fires constantly and would destroy
+    // each sample before any client can fetch it. Retention is bounded by the
+    // AnimPlayer sample ring (JUSYNC_ANIM_MAXSAMPLES).
   }
   else if(endsWith(relativeName, ".usda"))
   {
     keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".usd");
-    keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".geo"); // RawGeo twin
   }
   else if(endsWith(relativeName, ".geo"))
   {
@@ -1836,6 +1841,9 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
       filename += ".usda";
   }
 
+  const uint64_t contentHash = fullUsdContent.empty()
+      ? 0 : XXH64(fullUsdContent.data(), fullUsdContent.size(), 0);
+
   // Store in memory file store for ZMQ streaming.
   // StoreFile zstd-compresses USD payloads internally (self-describing on the
   // wire via the zstd magic) and stores the hash/size of the on-the-wire bytes.
@@ -1860,6 +1868,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     if (it->filename == filename) {
       it->stage = stage;
       it->estimatedBytes = estimatedBytes;
+      it->lastExportedHash = contentHash;
       goto tracking_done;
     }
   }
@@ -1869,6 +1878,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     info.filename = filename; // Store actual filename to avoid .usd/.usda duplicates on recalculation
     info.estimatedBytes = estimatedBytes;
     info.stage = stage; // Store reference for later recalculation
+    info.lastExportedHash = contentHash;
     MemoryTracking.push_back(info);
   }
 tracking_done:;
@@ -1927,6 +1937,18 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
           }
           else if (!fullUsdContent.empty())
           {
+            // Skip the store (zstd compress + hash + memory churn) when the
+            // exported content is byte-identical to the last store. Unchanged
+            // stages (lights/cameras/materials/manifests) otherwise get re-stored
+            // every render frame, which is pure overhead while streaming.
+            const uint64_t contentHash = XXH64(fullUsdContent.data(), fullUsdContent.size(), 0);
+            if (info.lastExportedHash == contentHash)
+            {
+              info.estimatedBytes = fullUsdContent.size();
+              continue;
+            }
+            info.lastExportedHash = contentHash;
+
             // Store key is the tracked name as-is (TrackStageMemory always stores
             // under a ".usda" key, so no extension rewriting is needed anymore).
             const std::string& filename = info.filename.empty() ? info.name : info.filename;

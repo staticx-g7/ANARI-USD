@@ -224,6 +224,10 @@ ZmqBroker::ZmqBroker(int workerPort, int clientPort)
     context_ = std::make_unique<zmq::context_t>(ioThreads);
     router_ = std::make_unique<zmq::socket_t>(*context_, zmq::socket_type::router);
     client_router_ = std::make_unique<zmq::socket_t>(*context_, zmq::socket_type::router);
+    // Bound the client send queue. Notification pushes run on the device
+    // render/GUI thread, so they must never block (see the poll guard in
+    // ForwardNotificationToClient / ForwardSceneUpdateToClient).
+    client_router_->set(zmq::sockopt::sndhwm, 1000);
 }
 
 ZmqBroker::~ZmqBroker() {
@@ -2298,6 +2302,17 @@ bool ZmqBroker::ForwardNotificationToClient(const ZmqFileNotification& notificat
     bool success = true;
 
     for (const auto& client_id : client_ids_) {
+        // Never block the caller: this runs on the device render/GUI thread. If
+        // the client is not draining (slow parse/spawn) skip it instead of
+        // freezing ParaView - the client resyncs from the file list/hash diff.
+        zmq::pollitem_t pollItems[] = { { static_cast<void*>(*client_router_), 0, ZMQ_POLLOUT, 0 } };
+        try { zmq::poll(pollItems, 1, std::chrono::milliseconds(0)); } catch (const zmq::error_t&) {}
+        if (!(pollItems[0].revents & ZMQ_POLLOUT)) {
+            std::cerr << "[Rank 0 MPI Broker] client back-pressure - dropping notification '"
+                      << notification.filename << "'" << std::endl;
+            success = false;
+            continue;
+        }
 
         try {
             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
@@ -2319,6 +2334,17 @@ bool ZmqBroker::ForwardSceneUpdateToClient(const ZmqSceneUpdate& update) {
     bool success = true;
 
     for (const auto& client_id : client_ids_) {
+        // Non-blocking push (see ForwardNotificationToClient): skip a client that
+        // is not draining rather than blocking the render thread.
+        zmq::pollitem_t pollItems[] = { { static_cast<void*>(*client_router_), 0, ZMQ_POLLOUT, 0 } };
+        try { zmq::poll(pollItems, 1, std::chrono::milliseconds(0)); } catch (const zmq::error_t&) {}
+        if (!(pollItems[0].revents & ZMQ_POLLOUT)) {
+            std::cerr << "[Rank 0 MPI Broker] client back-pressure - dropping scene update '"
+                      << update.getPrimPath() << "'" << std::endl;
+            success = false;
+            continue;
+        }
+
         try {
             client_router_->send(zmq::buffer(client_id), zmq::send_flags::sndmore);
             client_router_->send(zmq::message_t(), zmq::send_flags::sndmore);

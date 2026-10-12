@@ -8,6 +8,7 @@
 #include "UsdBridgeRenderContext.h"
 #include "UsdRenderManager.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
+#include "UsdBridgeAnimPlayer.h" // JUSYNC time-sample streaming
 #include "Common/UsdBridgeParallelController.h"	
 #include "Common/UsdBridgeUtils.h"
 
@@ -676,6 +677,7 @@ void UsdBridge::DeleteGeometry(UsdGeometryHandle handle)
 {
   if (handle.value == nullptr) return;
 
+  jusync_anim::OnPrimDeleted(handle.value); // drop player registration first
   Internals->FindAndDeletePrim(handle);
 }
 
@@ -1031,8 +1033,18 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
   // export for this geometry. The empty clip stage created above keeps the
   // scene/manifest references valid; streaming clients take the .geo payload
   // and its sub-size-threshold twins are ignored client-side.
-  if(BRIDGE_USDWRITER.TryStoreRawGeo(cache, geomData, timeStep))
+  // JUSYNC time-sample detection: commits of "<actor>_spheres_<n>" prims are
+  // absorbed while a multiblock timeline set is being assembled (ParaView
+  // Extract Time Steps + composite ANARI mapper). The player re-publishes
+  // them one sample per frame through SetGeometryData, which re-enters here
+  // with its own guard and takes the normal store path below.
+  if(jusync_anim::MaybeRegister(this, geometry, cache ? cache->Name.GetString().c_str() : "", geomData, timeStep))
     return;
+
+  if(BRIDGE_USDWRITER.TryStoreRawGeo(cache, geomData, timeStep))
+  {
+    return;
+  }
 
   BRIDGE_USDWRITER.UpdateUsdGeometry(geomStage, geomPath, geomData, timeStep);
 
@@ -1433,6 +1445,8 @@ void UsdBridge::PurgeUnreferencedPrims(bool saveScene)
       if(cacheEntry->IsGcDeleted())
         return;
       cacheEntry->MarkGcDeleted();
+
+      jusync_anim::OnPrimDeleted(cacheEntry); // player must not commit into a freed prim
 
       deletedPrimNames.push_back(cacheEntry->PrimPath.GetString());
 
