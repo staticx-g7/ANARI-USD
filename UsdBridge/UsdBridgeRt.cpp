@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "usd.h"
 #include "UsdBridgeRt.h"
@@ -43,7 +42,6 @@ namespace
 #ifdef USE_USDRT
     PXR_NS::UsdStageCache& stageCache = PXR_NS::UsdUtilsStageCache::Get();
 
-    // If stage doesn't exist in stagecache, insert
     PXR_NS::UsdStageCache::Id usdStageId = stageCache.GetId(usdStage);
     if(!usdStageId.IsValid())
       usdStageId = stageCache.Insert(usdStage);
@@ -75,7 +73,6 @@ class UsdBridgeRtInternals
 
       FindUniformPrim(PxrSceneStage->GetPrimAtPath(PXR_NS::SdfPath("/Root")));
 
-      // Get every Mesh prim with a extent attribute in Fabric
       const omni::fabric::Token extentAttribName("faceVertexCounts");
       omni::fabric::AttrNameAndType extentAttrib(omni::fabric::Type(omni::fabric::BaseDataType::eInt, 1, 1), extentAttribName);
       omni::fabric::AttrNameAndType mesh(
@@ -83,7 +80,6 @@ class UsdBridgeRtInternals
         omni::fabric::Token("Mesh"));
       omni::fabric::PrimBucketList buckets = StageReaderWriter.findPrims({ extentAttrib, mesh });
 
-      // Iterate over the buckets that match the query
       for (size_t bucketId = 0; bucketId < buckets.bucketCount(); bucketId++)
       {
         auto primPaths = StageReaderWriter.getPathArray(buckets, bucketId);
@@ -102,28 +98,7 @@ class UsdBridgeRtInternals
             UniformPrim = SceneStage->GetPrimAtPath(sdfPrimPath);
 #endif
 
-            //bool hasAttrib = UniformPrim.HasAttribute(usdrt::TfToken("primvars:attribute0"));
 
-            // Check array of attribs that exist on the prim
-            //for(const omni::fabric::AttrNameAndType& attribNameType : attribs)
-            //{
-            //  const char* nameText = attribNameType.name.getText();
-            //  nameText = nameText;
-            //}
-
-            //UsdRtRelationshipType protoRel = rtPrim.GetRelationship(usdrt::TfToken("_protoPath"));
-            //if (protoRel)
-            //{
-            //  usdrt::SdfPathVector targets;
-            //  protoRel.GetTargets(&targets);
-            //  for(auto& relTarget : targets)
-            //  {
-            //    std::string relString = relTarget.GetString();
-//
-            //    UniformPrim = SceneStage->GetPrimAtPath(relTarget);
-            //    assert(UniformPrim);
-            //  }
-            //}
           }
         }
       }
@@ -142,7 +117,6 @@ class UsdBridgeRtInternals
 #else
       UniformPrim = UsdRtPrimType();
 #endif
-      //FindUniformPrim(PxrSceneStage->GetPrimAtPath(PXR_NS::SdfPath("/Root")));
 
     }
 
@@ -160,24 +134,8 @@ class UsdBridgeRtInternals
         UniformPrim = rtPrim;
 #endif
 
-        //bool hasAttrib = UniformPrim.HasAttribute(usdrt::TfToken("primvars:attribute0"));
-        //hasAttrib = hasAttrib;
 
-        //UsdRtRelationshipType protoRel = rtPrim.GetRelationship(usdrt::TfToken("_protoPath"));
-        //if (protoRel)
-        //{
-        //  usdrt::SdfPathVector targets;
-        //  protoRel.GetTargets(&targets);
-        //  for(auto& relTarget : targets)
-        //  {
-        //    std::string relString = relTarget.GetString();
-//
-        //    UniformPrim = SceneStage->GetPrimAtPath(relTarget);
-        //    assert(UniformPrim);
-        //  }
-        //}
       }
-//
       for(const auto& childPrim : rootPrim.GetFilteredChildren(PXR_NS::UsdTraverseInstanceProxies()))
       {
         FindUniformPrim(childPrim);
@@ -216,7 +174,7 @@ using namespace usdrt;
 PXR_NAMESPACE_USING_DIRECTIVE
 #endif
 
-#define USE_USDRT_ELTTYPE // To get the right elementtype type def for arrays (not the same between usdrt and usd)
+#define USE_USDRT_ELTTYPE
 #include "UsdBridgeUsdWriter_Arrays.h"
 
 #ifdef USE_FABRIC
@@ -251,7 +209,7 @@ struct UsdBridgeFabricSpanInit
 
   bool GetAutoAssignToAttrib() const
   {
-    return false; // Not relevant for fabric spans, since AssignToAttrib does nothing
+    return false;
   }
 
   omni::fabric::Path& PrimPath;
@@ -312,7 +270,6 @@ template<typename ReturnEltType>
 UsdBridgeSpanI<ReturnEltType>* UsdBridgeRt::UpdateUsdAttribute(const UsdBridgeLogObject& logObj, const void* arrayData, UsdBridgeType arrayDataType, size_t arrayNumElements,
   const ::PXR_NS::UsdAttribute& attrib, const ::PXR_NS::UsdTimeCode& timeCode, bool writeToAttrib)
 {
-  //ReCalc(); //fix
 
   using RtReturnEltType = typename UsdBridgeTypeTraits::PxrToRtEltType<ReturnEltType>::Type;
 
@@ -329,7 +286,7 @@ UsdBridgeSpanI<ReturnEltType>* UsdBridgeRt::UpdateUsdAttribute(const UsdBridgeLo
 #ifdef USE_USDRT
   UsdPrim rtPrim = Internals->UniformPrim;
   const std::string& attribName = attrib.GetName().GetString();
-    
+
   UsdAttribute rtAttrib = rtPrim.GetAttribute(attribName);
   UsdTimeCode rtTimeCode(timeCode.GetValue());
 
@@ -346,7 +303,6 @@ UsdBridgeSpanI<ReturnEltType>* UsdBridgeRt::UpdateUsdAttribute(const UsdBridgeLo
 
 #endif
 
-  // usd and rt elt types should be compatible
   return reinterpret_cast<UsdBridgeSpanI<ReturnEltType>*>(rtSpan);
 }
 

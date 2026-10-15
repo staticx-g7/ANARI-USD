@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeDiagnosticMgrDelegate_h
 #define UsdBridgeDiagnosticMgrDelegate_h
@@ -24,7 +23,7 @@ class UsdBridgeDiagnosticMgrDelegate : public TfDiagnosticMgr::Delegate
 
     void IssueFatalError(TfCallContext const& context,
       std::string const& msg) override;
- 
+
     void IssueStatus(TfStatus const& status) override;
 
     void IssueWarning(TfWarning const& warning) override;

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdDataArray.h"
 #include "UsdDevice.h"
@@ -39,7 +38,6 @@ UsdDataArray::UsdDataArray(const void *appMemory,
 
   if (CheckFormatting(device))
   {
-    // Make sure to incref all anari objects in case of object array
     if (anari::isObject(type))
     {
       incRef(TO_OBJ_PTR(data), layout.numItems1);
@@ -65,7 +63,6 @@ UsdDataArray::UsdDataArray(ANARIDataType dataType, uint64_t numItems1, uint64_t 
 
 UsdDataArray::~UsdDataArray()
 {
-  // Decref anari objects in case of object array
   if (anari::isObject(type))
   {
     decRef(TO_OBJ_PTR(data), layout.numItems1);
@@ -87,7 +84,7 @@ void UsdDataArray::filterSetParam(const char *name,
   UsdDevice* device)
 {
   if(setNameParam(name, type, mem, device))
-    device->addToResourceStringList(getWriteParams().usdName); //Name is kept for the lifetime of the device (to allow using pointer for caching resource's names)
+    device->addToResourceStringList(getWriteParams().usdName); // Name is kept for the lifetime of the device (to allow using pointer for caching resource's names)
 }
 
 int UsdDataArray::getProperty(const char * name, ANARIDataType type, void * mem, uint64_t size, UsdDevice* device)
@@ -200,7 +197,6 @@ void UsdDataArray::decRef(ANARIObject* anariObjects, uint64_t numAnariObjects)
 
 void UsdDataArray::allocPrivateData()
 {
-  // Alloc the owned memory
   char* newData = new char[dataSizeInBytes];
   memset(newData, 0, dataSizeInBytes);
   data = newData;
@@ -218,7 +214,6 @@ void UsdDataArray::freePrivateData(bool mappedCopy)
   allocDevice->logRawDeallocation(memToFree);
 #endif
 
-  // Deallocate owned memory
   delete[](char*)memToFree;
   memToFree = nullptr;
 }
@@ -234,24 +229,19 @@ void UsdDataArray::freePublicData(const void* appMemory)
 
 void UsdDataArray::publicToPrivateData()
 {
-  // Alloc private dest, copy appMemory src to it
   const void* appMemory = data;
   allocPrivateData();
 
   std::memcpy(data, appMemory, dataSizeInBytes); // In case of object array, Refcount 'transfers' to the copy (splits off user-managed public refcount)
 
-  // Delete appMemory if appropriate
   freePublicData(appMemory);
-  // No refcount modification necessary, public refcount managed by user
 }
 
 void UsdDataArray::CreateMappedObjectCopy()
 {
-  // Move the original array to a different spot and allocate new memory for the mapped object array.
   mappedObjectCopy = data;
   allocPrivateData();
 
-  // Transfer contents over to new memory, keep old one for managing references later on.
   std::memcpy(data, mappedObjectCopy, dataSizeInBytes);
 }
 
@@ -261,7 +251,6 @@ void UsdDataArray::TransferAndRemoveMappedObjectCopy()
   ANARIObject* oldAnariObjects = TO_OBJ_PTR(mappedObjectCopy);
   uint64_t numAnariObjects = layout.numItems1;
 
-  // First, increase reference counts of all objects that different in the new object array
   for (uint64_t i = 0; i < numAnariObjects; ++i)
   {
     UsdBaseObject* newObj = reinterpret_cast<UsdBaseObject*>(newAnariObjects[i]);
@@ -271,7 +260,6 @@ void UsdDataArray::TransferAndRemoveMappedObjectCopy()
       newObj->refInc(helium::RefType::INTERNAL);
   }
 
-  // Then, decrease reference counts of all objects that are different in the original array (which will delete those that not referenced anymore)
   for (uint64_t i = 0; i < numAnariObjects; ++i)
   {
     UsdBaseObject* newObj = reinterpret_cast<UsdBaseObject*>(newAnariObjects[i]);
@@ -286,6 +274,5 @@ void UsdDataArray::TransferAndRemoveMappedObjectCopy()
     }
   }
 
-  // Release the mapped object copy's allocated memory
   freePrivateData(true);
 }

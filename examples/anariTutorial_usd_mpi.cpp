@@ -1,14 +1,5 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
-// MPI parallel USD output example.
-// Each MPI rank creates a triangle mesh at a unique position.
-// The USD device writes each rank's output into its own subdirectory
-// and rank 0 produces an encapsulating ParallelScene.usda that
-// references all ranks.
-//
-// Build:  cmake -DUSD_DEVICE_BUILD_EXAMPLES=ON -DUSD_DEVICE_MPI_ENABLED=ON ..
-// Run:    mpirun -np 4 ./anariTutorialUsdMpi
 
 #include <cstdio>
 #include <cstdlib>
@@ -80,15 +71,12 @@ int main(int argc, char **argv)
 
   printf("[rank %d/%d] Starting MPI USD tutorial\n", rank, size);
 
-  // image size
   uvec2 imgSize = {1024, 768};
 
-  // camera (shared across ranks, but only matters for rendering)
   vec3 cam_pos = {14, 14, 14};
   vec3 cam_up = {0.f, 1.f, 0.f};
   vec3 cam_view = {-1.0f, -1.3f, -1.0f};
 
-  // Each rank creates a triangle mesh offset along X by its rank index.
   float xOffset = rank * 3.0f;
 
   vec3 vertex[] = {
@@ -98,7 +86,6 @@ int main(int argc, char **argv)
     { 0.1f + xOffset,  0.1f, 0.3f}
   };
 
-  // Color varies per rank
   float r = (rank % 3 == 0) ? 0.9f : 0.2f;
   float g = (rank % 3 == 1) ? 0.9f : 0.2f;
   float b = (rank % 3 == 2) ? 0.9f : 0.2f;
@@ -112,7 +99,6 @@ int main(int argc, char **argv)
 
   ivec3 index[] = {{0, 1, 2}, {1, 2, 3}};
 
-  // --- ANARI setup ---
 
   anari::Library lib = anari::loadLibrary("usd", statusFunc);
 
@@ -124,22 +110,15 @@ int main(int argc, char **argv)
 
   ANARIDevice d = anariNewDevice(lib, "default");
 
-  // Set output path (same for all ranks — the device handles rank subdirs)
   anari::setParameter(d, d, "usd::serialize.location", "./mpi_output");
 
-  // Set the MPI communicator — this is the key KHR_DATA_PARALLEL_MPI parameter.
-  // ANARI_VOID_POINTER is passed by value, so mem = &comm directly.
-  // MPI_COMM_WORLD is technically already set by default on the device in MPI environments,
-  // but this is for demonstration purposes.
   MPI_Comm comm = MPI_COMM_WORLD;
   anariSetParameter(d, d, "mpiCommunicator", ANARI_VOID_POINTER, &comm);
 
-  // Commit device parameters (triggers bridge initialization with MPI sync)
   anari::commitParameters(d, d);
 
   printf("[rank %d] Device committed, setting up scene...\n", rank);
 
-  // camera
   auto camera = anari::newObject<anari::Camera>(d, "perspective");
   anari::setParameter(d, camera, "aspect", (float)imgSize[0] / (float)imgSize[1]);
   anari::setParameter(d, camera, "position", cam_pos);
@@ -147,10 +126,8 @@ int main(int argc, char **argv)
   anari::setParameter(d, camera, "up", cam_up);
   anari::commitParameters(d, camera);
 
-  // world
   auto world = anari::newObject<anari::World>(d);
 
-  // geometry — each rank creates its own mesh at a different position
   auto mesh = anari::newObject<anari::Geometry>(d, "triangle");
   anari::setAndReleaseParameter(
       d, mesh, "vertex.position", anari::newArray1D(d, vertex, 4));
@@ -160,23 +137,19 @@ int main(int argc, char **argv)
       d, mesh, "primitive.index", anari::newArray1D(d, index, 2));
   anari::commitParameters(d, mesh);
 
-  // material
   auto mat = anari::newObject<anari::Material>(d, "matte");
   anari::setParameter(d, mat, "color", "color");
   anari::commitParameters(d, mat);
 
-  // surface
   auto surface = anari::newObject<anari::Surface>(d);
   anari::setAndReleaseParameter(d, surface, "geometry", mesh);
   anari::setAndReleaseParameter(d, surface, "material", mat);
   anari::commitParameters(d, surface);
 
-  // add surface to world
   anari::setAndReleaseParameter(
       d, world, "surface", anari::newArray1D(d, &surface));
   anari::release(d, surface);
 
-  // light
   auto light = anari::newObject<anari::Light>(d, "directional");
   anari::setParameter(d, light, "irradiance", 1.0f);
   anari::commitParameters(d, light);
@@ -186,14 +159,12 @@ int main(int argc, char **argv)
 
   anari::commitParameters(d, world);
 
-  // renderer
   auto renderer = anari::newObject<anari::Renderer>(d, "hydra");
   anari::setParameter(d, renderer, "name", "MainRenderer");
   vec4 bgColor = {1.f, 1.f, 1.f, 1.f};
   anari::setParameter(d, renderer, "backgroundColor", bgColor);
   anari::commitParameters(d, renderer);
 
-  // frame
   auto frame = anari::newObject<anari::Frame>(d);
   anari::setParameter(d, frame, "size", imgSize);
   anari::setParameter(d, frame, "channel.color", ANARI_UFIXED8_RGBA_SRGB);
@@ -204,8 +175,6 @@ int main(int argc, char **argv)
 
   printf("[rank %d] Rendering...\n", rank);
 
-  // render a small animated sequence — each frame triggers USD output +
-  // notifications (clips from every rank, commit/scene-update from rank 0)
   for (int i = 0; i < 12; ++i) {
     const float a = 0.35f * float(i);
     vec3 anim_pos = {20.f * cosf(a), 20.f * sinf(a), 8.f};
@@ -219,7 +188,6 @@ int main(int argc, char **argv)
   printf("[rank %d] Done rendering, cleaning up...\n", rank);
   anari::release(d, camera);
 
-  // cleanup
   anari::release(d, frame);
   anari::release(d, d);
   anari::unloadLibrary(lib);

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeRenderSettingsState_h
 #define UsdBridgeRenderSettingsState_h
@@ -10,10 +9,10 @@
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdRender/var.h>
 
-//
 // Owns UsdRenderSettings / UsdRenderProduct / RenderVar prims for one frame.
+
 // Managed by UsdRenderManager; render contexts do not interact with this class.
-//
+
 class UsdBridgeRenderSettingsState
 {
 public:

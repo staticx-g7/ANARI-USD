@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeRenderContext_h
 #define UsdBridgeRenderContext_h
@@ -20,19 +19,12 @@ class UsdImagingDelegate;
 PXR_NAMESPACE_CLOSE_SCOPE
 #endif
 
-//
-// Factory mode for creating render contexts
-//
 enum class RenderContextMode
 {
     Shared,     // Use shared core (efficient)
     Standalone  // Debug fallback (each context has own engine)
 };
 
-//
-// Abstract interface for a render context
-// A render context represents a single "viewport" that can render from a specific camera
-//
 class UsdBridgeRenderContext
 {
 public:
@@ -49,23 +41,17 @@ public:
     virtual bool IsInitialized() const = 0;
 };
 
-//
-// Shared renderer core - holds the heavy resources that can be shared between contexts
-// One core per renderer plugin type (e.g., one for HdStorm, one for HdCycles)
-//
 class UsdBridgeRendererCore
 {
 public:
     UsdBridgeRendererCore(UsdBridgeUsdWriter& usdWriter);
     ~UsdBridgeRendererCore();
 
-    // Initialize with a specific Hydra renderer plugin
     void Initialize(const char* rendererPluginName);
 
     bool IsInitialized() const;
 
 #ifdef USD_DEVICE_RENDERING_ENABLED
-    // Access shared resources (for UsdBridgeRenderContextShared)
     pxr::HdRenderIndex* GetRenderIndex();
     pxr::HdEngine* GetEngine();
     pxr::Hgi* GetHgi();
@@ -81,9 +67,6 @@ protected:
     UsdBridgeUsdWriter& UsdWriter;
 };
 
-//
-// Factory function to create the appropriate context type
-//
 std::unique_ptr<UsdBridgeRenderContext> CreateRenderContext(
     RenderContextMode mode,
     UsdBridgeRendererCore* core,  // Required for Shared mode, can be null for Standalone

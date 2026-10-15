@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdFrame.h"
 #include "UsdBridge/UsdBridge.h"
@@ -46,8 +45,6 @@ UsdFrame::~UsdFrame()
 
 void UsdFrame::remove(UsdDevice* device)
 {
-  // Called only via usd::removePrim (intentional USD deletion).
-  // Normal anariRelease uses the destructor, which UnregisterFrame in memory only.
   if (registeredFrameState)
   {
     if (!frameBridge)
@@ -70,17 +67,13 @@ bool UsdFrame::doCommitData(UsdDevice* device)
   if (!frameBridge)
     return false;
 
-  // The name of this frame determines the renderproduct prim registration in USD.
-  // Check if name changed or first registration
   const char* frameName = getName();
   void* currentFrameState = frameBridge->GetFrameState(frameName);
 
   if (registeredFrameState == nullptr || registeredFrameState != currentFrameState)
   {
-    // Name changed or first registration - unregister old and register new
     if (registeredFrameState)
     {
-      // Name changed - unregister old frame by its state pointer
       frameBridge->UnregisterFrameByState(registeredFrameState);
     }
 
@@ -88,7 +81,6 @@ bool UsdFrame::doCommitData(UsdDevice* device)
     registeredFrameState = frameBridge->GetFrameState(frameName);
   }
 
-  // Size is plain frame data (no object refs); safe to sync at commit for USD render product resolution.
   const UsdFrameData& paramData = getReadParams();
   if (paramData.size.Data[0] > 0 && paramData.size.Data[1] > 0)
   {
@@ -111,7 +103,6 @@ const void* UsdFrame::mapBuffer(
 
   if (strEquals(channel, "channel.color"))
   {
-    // Only attempt to map from bridge if frame is registered
     if (registeredFrameState)
     {
       UsdBridgeType usdBridgeFormat;
@@ -188,7 +179,6 @@ void UsdFrame::renderFrame(UsdDevice* device)
 
   const char* frameName = getName();
 
-  // Always author world/camera onto the RenderContext when present.
   if (paramData.world && !UsdObjectNotInitialized<WorldUsdType>(paramData.world))
   {
     UsdWorldHandle worldHandle = paramData.world->getUsdHandle();
@@ -201,12 +191,10 @@ void UsdFrame::renderFrame(UsdDevice* device)
     frameBridge->SetFrameCamera(frameName, cameraHandle);
   }
 
-  // Cache the renderbuffer properties belonging to this frame
   renderBufferSize = paramData.size;
   renderBufferColorFormat = paramData.color;
   renderBufferDepthFormat = paramData.depth;
 
-  // Only the draw path needs hydra.
   if (paramData.renderer && paramData.renderer->isHydraRenderer())
   {
     const char* hydraRendererName = paramData.renderer->getHydraRendererName();

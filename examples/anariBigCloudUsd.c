@@ -1,28 +1,5 @@
 // Copyright 2026 JUSYNC contributors
-// SPDX-License-Identifier: Apache-2.0
 
-// Scalable point-cloud stress sender for the JUSYNC streaming pipeline.
-//
-// Publishes ONE large point cloud ("bigCloud", an ANARI "sphere" geometry
-// without useUsdGeomPoints, i.e. written as UsdGeomPointInstancer) and
-// re-commits it once per frame at a FIXED usd::time, so each streamed clip
-// update carries exactly one timeSample of the current positions (history
-// never accumulates inside a clip file).
-//
-// No renderer is attached: UsdDevice::renderFrame performs the USD save and
-// the ZMQ file notifications before the actual (optional) hydra draw, so the
-// full export/streaming path runs while rendering stays free.
-//
-// Environment knobs:
-//   ANARI_BIG_POINTS   points per cloud   (default 10000000)
-//   ANARI_BIG_FPS      commits per second (default 2)
-//   ANARI_BIG_SECONDS  run duration, 0 = forever (default 0)
-//   ANARI_BIG_FREEZE_SEC  after N seconds positions stop changing while
-//                    commits continue at the same cadence: models a paused
-//                    sim / scene under inspection, which the UsdDevice
-//                    sender turns into one full-resolution RawGeo burst
-//   ANARI_BIG_COLORS   1 = add per-vertex float3 colors (default 0)
-//   ANARI_BIG_RADIUS   constant point radius (default 1.0)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,6 +76,24 @@ static long envLong(const char *name, long dflt)
   return v ? atol(v) : dflt;
 }
 
+// Same launcher variables the device itself reads for rank wiring; run under
+// mpirun and each process gets its own piece of the cloud.
+static int envRank()
+{
+  const char *v = getenv("SLURM_PROCID");
+  if (!v) v = getenv("OMPI_COMM_WORLD_RANK");
+  if (!v) v = getenv("PMI_RANK");
+  return v ? atoi(v) : 0;
+}
+
+static int envWorldSize()
+{
+  const char *v = getenv("SLURM_NTASKS");
+  if (!v) v = getenv("OMPI_COMM_WORLD_SIZE");
+  if (!v) v = getenv("PMI_SIZE");
+  return v ? atoi(v) : 1;
+}
+
 int main(int argc, const char **argv)
 {
   parseArgs(argc, argv);
@@ -109,17 +104,28 @@ int main(int argc, const char **argv)
   const long freezeSec = envLong("ANARI_BIG_FREEZE_SEC", 0L);
   const int useColors = envLong("ANARI_BIG_COLORS", 0L) != 0;
   float radius = (float)envLong("ANARI_BIG_RADIUS", 1L);
+  const int rank = envRank();
+  const int worldSize = envWorldSize() > 0 ? envWorldSize() : 1;
+  // Each rank owns a separate slice, so a rank that is dropped, hidden or
+  // overwritten on the client is visible as a missing piece instead of a subtle
+  // double image.
+  const double rankSpread = envLong("ANARI_BIG_RANK_SPREAD", 300L);
+  const float rankOffset = (float)((rank - 0.5 * (worldSize - 1)) * rankSpread);
+  // 0: keep republishing at one time (replace-in-place streaming). 1: advance
+  // usd::time so every step gets its own clip and .geo key.
+  const int stepTime = envLong("ANARI_BIG_TIME_STEP", 0L) != 0;
+  const double timeDt = (double)envLong("ANARI_BIG_DT", 5L) / 10.0;
 
   if (numPoints < 1) {
     fprintf(stderr, "ANARI_BIG_POINTS must be >= 1\n");
     return 1;
   }
 
-  printf("bigcloud: %ld points, %ld fps, %s, colors=%d\n",
-      numPoints, fps, seconds > 0 ? "limited" : "infinite", useColors);
+  printf("bigcloud: rank %d/%d, %ld points, %ld fps, %s, colors=%d, offset %.0f, %s\n",
+      rank, worldSize, numPoints, fps, seconds > 0 ? "limited" : "infinite", useColors,
+      rankOffset, stepTime ? "advancing time" : "single time");
   fflush(stdout);
 
-  // --- host-side buffers -------------------------------------------------
   float *base = (float *)malloc((size_t)numPoints * 3 * sizeof(float));
   float *positions = (float *)malloc((size_t)numPoints * 3 * sizeof(float));
   float *colors = NULL;
@@ -130,9 +136,11 @@ int main(int argc, const char **argv)
   if (useColors)
     colors = (float *)malloc((size_t)numPoints * 3 * sizeof(float));
 
-  srand(42);
+  srand(42 + rank);
   for (long i = 0; i < numPoints * 3; ++i)
     base[i] = ((rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 100.0f;
+  for (long i = 0; i < numPoints; ++i)
+    base[i * 3 + 0] += rankOffset;
   for (long i = 0; i < numPoints * 3; ++i)
     positions[i] = base[i];
   if (colors) {
@@ -143,7 +151,6 @@ int main(int argc, const char **argv)
     }
   }
 
-  // --- ANARI device ------------------------------------------------------
   ANARILibrary lib = anariLoadLibrary("usd", statusFunc, NULL);
   ANARIDevice dev = anariNewDevice(lib, "usd");
   if (!dev) {
@@ -157,7 +164,6 @@ int main(int argc, const char **argv)
   anariSetParameter(dev, dev, "usd::serialize.outputBinary", ANARI_BOOL, &outputBinary);
   anariCommitParameters(dev, dev);
 
-  // camera + fixed timestep: every commit replaces the t=0 sample
   float cam_pos[] = {0.f, 0.f, 400.f};
   float cam_view[] = {0.f, 0.f, -1.f};
   float cam_up[] = {0.f, 1.f, 0.f};
@@ -179,13 +185,6 @@ int main(int argc, const char **argv)
   ANARIDataType colFormat = ANARI_UFIXED8_RGBA_SRGB;
   anariSetParameter(dev, frame, "channel.color", ANARI_DATA_TYPE, &colFormat);
 
-  // --- build the scene ONCE ----------------------------------------------
-  // Handles are retained so every frame re-commits the SAME prim
-  // ("bigCloud"): creating fresh ANARI objects per frame would make the
-  // bridge uniquify the repeated prim name (bigCloud_u1, ...) and stream
-  // duplicate clouds. The UsdDevice memory-store path force re-reads geometry
-  // data each flush (see UsdGeometry commitTemplate), so in-place updates of
-  // the position buffer are exported without rebuilding the object graph.
   ANARIWorld world = anariNewWorld(dev);
 
   ANARIGeometry mesh = anariNewGeometry(dev, "sphere");
@@ -210,7 +209,13 @@ int main(int argc, const char **argv)
   anariSetParameter(dev, mesh, "usd::time", ANARI_FLOAT64, &timeZero);
   anariCommitParameters(dev, mesh);
 
-  float kd[] = {0.9f, 0.4f, 0.1f};
+  // Distinct tint per rank, so a stale or missing rank is obvious rather than a
+  // subtle overlap of two identical clouds.
+  float kd[3];
+  const float hue = rank * 0.37f * 3.14159f * 2.0f;
+  kd[0] = 0.35f + 0.65f * fabsf(sinf(hue));
+  kd[1] = 0.35f + 0.65f * fabsf(sinf(hue + 2.094f));
+  kd[2] = 0.35f + 0.65f * fabsf(sinf(hue + 4.189f));
   ANARIMaterial mat = anariNewMaterial(dev, "matte");
   anariSetParameter(dev, mat, "name", ANARI_STRING, "bigCloudMaterial");
   anariSetParameter(dev, mat, "color", ANARI_FLOAT32_VEC3, kd);
@@ -259,8 +264,6 @@ int main(int argc, const char **argv)
   anariSetParameter(dev, world, "name", ANARI_STRING, "bigCloudWorld");
   anariCommitParameters(dev, world);
 
-  // No renderer attached: save + ZMQ notifications still run, hydra draw
-  // is skipped inside UsdFrame::renderFrame.
   anariSetParameter(dev, frame, "world", ANARI_WORLD, &world);
   anariSetParameter(dev, frame, "camera", ANARI_CAMERA, &camera);
   anariCommitParameters(dev, frame);
@@ -278,33 +281,23 @@ int main(int argc, const char **argv)
       fflush(stdout);
     }
 
-    // Cheap memory-bound animation: uniform scale pulse (real sims change far
-    // more of the buffer than this; the streaming cost is byte volume, not
-    // which bytes changed). While frozen the buffer is left untouched so every
-    // commit carries an identical payload (the RawGeo idle detector's signal).
     if (!frozen) {
       const float scale = 1.0f + 0.15f * sinf(frameIdx * 0.35f);
       for (long i = 0; i < numPoints * 3; ++i)
         positions[i] = base[i] * scale;
     }
 
-    // Re-set the position array on the retained mesh: the SDK takes the
-    // device-side data snapshot at set/commit of the ARRAY parameter, so
-    // in-place edits of the app buffer are invisible unless a fresh array
-    // handle is committed (same pattern as the time tutorial, which however
-    // rebuilt the whole geometry and thereby churned prim names).
     ANARIArray1D posArray = anariNewArray1D(dev, positions, 0, 0, ANARI_FLOAT32_VEC3,
         (uint64_t)numPoints);
     anariCommitParameters(dev, posArray);
     anariSetParameter(dev, mesh, "vertex.position", ANARI_ARRAY, &posArray);
     anariRelease(dev, posArray);
 
-    anariSetParameter(dev, dev, "usd::time", ANARI_FLOAT64, &timeZero);
+    const double frameTime = stepTime ? timeZero + frameIdx * timeDt : timeZero;
+    anariSetParameter(dev, dev, "usd::time", ANARI_FLOAT64, &frameTime);
+    anariSetParameter(dev, mesh, "usd::time", ANARI_FLOAT64, &frameTime);
     anariCommitParameters(dev, dev);
 
-    // Re-commit the retained objects: this puts them on the device commit
-    // list so renderFrame's flush re-reads the position buffer and re-writes
-    // the clip (memory-store mode forces paramChanged).
     anariCommitParameters(dev, mesh);
     anariCommitParameters(dev, surface);
     anariCommitParameters(dev, group);
@@ -315,8 +308,8 @@ int main(int argc, const char **argv)
     anariFrameReady(dev, frame, ANARI_WAIT);
 
     const double elapsed = nowMs() - commitStart;
-    printf("bigcloud: frame %d commit->flush %.1f ms (%.1f MB positions%s)\n",
-        frameIdx, elapsed,
+    printf("bigcloud: rank %d frame %d t=%.2f commit->flush %.1f ms (%.1f MB positions%s)\n",
+        rank, frameIdx, frameTime, elapsed,
         numPoints * 12.0 / (1024.0 * 1024.0),
         colors ? " + colors" : "");
     fflush(stdout);

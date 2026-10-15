@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBaseObject.h"
 #include "UsdDevice.h"
@@ -9,13 +8,6 @@
 #include <string>
 #include <unordered_map>
 
-// --------------------------------------------------------------------------
-// Process-wide USD object name registry
-//
-// Guarantees that no two simultaneously live ANARI objects are written to USD
-// under the same name (same prim path / same clip file). See
-// UsdParameterizedBaseObject::setNameParam() for the rationale.
-// --------------------------------------------------------------------------
 namespace
 {
 struct UsdNameRegistry
@@ -60,7 +52,6 @@ std::string UsdNameRegistryClaim(const std::string& desired, const void* owner)
   UsdNameRegistry& reg = usdNameRegistry();
   std::lock_guard<std::mutex> lock(reg.mutex);
 
-  // An object holds at most one claim; drop a claim held under a previous name.
   for(auto it = reg.claims.begin(); it != reg.claims.end(); )
   {
     if(it->second == owner && it->first != desired)
@@ -78,7 +69,6 @@ std::string UsdNameRegistryClaim(const std::string& desired, const void* owner)
   if(it->second == owner)
     return desired; // already claimed by this object (name re-set unchanged)
 
-  // Name is held by another live object - find a unique variant.
   std::string candidate;
   unsigned int counter = 1;
   do
@@ -104,18 +94,15 @@ void UsdNameRegistryRelease(const std::string& claimed, const void* owner)
 UsdBaseObject::UsdBaseObject(ANARIDataType t, UsdDevice* device)
       : type(t)
 {
-  // The object will not be committed (as in, user-written write params will not be set to read params),
-  // but handles will be initialized and the object with its default data/refs will be written out to USD
-  // (but only if the prim wasn't yet written to USD before, see 'isNew' in doCommit implementations).
   if(device)
     device->addToCommitList(this, true);
 }
 
 void UsdBaseObject::commit(UsdDevice* device)
-{ 
+{
   bool deferDataCommit = !device->isInitialized() || !device->getReadParams().writeAtCommit || deferCommit(device);
   if(!deferDataCommit)
-  {                 
+  {
     bool commitRefs = doCommitData(device);
     if(commitRefs)
       device->addToCommitList(this, false); // Commit refs, but no more data later on
@@ -126,8 +113,6 @@ void UsdBaseObject::commit(UsdDevice* device)
 
 void UsdBaseObject::addObserver(UsdBaseObject* observer)
 {
-  // duplicate entries allowed in case the same object is observed from multiple references on the same observer
-  // (implicit ref counter of observed object)
   observers.push_back(observer);
 }
 
@@ -151,7 +136,6 @@ void UsdBaseObject::notify(UsdBaseObject* caller, UsdDevice* device)
     assert(device->isObjAllocated(observer));
 #endif
 
-    // Don't call observe twice
     if(std::find(observers.begin(), it, observer) == it)
       observer->observe(caller, device);
 

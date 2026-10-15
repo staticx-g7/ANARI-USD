@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdLight.h"
 #include "UsdAnari.h"
@@ -39,23 +38,8 @@ namespace
     return lightType;
   }
 
-  // Maximum photopic luminous efficacy: 1 W of "photopic-equivalent" radiant
-  // flux corresponds to 683 lumens. ANARI carries no spectral information,
-  // so this single constant is the radiometric->photometric bridge for all
-  // light types and is consistent with treating each color channel as a
-  // luminance carrier. With inputs:normalize=true on the UsdLuxLight, this
-  // makes the authored intensity directly comparable across light types:
-  //   - DistantLight: lux  (illuminance,    lm/m^2)
-  //   - SphereLight:  cd   (luminous intensity, lm/sr)
-  //   - DomeLight:    nits (luminance,     cd/m^2)
-  // Real-world reference values: midday sun ~1e5 lux, candle flame ~1 cd,
-  // bright laptop screen ~5e2 nits.
   constexpr float LUMINOUS_EFFICACY_LM_PER_W = 683.0f;
 
-  // Decompose an RGB color into chromaticity (in [0,1]) and a positive
-  // magnitude (the max channel). The magnitude is folded into the light
-  // intensity so inputs:color stays a pure chromaticity, which is what
-  // UsdLux conventionally expects.
   inline void splitColor(const UsdFloat3& in, UsdFloat3& chroma, float& mag)
   {
     const float m = std::max({in.Data[0], in.Data[1], in.Data[2]});
@@ -73,10 +57,6 @@ namespace
     }
   }
 
-  // Split a (large) magnitude into (intensity, exposure) such that
-  //   intensity * 2^exposure == magnitude (within float precision)
-  // and intensity stays at or below 2^16 for human-readable authoring in
-  // DCC tools. Exposure stays at 0 for any reasonable everyday magnitude.
   inline void splitIntensityExposure(float magnitude, float& intensity, float& exposure)
   {
     constexpr float READABLE_MAX = 65536.0f; // 2^16
@@ -112,11 +92,6 @@ void UsdLight::CopyParameters(const UsdLightData& paramData, UsdBridgeDirectiona
 {
   typedef UsdBridgeDirectionalLightData::DataMemberId DMI;
 
-  // ANARI 1.x KHR_LIGHT_DIRECTIONAL precedence: irradiance (W/m^2) wins over
-  // radiance (W/sr/m^2). When only radiance is given, multiply by the source's
-  // solid angle to recover an equivalent irradiance. With angularDiameter == 0
-  // the directional light emits nothing per spec; we fall back to the ANARI
-  // default irradiance of 1 W/m^2 to keep the scene visible.
   float radiometric = 1.0f;
   if (paramData.irradiance != -1.0f)
   {
@@ -152,10 +127,6 @@ void UsdLight::CopyParameters(const UsdLightData& paramData,UsdBridgePointLightD
 {
   typedef UsdBridgePointLightData::DataMemberId DMI;
 
-  // ANARI 1.x KHR_LIGHT_POINT precedence: intensity (W/sr) > power (W) >
-  // radiance (W/sr/m^2). For an isotropic point source, power = intensity * 4*pi.
-  // The radiance fallback is a coarse approximation (assumes unit emitter area),
-  // but only kicks in when the user has not set the more direct parameters.
   float radiometric = 1.0f;
   if (paramData.intensity != -1.0f)
     radiometric = paramData.intensity;
@@ -186,8 +157,6 @@ void UsdLight::CopyParameters(const UsdLightData& paramData, UsdBridgeDomeLightD
 {
   typedef UsdBridgeDomeLightData::DataMemberId DMI;
 
-  // ANARI 1.x KHR_LIGHT_HDRI uses 'radiance' (W/sr/m^2). 'intensity' is also
-  // accepted as a legacy alias when explicitly set.
   float radiometric = 1.0f;
   if (paramData.intensity != -1.0f)
     radiometric = paramData.intensity;
@@ -217,12 +186,12 @@ void UsdLight::SetLightData(UsdBridge* usdBridge, UsdLightHandle usdHandle, cons
   usdBridge->SetLightData(usdHandle, lightData, timeStep);
 }
 
-bool UsdLight::deferCommit(UsdDevice* device) 
-{ 
-  return false; 
+bool UsdLight::deferCommit(UsdDevice* device)
+{
+  return false;
 }
 
-bool UsdLight::doCommitData(UsdDevice* device) 
+bool UsdLight::doCommitData(UsdDevice* device)
 {
   UsdBridge* usdBridge = device->getUsdBridge();
   const UsdLightData& paramData = getReadParams();

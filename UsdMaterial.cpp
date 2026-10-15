@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdMaterial.h"
 #include "UsdAnari.h"
@@ -15,7 +14,7 @@ using SamplerUsdType = AnariToUsdBridgedObject<SamplerType>::Type;
 #define REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO(ParamName, ParamType0, ParamData) \
   REGISTER_PARAMETER_MULTITYPE_MACRO(ParamName, ParamType0, SamplerType, ANARI_STRING, ParamData)
 
-DEFINE_PARAMETER_MAP(UsdMaterial, 
+DEFINE_PARAMETER_MAP(UsdMaterial,
   REGISTER_PARAMETER_MACRO("name", ANARI_STRING, name)
   REGISTER_PARAMETER_MACRO("usd::name", ANARI_STRING, usdName)
   REGISTER_PARAMETER_MACRO("usd::time", ANARI_FLOAT64, timeStep)
@@ -37,7 +36,7 @@ DEFINE_PARAMETER_MAP(UsdMaterial,
   REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO("emissiveIntensity", ANARI_FLOAT32, emissiveIntensity)
   REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO("roughness", ANARI_FLOAT32, roughness)
   REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO("metallic", ANARI_FLOAT32, metallic)
-  REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO("ior", ANARI_FLOAT32, ior) 
+  REGISTER_PARAMETER_MATERIAL_MULTITYPE_MACRO("ior", ANARI_FLOAT32, ior)
 )
 
 constexpr UsdMaterial::ComponentPair UsdMaterial::componentParamNames[]; // Workaround for C++14's lack of inlining constexpr arrays
@@ -80,7 +79,7 @@ void UsdMaterial::changeMaterialInputSource(const UsdMaterialMultiTypeParameter<
   UsdDevice* device, const UsdLogInfo& logInfo)
 {
   UsdSharedString* anariAttribStr = nullptr;
-  param.Get(anariAttribStr); // If an input parameter is of string type, returns the pointer of the string (otherwise untouched)
+  param.Get(anariAttribStr);
   const char* anariAttrib = UsdSharedString::c_str(anariAttribStr);
 
   if(anariAttrib)
@@ -116,17 +115,7 @@ bool UsdMaterial::getSamplerRefData(const UsdMaterialMultiTypeParameter<ValueTyp
     double worldTimeStep = device->getReadParams().timeStep;
     double samplerObjTimeStep = samplerParamData.timeStep;
     double samplerRefTime = selectRefTime(refTimeStep, samplerObjTimeStep, worldTimeStep);
-    
-    // Reading child (sampler) data in the material has the consequence that the sampler's parameters as they were last committed are in effect "part of" the material parameter set, at this point of commit. 
-    // So in case a sampler at a particular timestep is referenced from a material at two different world timesteps 
-    // - ie. for this world timestep, a particular timestep of an image already committed and subsequently referenced at some other previous world timestep is reused - 
-    // the user needs to make sure that not only the timestep is set correctly on the sampler for the commit (which is by itself lightweight, as it does not trigger a full commit), 
-    // but also that the parameters read here have been re-set on the sampler to the values belonging to the referenced timestep, as if there is no USD representation of a sampler object. 
-    // Setting those parameters will in turn trigger a full commit of the sampler object, which is in theory inefficient.
-    // However, in case of a sampler this is not a problem in practice; data transfer is only a concern when the filename is *not* set, at which point a relative file corresponding
-    // to the sampler timestep will be automatically chosen and set for the material, without the sampler object requiring any updates. 
-    // In case a filename *is* set, only the filename is used and no data transfer/file io operations are performed.
-    //const char* imageUrl = UsdSharedString::c_str(samplerParamData.imageUrl); // not required anymore since all materials are a graph
+
 
     int imageNumComponents = 4;
     if(samplerParamData.imageData)
@@ -143,43 +132,33 @@ bool UsdMaterial::getSamplerRefData(const UsdMaterialMultiTypeParameter<ValueTyp
 }
 
 template<typename ValueType>
-void UsdMaterial::assignParameterToMaterialInput(const UsdMaterialMultiTypeParameter<ValueType>& param, 
+void UsdMaterial::assignParameterToMaterialInput(const UsdMaterialMultiTypeParameter<ValueType>& param,
   UsdBridgeMaterialData::MaterialInput<ValueType>& matInput, bool useDisplayColorOpacity, const UsdLogInfo& logInfo)
 {
   param.Get(matInput.Value);
 
   UsdSharedString* anariAttribStr = nullptr;
-  matInput.SrcAttrib = param.Get(anariAttribStr) ? 
+  matInput.SrcAttrib = param.Get(anariAttribStr) ?
     AnariAttributeToUsdName(anariAttribStr->c_str(), perInstance, useDisplayColorOpacity, logInfo) :
-    nullptr; 
+    nullptr;
 
   UsdSampler* sampler = nullptr;
   matInput.Sampler = param.Get(sampler);
 }
 
 void UsdMaterial::updateBoundParameters(bool boundToInstance, const UsdGeometryData& geomParamData, UsdDevice* device)
-{ 
-  // The geometry to which a material binds has an effect on:
-  // - attribute reader (geom primvar) names,
-  // - attribute reader output types
-  // These will have been setup initially in commit() with UsdBridge::SetMaterialData using UpdateUsdMaterial, which is correct for:
-  // - the attribute reader names except those that are geometry type dependent
-  // - the types of those attributes that are predetermined (points, normals)
-  // For anything else or in case no geometry has been bound before,
-  // the material's attribute reader needs to be updated to use the correct type given the new geometry.
-  // This is done here with UsdMaterial::changeMaterialInputSource().
+{
 
   perInstance = boundToInstance;
 
   UsdBridge* usdBridge = device->getUsdBridge();
   const UsdMaterialData& paramData = getReadParams();
-  
+
   UsdLogInfo logInfo = {device, this, ANARI_MATERIAL, getName()};
 
   double worldTimeStep = device->getReadParams().timeStep;
   double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
 
-  // Fix up any parameters that have a geometry-type-dependent name set as source attribute
   materialInputAttributes.clear();
 
   bool forceUpdate = !isBound;
@@ -194,7 +173,6 @@ void UsdMaterial::updateBoundParameters(bool boundToInstance, const UsdGeometryD
   DMI timeVarying;
   setMaterialTimeVarying(timeVarying);
 
-  // Fixup attribute name and type depending on the newly bound geometry
   if(materialInputAttributes.size())
     usdBridge->ChangeMaterialInputAttributes(usdHandle, materialInputAttributes.data(), materialInputAttributes.size(), dataTimeStep, timeVarying);
 
@@ -203,12 +181,7 @@ void UsdMaterial::updateBoundParameters(bool boundToInstance, const UsdGeometryD
 
 bool UsdMaterial::deferCommit(UsdDevice* device)
 {
-  //const UsdMaterialData& paramData = getReadParams();
 
-  //if(UsdObjectNotInitialized<SamplerUsdType>(paramData.color.type == SamplerType))
-  //{
-  //  return true;
-  //}
   return false;
 }
 
@@ -223,8 +196,6 @@ bool UsdMaterial::doCommitData(UsdDevice* device)
   if (!usdHandle.value)
     isNew = usdBridge->CreateMaterial(getName(), usdHandle);
 
-  // Force update in memory-only mode: Catalyst may update material data in-place
-  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
   if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
@@ -242,7 +213,7 @@ bool UsdMaterial::doCommitData(UsdDevice* device)
     bool useDisplayColorOpacity = device->getReadParams().useDisplayColorOpacity;
 
     UsdLogInfo logInfo = {device, this, ANARI_MATERIAL, getName()};
-    
+
     assignParameterToMaterialInput(paramData.color, matData.Diffuse, useDisplayColorOpacity, logInfo);
     assignParameterToMaterialInput(paramData.opacity, matData.Opacity, useDisplayColorOpacity, logInfo);
     assignParameterToMaterialInput(paramData.emissiveColor, matData.Emissive, useDisplayColorOpacity, logInfo);
@@ -257,7 +228,7 @@ bool UsdMaterial::doCommitData(UsdDevice* device)
 
     paramChanged = false;
 
-    return paramData.color.type == SamplerType; // Only commit refs when material actually contains a texture (filename param from diffusemap is required)
+    return paramData.color.type == SamplerType;
   }
 
   return false;

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeUsdWriterCommon_h
 #define UsdBridgeUsdWriterCommon_h
@@ -206,19 +205,16 @@ TF_DECLARE_PUBLIC_TOKENS(
 
 namespace constring
 {
-  // Default names
   extern const char* const sessionPf;
   extern const char* const rootClassName;
   extern const char* const rootPrimName;
 
-  // Folder names
   extern const char* const manifestFolder;
   extern const char* const clipFolder;
   extern const char* const primStageFolder;
   extern const char* const imgFolder;
   extern const char* const volFolder;
 
-  // Postfixes for auto generated usd subprims
   extern const char* const texCoordReaderPrimPf;
   extern const char* const psShaderPrimPf;
   extern const char* const mdlShaderPrimPf;
@@ -235,11 +231,9 @@ namespace constring
   extern const char* const openVDBPrimPf;
   extern const char* const protoShapePf;
 
-  // Extensions
   extern const char* const imageExtension;
   extern const char* const vdbExtension;
 
-  // Files
   extern const char* const fullSceneNameBin;
   extern const char* const fullSceneNameAscii;
 
@@ -285,7 +279,7 @@ namespace
   {
     return geomData.Attributes != nullptr &&
       geomData.Attributes[0].Data != nullptr &&
-      ( 
+      (
         geomData.Attributes[0].DataType == UsdBridgeType::FLOAT2 ||
         geomData.Attributes[0].DataType == UsdBridgeType::DOUBLE2
       );
@@ -313,7 +307,7 @@ namespace
       case 14: attribToken = UsdBridgeTokens->attribute14; break;
       case 15: attribToken = UsdBridgeTokens->attribute15; break;
       default: attribToken = TfToken((std::string("attribute")+std::to_string(attribIndex)).c_str()); break;
-    } 
+    }
     return attribToken;
   }
 
@@ -366,12 +360,12 @@ namespace
     {
       switch(dataMemberId)
       {
-        case DMI::DIFFUSE: { return UsdBridgeTokens->diffuseColor; break; } 
-        case DMI::OPACITY: { return UsdBridgeTokens->opacity; break; } 
-        case DMI::EMISSIVECOLOR: { return UsdBridgeTokens->emissiveColor; break; } 
-        case DMI::ROUGHNESS: { return UsdBridgeTokens->roughness; break; } 
-        case DMI::METALLIC: { return UsdBridgeTokens->metallic; break; } 
-        case DMI::IOR: { return UsdBridgeTokens->ior; break; } 
+        case DMI::DIFFUSE: { return UsdBridgeTokens->diffuseColor; break; }
+        case DMI::OPACITY: { return UsdBridgeTokens->opacity; break; }
+        case DMI::EMISSIVECOLOR: { return UsdBridgeTokens->emissiveColor; break; }
+        case DMI::ROUGHNESS: { return UsdBridgeTokens->roughness; break; }
+        case DMI::METALLIC: { return UsdBridgeTokens->metallic; break; }
+        case DMI::IOR: { return UsdBridgeTokens->ior; break; }
 
         default: assert(false); break;
       };
@@ -380,19 +374,19 @@ namespace
     {
       switch(dataMemberId)
       {
-        case DMI::DIFFUSE: { return UsdBridgeTokens->diffuse_color_constant; break; } 
-        case DMI::OPACITY: { return UsdBridgeTokens->opacity_constant; break; } 
-        case DMI::EMISSIVECOLOR: { return UsdBridgeTokens->emissive_color; break; } 
-        case DMI::EMISSIVEINTENSITY: { return UsdBridgeTokens->emissive_intensity; break; } 
-        case DMI::ROUGHNESS: { return UsdBridgeTokens->reflection_roughness_constant; break; } 
-        case DMI::METALLIC: { return UsdBridgeTokens->metallic_constant; break; } 
-        case DMI::IOR: { return UsdBridgeTokens->ior_constant; break; } 
+        case DMI::DIFFUSE: { return UsdBridgeTokens->diffuse_color_constant; break; }
+        case DMI::OPACITY: { return UsdBridgeTokens->opacity_constant; break; }
+        case DMI::EMISSIVECOLOR: { return UsdBridgeTokens->emissive_color; break; }
+        case DMI::EMISSIVEINTENSITY: { return UsdBridgeTokens->emissive_intensity; break; }
+        case DMI::ROUGHNESS: { return UsdBridgeTokens->reflection_roughness_constant; break; }
+        case DMI::METALLIC: { return UsdBridgeTokens->metallic_constant; break; }
+        case DMI::IOR: { return UsdBridgeTokens->ior_constant; break; }
 
         default: assert(false); break;
       };
     }
 
-    return UsdBridgeTokens->diffuseColor;  
+    return UsdBridgeTokens->diffuseColor;
   }
 
   template<bool PreviewSurface>
@@ -459,13 +453,13 @@ namespace
     {
       switch(dataMemberId)
       {
-        case DMI::DIFFUSE: { result = diffuseAttribReaderPrimPf_ps; break; } 
-        case DMI::OPACITY: { result = opacityAttribReaderPrimPf_ps; break; } 
-        case DMI::EMISSIVECOLOR: { result = emissiveColorAttribReaderPrimPf_ps; break; } 
-        case DMI::EMISSIVEINTENSITY: { result = emissiveIntensityAttribReaderPrimPf_ps; break; } 
-        case DMI::ROUGHNESS: { result = roughnessAttribReaderPrimPf_ps; break; } 
-        case DMI::METALLIC: { result = metallicAttribReaderPrimPf_ps; break; } 
-        case DMI::IOR: { result = iorAttribReaderPrimPf_ps; break; } 
+        case DMI::DIFFUSE: { result = diffuseAttribReaderPrimPf_ps; break; }
+        case DMI::OPACITY: { result = opacityAttribReaderPrimPf_ps; break; }
+        case DMI::EMISSIVECOLOR: { result = emissiveColorAttribReaderPrimPf_ps; break; }
+        case DMI::EMISSIVEINTENSITY: { result = emissiveIntensityAttribReaderPrimPf_ps; break; }
+        case DMI::ROUGHNESS: { result = roughnessAttribReaderPrimPf_ps; break; }
+        case DMI::METALLIC: { result = metallicAttribReaderPrimPf_ps; break; }
+        case DMI::IOR: { result = iorAttribReaderPrimPf_ps; break; }
 
         default: assert(false); break;
       };
@@ -474,13 +468,13 @@ namespace
     {
       switch(dataMemberId)
       {
-        case DMI::DIFFUSE: { result = diffuseAttribReaderPrimPf_mdl; break; } 
-        case DMI::OPACITY: { result = opacityAttribReaderPrimPf_mdl; break; } 
-        case DMI::EMISSIVECOLOR: { result = emissiveColorAttribReaderPrimPf_mdl; break; } 
-        case DMI::EMISSIVEINTENSITY: { result = emissiveIntensityAttribReaderPrimPf_mdl; break; } 
-        case DMI::ROUGHNESS: { result = roughnessAttribReaderPrimPf_mdl; break; } 
-        case DMI::METALLIC: { result = metallicAttribReaderPrimPf_mdl; break; } 
-        case DMI::IOR: { result = iorAttribReaderPrimPf_mdl; break; } 
+        case DMI::DIFFUSE: { result = diffuseAttribReaderPrimPf_mdl; break; }
+        case DMI::OPACITY: { result = opacityAttribReaderPrimPf_mdl; break; }
+        case DMI::EMISSIVECOLOR: { result = emissiveColorAttribReaderPrimPf_mdl; break; }
+        case DMI::EMISSIVEINTENSITY: { result = emissiveIntensityAttribReaderPrimPf_mdl; break; }
+        case DMI::ROUGHNESS: { result = roughnessAttribReaderPrimPf_mdl; break; }
+        case DMI::METALLIC: { result = metallicAttribReaderPrimPf_mdl; break; }
+        case DMI::IOR: { result = iorAttribReaderPrimPf_mdl; break; }
 
         default: assert(false); break;
       };
@@ -614,21 +608,13 @@ namespace
   {
 #ifdef TIME_BASED_CACHING
 #ifdef VALUE_CLIP_RETIMING
-    // Step could be performed to keep timeVar stage more in sync, but removal of attrib from manifest makes this superfluous
-    //if (!timeVaryingUpdate && timeVarGeom)
-    //{
-    //  timeVarAttrib.ClearAtTime(timeEval.TimeCode);
-    //}
 #ifdef OMNIVERSE_CREATE_WORKAROUNDS
     if(timeVaryingUpdate && uniformAttrib)
     {
-      // Create considers the referenced uniform prims as a stronger opinion than timeVarying clip values (against the spec, see 'value resolution').
-      // Just remove the referenced uniform opinion altogether.
       uniformAttrib.ClearAtTime(TimeEvaluator<bool>::DefaultTime);
     }
 #endif
 #else // !VALUE_CLIP_RETIMING
-    // Uniform and timeVar geoms are the same. In case of uniform values, make sure the timesamples are cleared out.
     if(!timeVaryingUpdate && timeVarAttrib)
     {
       timeVarAttrib.Clear();

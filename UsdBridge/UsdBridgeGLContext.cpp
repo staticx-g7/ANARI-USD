@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeGLContext.h"
 
@@ -112,7 +111,6 @@ bool EnsureOpenGLContext()
 #include <dlfcn.h>
 #include <cstdint>
 
-// EGL types and constants loaded dynamically to avoid header/link dependencies
 typedef void* EGLDisplay;
 typedef void* EGLContext;
 typedef void* EGLSurface;

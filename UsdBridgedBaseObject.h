@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -21,7 +20,6 @@ class UsdBridgedBaseObject : public UsdParameterizedBaseObject<T, D>
   protected:
     using CType = C;
 
-    // Timevarying helper functions (classes workaround to allow for partial specialization)
     template<typename IT, typename ID, typename IH, typename IC>
     class TimeVaryingClass
     {
@@ -200,7 +198,7 @@ class UsdBridgedBaseObject : public UsdParameterizedBaseObject<T, D>
 
   protected:
     typedef UsdBridgedBaseObject<T,D,H,C> BridgedBaseObjectType;
-    typedef void (UsdBridge::*UsdBridgeMemFn)(H handle); 
+    typedef void (UsdBridge::*UsdBridgeMemFn)(H handle);
 
     void applyRemoveFunc(UsdDevice* device, UsdBridgeMemFn func)
     {
@@ -215,7 +213,7 @@ class UsdBridgedBaseObject : public UsdParameterizedBaseObject<T, D>
     const char* uniqueName;
     H usdHandle;
     bool removePrim = false;
-    
+
 #ifdef OBJECT_LIFETIME_EQUALS_USD_LIFETIME
     UsdBridge* cachedBridge = nullptr;
 #endif

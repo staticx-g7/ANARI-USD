@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdVolume.h"
 #include "UsdAnari.h"
@@ -27,14 +26,12 @@ namespace
 {
   void GatherTfData(const UsdVolumeData& paramData, UsdBridgeTfData& tfData)
   {
-    // Get transfer function data
     const UsdDataArray* tfColor = paramData.color;
     const UsdDataArray* tfOpacity = paramData.opacity;
 
     UsdBridgeType tfColorType = AnariToUsdBridgeType(tfColor->getType());
     UsdBridgeType tfOpacityType = AnariToUsdBridgeType(tfOpacity->getType());
 
-    // Write to struct
     tfData.TfColors = tfColor->getData();
     tfData.TfColorsType = tfColorType;
     tfData.TfNumColors = (int)(tfColor->getLayout().numItems1);
@@ -58,8 +55,6 @@ UsdVolume::~UsdVolume()
   usdDevice->removeFromVolumeList(this);
 
 #ifdef OBJECT_LIFETIME_EQUALS_USD_LIFETIME
-  // Given that the object is destroyed, none of its references to other objects
-  // has to be updated anymore.
   if(cachedBridge)
     cachedBridge->DeleteVolume(usdHandle);
 #endif
@@ -84,7 +79,6 @@ bool UsdVolume::CheckTfParams(UsdDevice* device)
 
   UsdLogInfo logInfo(device, this, ANARI_VOLUME, debugName);
 
-  // Only perform data(type) checks, data upload along with field in UsdVolume::commit()
   const UsdDataArray* tfColor = paramData.color;
   if (paramData.color == nullptr)
   {
@@ -148,7 +142,6 @@ bool UsdVolume::UpdateVolume(UsdDevice* device, const char* debugName)
   if (!CheckTfParams(device))
     return false;
 
-  // Get field data
   const UsdSpatialFieldData& fieldParams = field->getReadParams();
   const UsdDataArray* fieldDataArray = fieldParams.data;
   if(!fieldDataArray) return false; // Enforced in field commit()
@@ -156,7 +149,6 @@ bool UsdVolume::UpdateVolume(UsdDevice* device, const char* debugName)
 
   UsdBridgeType fieldDataType = AnariToUsdBridgeType(fieldDataArray->getType());
 
-  //Set bridge volumedata
   UsdBridgeVolumeData volumeData;
   volumeData.Data = fieldDataArray->getData();
   volumeData.DataType = fieldDataType;
@@ -169,8 +161,7 @@ bool UsdVolume::UpdateVolume(UsdDevice* device, const char* debugName)
   celldims[0] = fieldParams.gridSpacing[0]; celldims[1] = fieldParams.gridSpacing[1]; celldims[2] = fieldParams.gridSpacing[2];
 
   GatherTfData(paramData, volumeData.TfData);
-  
-  // Set whether we want to output source data or preclassified colored volumes
+
   volumeData.preClassified = paramData.preClassified;
 
   typedef UsdBridgeVolumeData::DataMemberId DMI;
@@ -181,8 +172,8 @@ bool UsdVolume::UpdateVolume(UsdDevice* device, const char* debugName)
     & (isTimeVarying(CType::VALUERANGE) ? DMI::ALL : ~DMI::TFVALUERANGE);
 
   double worldTimeStep = device->getReadParams().timeStep;
-  double fieldTimeStep = selectRefTime(paramData.fieldRefTimeStep, fieldParams.timeStep, worldTimeStep); // use the link time, as there is no such thing as separate field data
-  
+  double fieldTimeStep = selectRefTime(paramData.fieldRefTimeStep, fieldParams.timeStep, worldTimeStep);
+
   usdBridge->SetSpatialFieldData(field->getUsdHandle(), volumeData, fieldTimeStep);
 
   return true;
@@ -190,7 +181,6 @@ bool UsdVolume::UpdateVolume(UsdDevice* device, const char* debugName)
 
 bool UsdVolume::deferCommit(UsdDevice* device)
 {
-  // The spatial field may not yet have been committed, but the volume reads data from its params during commit. So always defer until flushing of commit list.
   return !device->isFlushingCommitList();
 }
 
@@ -210,7 +200,6 @@ bool UsdVolume::doCommitData(UsdDevice* device)
   {
     double worldTimeStep = device->getReadParams().timeStep;
 
-    // Make sure the references are updated on the Bridge side.
     if (paramData.field)
     {
       const UsdSpatialFieldData& fieldParams = paramData.field->getReadParams();
@@ -229,7 +218,6 @@ bool UsdVolume::doCommitData(UsdDevice* device)
     prevField = paramData.field;
   }
 
-  // Regardless of whether tf param changes, field params or the vol reference itself, UpdateVolume is required.
   if (paramChanged || paramData.field->paramChanged)
   {
     if(paramData.field)

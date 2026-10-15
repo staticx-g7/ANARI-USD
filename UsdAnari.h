@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -59,21 +58,18 @@ namespace anari
   ANARI_TYPEFOR_SPECIALIZATION(UsdWorld*, ANARI_WORLD);
 }
 
-// Helper templates which allow for bool usage as param type 
-// Replaces ANARI_TYPEFOR_SPECIALIZATION(bool, ANARI_BOOL)
 template<typename ParamCType, int AnariType>
 struct AssertParamDataType
-{ 
+{
   static constexpr bool value = AnariType == anari::ANARITypeFor<ParamCType>::value;
 };
 
 template<>
 struct AssertParamDataType<bool, ANARI_BOOL>
-{ 
+{
   static constexpr bool value = true;
 };
 
-// Shared convenience functions
 namespace
 {
   inline bool strEquals(const char* arg0, const char* arg1)
@@ -88,7 +84,6 @@ namespace
     *p = v;
   }
 
-  // Helper templates which allow for bool usage as param type 
   template<typename ParamCType>
   inline bool AnariTypeMatchesCType(int anariType)
   {
@@ -102,7 +97,6 @@ namespace
   }
 }
 
-// Standard log info
 struct UsdLogInfo
 {
   UsdLogInfo(UsdDevice* dev, void* src, ANARIDataType srcType, const char* srcName)
@@ -112,7 +106,7 @@ struct UsdLogInfo
     , sourceName(srcName)
   {}
 
-  UsdDevice* device = nullptr; 
+  UsdDevice* device = nullptr;
   void* source = nullptr;
   ANARIDataType sourceType = ANARI_VOID_POINTER;
   const char* sourceName = nullptr;
@@ -121,12 +115,11 @@ struct UsdLogInfo
 void reportStatusThroughDevice(const UsdLogInfo& logInfo, ANARIStatusSeverity severity, ANARIStatusCode statusCode,
   const char *format, const char* firstArg, const char* secondArg); // In case #include <UsdDevice.h> is undesired
 
-#ifdef CHECK_MEMLEAKS  
+#ifdef CHECK_MEMLEAKS
 void logAllocationThroughDevice(UsdDevice* device, const void* ptr, ANARIDataType ptrType);
 void logDeallocationThroughDevice(UsdDevice* device, const void* ptr, ANARIDataType ptrType);
 #endif
 
-// Anari <=> USD conversions
 UsdBridgeType AnariToUsdBridgeType(ANARIDataType anariType);
 UsdBridgeType AnariToUsdBridgeType_Flattened(ANARIDataType anariType);
 ANARIDataType UsdBridgeToAnariType(UsdBridgeType anariType);
@@ -143,7 +136,6 @@ bool AssertOneDimensional(const UsdDataLayout& layout, const UsdLogInfo& logInfo
 bool AssertNoStride(const UsdDataLayout& layout, const UsdLogInfo& logInfo, const char* arrayName);
 bool AssertArrayType(UsdDataArray* dataArray, ANARIDataType dataType, const UsdLogInfo& logInfo, const char* errorMessage);
 
-// Template definitions
 template<typename AnariType>
 class AnariToUsdObject {};
 

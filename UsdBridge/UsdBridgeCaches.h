@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeCaches_h
 #define UsdBridgeCaches_h
@@ -17,14 +16,14 @@ class UsdBridgeUsdWriter;
 class UsdBridgePrimCacheManager;
 
 typedef std::pair<std::string, UsdStageRefPtr> UsdStagePair; //Stage ptr and filename
-typedef std::pair<std::pair<bool,bool>, UsdBridgePrimCache*> BoolEntryPair; // Prim exists in stage, prim exists in cache, result cache entry ptr
+typedef std::pair<std::pair<bool,bool>, UsdBridgePrimCache*> BoolEntryPair;
 typedef void (*ResourceCollectFunc)(UsdBridgePrimCache*, UsdBridgeUsdWriter&);
 typedef std::function<void(UsdBridgePrimCache*)> AtRemoveFunc;
 typedef std::vector<UsdBridgePrimCache*> UsdBridgePrimCacheList;
 typedef std::vector<SdfPath> SdfPrimPathList;
 
 struct UsdBridgeResourceKey
-{ 
+{
   UsdBridgeResourceKey() = default;
   ~UsdBridgeResourceKey() = default;
   UsdBridgeResourceKey(const UsdBridgeResourceKey& key) = default;
@@ -33,17 +32,17 @@ struct UsdBridgeResourceKey
     name = n;
 #ifdef TIME_BASED_CACHING
     timeStep = t;
-#endif    
+#endif
   }
 
   const char* name;
 #ifdef TIME_BASED_CACHING
-  double timeStep;  
+  double timeStep;
 #endif
 
   bool operator==(const UsdBridgeResourceKey& rhs) const
   {
-    return ( name ? (rhs.name ? (strEquals(name, rhs.name) 
+    return ( name ? (rhs.name ? (strEquals(name, rhs.name)
 #ifdef TIME_BASED_CACHING
       && timeStep == rhs.timeStep
 #endif
@@ -58,13 +57,6 @@ public:
 
   unsigned int GetRefCount() const { return RefCount; }
 
-  // Garbage-collect bookkeeping: caches are torn down in the same
-  // RemoveUnreferencedPrimCaches() pass in which they are observed with zero
-  // references (producers render only once per interaction event, so a
-  // deferred rule would delay clip removal after hiding an actor). The
-  // GcDeleted marker makes cascaded teardowns idempotent: a child shared by
-  // several removed parents is torn down exactly once even when two passes
-  // or the tree walk reach it repeatedly.
   bool IsGcDeleted() const { return GcDeleted; }
   void MarkGcDeleted() { GcDeleted = true; }
 
@@ -82,7 +74,6 @@ public:
   friend class UsdBridgePrimCacheManager;
   using ResourceContainer = std::vector<UsdBridgeResourceKey>;
 
-  //Constructors
   UsdBridgePrimCache(const SdfPath& pp, const SdfPath& nm, ResourceCollectFunc cf);
 
   UsdBridgePrimCache* GetChildCache(const TfToken& nameToken);
@@ -97,11 +88,11 @@ public:
 
 #ifdef TIME_BASED_CACHING
   void SetChildVisibleAtTime(const UsdBridgePrimCache* childCache, double timeCode);
-  bool SetChildInvisibleAtTime(const UsdBridgePrimCache* childCache, double timeCode); // Returns whether timeCode has been removed AND the visible timeset is empty.
+  bool SetChildInvisibleAtTime(const UsdBridgePrimCache* childCache, double timeCode);
 #endif
 
 #ifdef VALUE_CLIP_RETIMING
-  static constexpr double PrimStageTimeCode = 0.0; // Prim stages are stored in ClipStages under specified time code
+  static constexpr double PrimStageTimeCode = 0.0;
   const UsdStagePair& GetPrimStagePair() const;
 
   template<typename DataMemberType>
@@ -125,7 +116,6 @@ public:
     std::vector<UsdBridgePrimCache*> Children;
 
 #ifdef TIME_BASED_CACHING
-    // For each child, hold a vector of timesteps where it's visible (mimicks visibility attribute on the referencing prim)
     std::vector<std::vector<double>> ChildVisibleAtTimes;
 #endif
 };

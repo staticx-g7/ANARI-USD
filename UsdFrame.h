@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -24,7 +23,6 @@ struct UsdFrameData
   double time = 0.0;
 };
 
-// This is a bridged object, but it does not have a handle associated to a prim.
 class UsdFrame : public UsdBridgedBaseObject<UsdFrame, UsdFrameData, UsdBridgeHandle>
 {
   public:
@@ -54,7 +52,6 @@ class UsdFrame : public UsdBridgedBaseObject<UsdFrame, UsdFrameData, UsdBridgeHa
 
     UsdBridge* frameBridge = nullptr;
 
-    // Registration state - frame is registered on first commit
     void* registeredFrameState = nullptr;
 
     UsdUint2 renderBufferSize = {0, 0};

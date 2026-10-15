@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -33,13 +32,11 @@ struct UsdMaterialData
   double timeStep = std::numeric_limits<float>::quiet_NaN();
   int timeVarying = 0; // Bitmask indicating which attributes are time-varying.
 
-  // Standard parameters
   UsdMaterialMultiTypeParameter<UsdFloat3> color = {{ 1.0f, 1.0f, 1.0f }, ANARI_FLOAT32_VEC3};
   UsdMaterialMultiTypeParameter<float> opacity = {1.0f, ANARI_FLOAT32};
   UsdSharedString* alphaMode = nullptr; // Timevarying state linked to opacity
   float alphaCutoff = 0.5f; // Timevarying state linked to opacity
 
-  // Possible PBR parameters
   UsdMaterialMultiTypeParameter<UsdFloat3> emissiveColor = {{ 1.0f, 1.0f, 1.0f }, ANARI_FLOAT32_VEC3};
   UsdMaterialMultiTypeParameter<float> emissiveIntensity = {0.0f, ANARI_FLOAT32};
   UsdMaterialMultiTypeParameter<float> roughness = {0.5f, ANARI_FLOAT32};
@@ -92,7 +89,7 @@ class UsdMaterial : public UsdBridgedBaseObject<UsdMaterial, UsdMaterialData, Us
 
     template<typename ValueType>
     void assignParameterToMaterialInput(
-      const UsdMaterialMultiTypeParameter<ValueType>& param, 
+      const UsdMaterialMultiTypeParameter<ValueType>& param,
       UsdBridgeMaterialData::MaterialInput<ValueType>& matInput,
       bool useDisplayColorOpacity,
       const UsdLogInfo& logInfo);

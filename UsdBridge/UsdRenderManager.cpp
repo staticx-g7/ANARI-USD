@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdRenderManager.h"
 #include "UsdBridgeRenderContext.h"
@@ -14,10 +13,8 @@ UsdRenderManager::UsdRenderManager(UsdBridgeUsdWriter& usdWriter)
 
 UsdRenderManager::~UsdRenderManager()
 {
-    // Clear frames first (contexts depend on cores)
     Frames.clear();
 #ifdef USD_DEVICE_RENDERING_ENABLED
-    // Then clear cores
     Cores.clear();
 #endif
 }
@@ -44,8 +41,8 @@ void UsdRenderManager::UnregisterFrame(const char* frameName)
     if (!frameName)
         return;
 
-    // Memory-only: leave RenderContext + entry stage as session artifacts
     // (same lifetime model as primstages on normal anariRelease).
+
     Frames.erase(std::string(frameName));
 }
 
@@ -58,9 +55,6 @@ void UsdRenderManager::UnregisterFrameByState(void* frameState)
     {
         if (&it->second == frameState)
         {
-            // Frame renamed: the old entry stage filename is obsolete.
-            // Normal release/destructor uses UnregisterFrame and leaves the
-            // session artifact on disk (same lifetime model as primstages).
             UsdWriter.RemoveFrameEntryStage(it->first.c_str());
             Frames.erase(it);
             return;
@@ -162,9 +156,6 @@ void UsdRenderManager::SetFrameRenderSize(const char* frameName, uint32_t width,
         state->Context->SetRenderBufferSize(width, height);
 }
 
-// -----------------------------------------------------------------------------
-// Hydra in-process rendering (stubs when USD_DEVICE_RENDERING_ENABLED is off)
-// -----------------------------------------------------------------------------
 
 #ifdef USD_DEVICE_RENDERING_ENABLED
 
@@ -176,13 +167,11 @@ void UsdRenderManager::SetFrameRenderer(const char* frameName, const char* hydra
 
     const char* rendererName = hydraRendererName ? hydraRendererName : DefaultRendererName;
 
-    // Check if renderer changed
     if (state->RendererName == rendererName && state->Context)
         return;
 
     state->RendererName = rendererName;
 
-    // Get or create the core for this renderer
     state->Core = GetOrCreateCore(rendererName);
 
     if (!state->Core || !state->Core->IsInitialized())
@@ -191,7 +180,6 @@ void UsdRenderManager::SetFrameRenderer(const char* frameName, const char* hydra
         return;
     }
 
-    // Create a new context for this frame using the frame name
     pxr::SdfPath contextId("/RenderContext_" + std::string(frameName));
     state->Context = CreateRenderContext(
         RenderContextMode::Shared,
@@ -206,7 +194,6 @@ void UsdRenderManager::SetFrameRenderer(const char* frameName, const char* hydra
         return;
     }
 
-    // Restore camera and world paths if they were set (USD camera rels are already authored via SetFrameCamera)
     if (!state->CameraPath.IsEmpty())
         state->Context->SetCameraPath(state->CameraPath);
     if (!state->WorldPath.IsEmpty())
@@ -276,7 +263,6 @@ UsdBridgeRendererCore* UsdRenderManager::GetOrCreateCore(const char* hydraRender
         return it->second.get();
     }
 
-    // Create a new core for this renderer
     auto core = std::make_unique<UsdBridgeRendererCore>(UsdWriter);
     core->Initialize(hydraRendererName);
 

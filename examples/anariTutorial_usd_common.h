@@ -1,5 +1,4 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -10,8 +9,7 @@
 const char *g_libraryType = "usd";
 
 // Severity threshold for status messages (default: warning and above).
-// Maps to ANARIStatusSeverity values: 0=fatal, 1=error, 2=warning,
-// 3=perf, 4=info, 5=debug.
+
 ANARIStatusSeverity g_minSeverity = ANARI_SEVERITY_WARNING;
 
 void parseArgs(int argc, const char **argv)
@@ -38,7 +36,6 @@ const char* texFile = "/home/<username>/models/texture.png"; // Point this to an
 const char* wrapS = "repeat";
 const char* wrapT = "repeat";
 
-/******************************************************************/
 void statusFunc(const void *userData,
   ANARIDevice device,
   ANARIObject source,
@@ -157,14 +154,12 @@ void createSineWaveGrid(int* size, GridData_t* gridData)
       float iFrac = (float)i/size[0];
       float jFrac = (float)j/size[1];
 
-      // Vertex
       float amp = sin((iFrac+jFrac) * 8.0f * PI) + cos(jFrac * 5.5f * PI);
 
       vertData[vertAddr] = ((float)i)*5.0f;
       vertData[vertAddr+1] = ((float)j)*5.0f;
       vertData[vertAddr+2] = amp*10.0f;
 
-      // Color
       float rVal = sin(iFrac * 2.0f * PI);
       float gVal = cos(iFrac * 8.0f * PI);
       float bVal = cos(jFrac * 20.0f * PI);
@@ -173,18 +168,14 @@ void createSineWaveGrid(int* size, GridData_t* gridData)
       colorData[vertAddr+1] = gVal;
       colorData[vertAddr+2] = bVal;
 
-      // Opacity
       float opacity = 0.3f + 0.3f*(cos(iFrac * 1.0f * PI) + sin(jFrac * 7.0f * PI));
 
       opacityData[vertIdx] = opacity;
 
-      // Radius
-      //spacing is 5.0, so make sure not to go over 2.5
       float radius = 1.25f + 0.5f*(cos(iFrac * 5.0f * PI) + sin(jFrac * 2.0f * PI));
 
       radiusData[vertIdx] = radius;
 
-      // Orientation
       int orientAddr = vertIdx*4;
       float roll = iFrac*PI*7.3, pitch = jFrac*PI*4.9, yaw = -(jFrac+0.45f)*PI*3.3;
       float sinRoll = sin(roll), sinPitch = sin(pitch), sinYaw = sin(yaw);

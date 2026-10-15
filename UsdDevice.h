@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -64,11 +63,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     UsdDevice(ANARILibrary library);
     ~UsdDevice();
 
-    ///////////////////////////////////////////////////////////////////////////
-    // Main virtual interface to accepting API calls
-    ///////////////////////////////////////////////////////////////////////////
-
-    // Data Arrays ////////////////////////////////////////////////////////////
 
     ANARIArray1D newArray1D(const void *appMemory,
       ANARIMemoryDeleter deleter,
@@ -94,7 +88,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     void* mapArray(ANARIArray) override;
     void unmapArray(ANARIArray) override;
 
-    // Renderable Objects /////////////////////////////////////////////////////
 
     ANARILight newLight(const char *type) override;
 
@@ -106,29 +99,24 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     ANARISurface newSurface() override;
     ANARIVolume newVolume(const char *type) override;
 
-    // Model Meta-Data ////////////////////////////////////////////////////////
 
     ANARIMaterial newMaterial(const char *material_type) override;
 
     ANARISampler newSampler(const char *type) override;
 
-    // Instancing /////////////////////////////////////////////////////////////
 
     ANARIGroup newGroup() override;
 
     ANARIInstance newInstance(const char *type) override;
 
-    // Top-level Worlds ///////////////////////////////////////////////////////
 
     ANARIWorld newWorld() override;
 
-    // Extension interface ///////////////////////////////////////////////////////
 
     ANARIObject newObject(const char *objectType, const char *type) override;
 
     void (*getProcAddress(const char *name))(void) override;
 
-    // Query functions ////////////////////////////////////////////////////////
 
     const char ** getObjectSubtypes(ANARIDataType objectType) override;
     const void* getObjectInfo(ANARIDataType objectType,
@@ -142,7 +130,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
         const char* infoName,
         ANARIDataType infoType) override;
 
-    // Object + Parameter Lifetime Management /////////////////////////////////
 
     void setParameter(ANARIObject object,
       const char *name,
@@ -178,7 +165,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     void release(ANARIObject _obj) override;
     void retain(ANARIObject _obj) override;
 
-    // Object Query Interface /////////////////////////////////////////////////
 
     int getProperty(ANARIObject object,
       const char *name,
@@ -187,7 +173,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
       uint64_t size,
       uint32_t mask) override;
 
-    // FrameBuffer Manipulation ///////////////////////////////////////////////
 
     ANARIFrame newFrame() override;
 
@@ -199,7 +184,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
     void frameBufferUnmap(ANARIFrame fb, const char *channel) override;
 
-    // Frame Rendering ////////////////////////////////////////////////////////
 
     ANARIRenderer newRenderer(const char *type) override;
 
@@ -207,7 +191,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     int frameReady(ANARIFrame frame, ANARIWaitMask mask) override;
     void discardFrame(ANARIFrame) override {}
 
-    // UsdParameterizedBaseObject interface ///////////////////////////////////////////////////////////
 
     void filterSetParam(
       const char *name,
@@ -222,7 +205,6 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
     void remove(UsdDevice* device) override {}
 
-    // USD Specific ///////////////////////////////////////////////////////////
 
     bool isInitialized() { return getUsdBridge() != nullptr; }
     UsdBridge* getUsdBridge();
@@ -235,13 +217,9 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     void addToVolumeList(UsdVolume* volume);
     void removeFromVolumeList(UsdVolume* volume);
 
-    // Allows for selected strings to persist,
-    // so their pointers can be cached beyond their containing objects' lifetimes,
-    // to be used for garbage collecting resource files.
     void addToResourceStringList(UsdSharedString* sharedString);
 
 #ifdef CHECK_MEMLEAKS
-    // Memleak checking
     void logObjAllocation(const UsdBaseObject* ptr);
     void logObjDeallocation(const UsdBaseObject* ptr);
     std::vector<const UsdBaseObject*> allocatedObjects;
@@ -274,13 +252,11 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
   protected:
     UsdBaseObject* getBaseObjectPtr(ANARIObject object);
 
-    // UsdParameterizedBaseObject interface ///////////////////////////////////////////////////////////
 
     bool deferCommit(UsdDevice* device) { return false; };
     bool doCommitData(UsdDevice* device) { return false; };
     void doCommitRefs(UsdDevice* device) {};
 
-    // USD Specific Cleanup /////////////////////////////////////////////////////////////
 
     void clearCommitList();
     void flushCommitList();
@@ -311,13 +287,10 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
     bool bridgeInitAttempt = false;
 
-    // Using object pointers as basis for deferred commits; another option would be to traverse
-    // the bridge's internal cache handles, but a handle may map to multiple objects (with the same name)
-    // so that's not 1-1 with the effects of a non-deferred commit order.
     using CommitListType = std::pair<helium::IntrusivePtr<UsdBaseObject>, bool>;
     std::vector<CommitListType> commitList;
     std::vector<UsdBaseObject*> removeList;
-    std::vector<UsdVolume*> volumeList; // Tracks all volumes to auto-commit when child fields have been committed
+    std::vector<UsdVolume*> volumeList;
     bool lockCommitList = false;
 
     std::vector<helium::IntrusivePtr<UsdSharedString>> resourceStringList;
@@ -327,11 +300,9 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     ANARIStatusCallback userSetStatusFunc = nullptr;
     const void* userSetStatusUserData = nullptr;
 
-    // Disable garbage collection to prevent orphaned prim removal
     bool disableGarbageCollect_ = false;
 
    private:
-    // Flush on renderFrame (camera change) only — no geometry-commit auto-flush
     bool autoFlushOnGeometryCommit = false;
     bool hasPendingFlush_ = false; // reserved for future use
     std::chrono::steady_clock::time_point lastFlushTime_;

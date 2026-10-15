@@ -1,9 +1,4 @@
 // Copyright 2026 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
-//
-// Creates two ANARI worlds (each with geometry + material) and two frames.
-// Rendering each frame emits Session_*/frame_*.usda entry stages that reference
-// only that frame's world, camera, and RenderContext from FullScene.usda.
 
 #include <array>
 #include <cstdio>
@@ -164,6 +159,7 @@ int main(int argc, const char **argv)
   uvec2 imgSize = {1024, 768};
 
   // Aim each camera at its own triangle (center ~ offset + (0,0,3)).
+
   printf("building world_red / frame_red...");
   WorldBundle red = makeWorldFrame(d,
       imgSize,

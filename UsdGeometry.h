@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -11,7 +10,7 @@
 class UsdDataArray;
 struct UsdBridgeMeshData;
 
-static constexpr int MAX_ATTRIBS = 16; // Coordinate with UsdGeometry::componentParamNames and UsdBridgeData.h
+static constexpr int MAX_ATTRIBS = 16;
 
 enum class UsdGeometryComponents
 {
@@ -57,24 +56,20 @@ struct UsdGeometryData
   const UsdDataArray* primitiveAttributes[MAX_ATTRIBS] = { nullptr };
   const UsdDataArray* primitiveIds = nullptr;
   const UsdSharedString* attributeNames[MAX_ATTRIBS] = { nullptr };
-  const UsdDataArray* indices = nullptr; 
-  
-  // Spheres
+  const UsdDataArray* indices = nullptr;
+
   const UsdDataArray* vertexRadii = nullptr;
   float radiusConstant = 1.0f;
-  bool UseUsdGeomPoints = 
+  bool UseUsdGeomPoints =
 #ifdef USE_USD_GEOM_POINTS
     true;
 #else
     false;
 #endif
 
-  // Cylinders
   const UsdDataArray* primitiveRadii = nullptr;
 
-  // Curves
 
-  // Glyphs
   const UsdDataArray* vertexScales = nullptr;
   const UsdDataArray* primitiveScales = nullptr;
   const UsdDataArray* vertexOrientations = nullptr;
@@ -110,7 +105,7 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
 
     typedef std::vector<UsdBridgeAttribute> AttributeArray;
     typedef std::vector<std::vector<char>> AttributeDataArraysType;
-    
+
     UsdGeometry(const char* name, const char* type, UsdDevice* device);
     ~UsdGeometry();
 
@@ -123,8 +118,8 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
 
     void commit(UsdDevice* device) override;
 
-    bool isInstanced() const 
-    { 
+    bool isInstanced() const
+    {
       return geomType == GEOM_SPHERE
         || geomType == GEOM_CONE
         || geomType == GEOM_CYLINDER
@@ -194,7 +189,7 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
     void assignTempDataToAttributes(bool perPrimInterpolation);
 
     GeomType geomType = GEOM_UNKNOWN;
-    bool protoShapeChanged = false; // Do not automatically commit shapes (the object may have been recreated onto an already existing USD prim)
+    bool protoShapeChanged = false;
 
     bool hasNewAttribName = false;
 

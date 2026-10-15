@@ -1,5 +1,4 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
 #include <errno.h>
 #include <stdint.h>
@@ -9,12 +8,10 @@
 #include <array>
 #include <random>
 
-// anari
 #define ANARI_EXTENSION_UTILITY_IMPL
 #include "anari/anari_cpp.hpp"
 #include "anari/anari_cpp/ext/std.h"
 
-// stb_image
 #include "stb_image_write.h"
 
 using uvec2 = std::array<unsigned int, 2>;
@@ -87,13 +84,11 @@ struct Point
 
 static std::vector<Point> generatePoints(size_t numPoints)
 {
-  // create random number distributions for point center and weight
   std::mt19937 gen(0);
 
   std::uniform_real_distribution<float> centerDistribution(-1.f, 1.f);
   std::uniform_real_distribution<float> weightDistribution(0.1f, 0.3f);
 
-  // populate the points
   std::vector<Point> points(numPoints);
 
   for (auto &p : points) {
@@ -110,8 +105,6 @@ static std::vector<Point> generatePoints(size_t numPoints)
 static std::vector<float> generateVoxels(
     const std::vector<Point> &points, ivec3 dims)
 {
-  // get world coordinate in [-1.f, 1.f] from logical coordinates in [0,
-  // volumeDimension)
   auto logicalToWorldCoordinates = [&](int i, int j, int k) {
     vec3 result = {-1.f + float(i) / float(dims[0] - 1) * 2.f,
         -1.f + float(j) / float(dims[1] - 1) * 2.f,
@@ -119,17 +112,14 @@ static std::vector<float> generateVoxels(
     return result;
   };
 
-  // generate voxels
   std::vector<float> voxels(size_t(dims[0]) * size_t(dims[1]) * size_t(dims[2]));
 
   for (int k = 0; k < dims[2]; k++) {
     for (int j = 0; j < dims[1]; j++) {
       for (int i = 0; i < dims[0]; i++) {
-        // index in array
         size_t index = size_t(k) * size_t(dims[1]) * size_t(dims[0])
             + size_t(j) * size_t(dims[0]) + size_t(i);
 
-        // compute volume value
         float value = 0.f;
 
         for (auto &p : points) {
@@ -139,8 +129,6 @@ static std::vector<float> generateVoxels(
             std::pow(pointCoordinate[1] - p.center[1], 2.0f) +
             std::pow(pointCoordinate[2] - p.center[2], 2.0f);
 
-          // contribution proportional to weighted inverse-square distance
-          // (i.e. gravity)
           value += p.weight / distanceSq;
         }
 
@@ -167,7 +155,6 @@ std::vector<ParameterInfo> GravityVolume::parameters()
 {
   return {
       {"withGeometry", false, "Include geometry inside the volume?"}
-      //
   };
 }
 
@@ -261,7 +248,6 @@ void GravityVolume::commit()
       d, m_world, "volume", anari::newArray1D(d, &volume));
   anari::release(d, volume);
 
-  // create and setup light
   auto light = anari::newObject<anari::Light>(d, "directional");
   anari::setParameter(d, light, "irradiance", 1.0f);
   anari::commitParameters(d, light);
@@ -286,15 +272,12 @@ int main(int argc, const char **argv)
   }
   stbi_flip_vertically_on_write(1);
 
-  // image size
   uvec2 imgSize = {1024 /*width*/, 768 /*height*/};
 
-  // camera
   vec3 cam_pos = {2.5f, 3.5f, -2.5f};
   vec3 cam_up = {0.f, 1.f, 0.f};
   vec3 cam_view = {-0.45f, -0.63f, 0.63f};
 
-  // triangle mesh array
   vec3 vertex[] = {{-1.0f, -1.0f, 3.0f},
       {-1.0f, 1.0f, 3.0f},
       {1.0f, -1.0f, 3.0f},
@@ -326,7 +309,6 @@ int main(int argc, const char **argv)
   printf("done!\n");
   printf("setting up camera...");
 
-  // create and setup camera
   auto camera = anari::newObject<anari::Camera>(d, "perspective");
   anari::setParameter(
       d, camera, "aspect", (float)imgSize[0] / (float)imgSize[1]);
@@ -344,19 +326,15 @@ int main(int argc, const char **argv)
 
   printf("setting up renderer...");
 
-  // create renderer
   auto renderer = anari::newObject<anari::Renderer>(d, "hydra");
-  // objects can be named for easier identification in debug output etc.
   anari::setParameter(d, renderer, "name", "MainRenderer");
 
   printf("done!\n");
 
-  // complete setup of renderer
   vec4 bgColor = {1.f, 1.f, 1.f, 1.f};
   anari::setParameter(d, renderer, "backgroundColor", bgColor); // white
   anari::commitParameters(d, renderer);
 
-  // create and setup frame
   auto frame = anari::newObject<anari::Frame>(d);
   anari::setParameter(d, frame, "size", imgSize);
   anari::setParameter(d, frame, "channel.color", ANARI_UFIXED8_RGBA_SRGB);
@@ -369,14 +347,12 @@ int main(int argc, const char **argv)
 
   printf("rendering out USD objects via anari::renderFrame()...");
 
-  // render one frame
   anari::render(d, frame);
   anari::wait(d, frame);
 
   printf("done!\n");
   printf("\ncleaning up objects...");
 
-  // final cleanups
   anari::release(d, frame);
   delete volumeScene;
   anari::release(d, d);

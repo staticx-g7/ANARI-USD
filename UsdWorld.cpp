@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdWorld.h"
 #include "UsdAnari.h"
@@ -55,7 +54,7 @@ bool UsdWorld::deferCommit(UsdDevice* device)
   const UsdWorldData& paramData = getReadParams();
 
   if(UsdObjectNotInitialized<InstanceUsdType>(paramData.instances) ||
-    UsdObjectNotInitialized<SurfaceUsdType>(paramData.surfaces) || 
+    UsdObjectNotInitialized<SurfaceUsdType>(paramData.surfaces) ||
     UsdObjectNotInitialized<VolumeUsdType>(paramData.volumes) ||
     UsdObjectNotInitialized<LightUsdType>(paramData.lights))
   {
@@ -76,7 +75,7 @@ bool UsdWorld::doCommitData(UsdDevice* device)
 
   if (paramChanged || isNew)
   {
-    doCommitRefs(device); // Perform immediate commit of refs - no params from children required
+    doCommitRefs(device);
 
     paramChanged = false;
   }
@@ -111,7 +110,6 @@ void UsdWorld::doCommitRefs(UsdDevice* device)
     volumeHandles, instanceableValues, &UsdBridge::SetVolumeRefs, &UsdBridge::DeleteVolumeRefs,
     usdBridge, logInfo, "UsdGroup commit failed: 'volume' array elements should be of type ANARI_VOLUME");
 
-  // Lights are not instanceable; UsdLight::isInstanceable() always returns false.
   ManageRefArray<LightType, ANARILight, UsdLight>(usdHandle, paramData.lights, lightsTimeVarying, timeStep,
     lightHandles, instanceableValues, &UsdBridge::SetLightRefs, &UsdBridge::DeleteLightRefs,
     usdBridge, logInfo, "UsdWorld commit failed: 'light' array elements should be of type ANARI_LIGHT");

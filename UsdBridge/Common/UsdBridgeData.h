@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeData_h
 #define UsdBridgeData_h
@@ -283,7 +282,6 @@ namespace UsdBridgeTypeTraits
   DEFINE_USDBRIDGETYPE_SCALARTYPE(FLOAT_MAT4, float)
   DEFINE_USDBRIDGETYPE_SCALARTYPE(FLOAT_MAT2x3, float)
   DEFINE_USDBRIDGETYPE_SCALARTYPE(FLOAT_MAT3x4, float)
-  // Half types scalartype has to be provided by user
 }
 
 inline int UsdBridgeTypeNumComponents(UsdBridgeType dataType)
@@ -291,7 +289,7 @@ inline int UsdBridgeTypeNumComponents(UsdBridgeType dataType)
   int typeIdent = (int)dataType;
   if(typeIdent <= (int)UsdBridgeType::DOUBLE4)
     return (typeIdent / UsdBridgeNumFundamentalTypes) + 1;
-  
+
   switch(dataType)
   {
     case UsdBridgeType::INT_PAIR: return 2;
@@ -366,24 +364,20 @@ struct UsdBridgeSettings
 {
   const char* HostName = nullptr;           // Name of the remote server
   const char* OutputPath = nullptr;         // Directory for output (on server if HostName is not empty)
-  bool CreateNewSession = true;             // Find a new session directory on creation of the bridge, or re-use the last opened one (leave contents intact).
+  bool CreateNewSession = true;
    bool BinaryOutput = true;                // Select usda or usd output.
 
-  // USD conversion options
   bool EnablePreviewSurfaceShader = true;   // Output the preview surface shader for materials
   bool EnableMdlShader = true;              // Output the mdl shader for materials
-  bool UseDisplayColorOpacity = true;      // When true, use displayColor and displayOpacity primvars instead of a color primvar with alpha channel
+  bool UseDisplayColorOpacity = true;
 
-  // MPI parallel support (KHR_DATA_PARALLEL_MPI)
   int MpiRank = -1;                         // MPI rank of this process (-1 = no MPI)
   int MpiSize = -1;                         // Total number of MPI processes (-1 = no MPI)
-  UsdBridgeParallelController* ParallelController = nullptr; // Abstract controller for collective operations (owned by caller)
+  UsdBridgeParallelController* ParallelController = nullptr;
 
-  // About to be deprecated
   static constexpr bool EnableStTexCoords = false;
 };
 
-// Generic attribute definition
 struct UsdBridgeAttribute
 {
   const void* Data = nullptr;
@@ -397,7 +391,6 @@ struct UsdBridgeMeshData
 {
   static const UsdBridgeGeomType GeomType = UsdBridgeGeomType::MESH;
 
-  //Class definitions
   enum class DataMemberId : uint32_t
   {
     NONE = 0,
@@ -423,13 +416,12 @@ struct UsdBridgeMeshData
     ATTRIBUTE15 = (1 << 19),
     ALL = (1 << 20) - 1
   };
-  
+
   DataMemberId UpdatesToPerform = DataMemberId::ALL;
   DataMemberId TimeVarying = DataMemberId::ALL;
 
   bool isEmpty() { return Points == NULL; }
 
-  //Mesh data
   uint64_t NumPoints = 0;
 
   const void* Points = nullptr;
@@ -454,7 +446,6 @@ struct UsdBridgeInstancerData
 {
   static const UsdBridgeGeomType GeomType = UsdBridgeGeomType::INSTANCER;
 
-  //Class definitions
   enum class DataMemberId : uint32_t
   {
     NONE = 0,
@@ -510,7 +501,7 @@ struct UsdBridgeInstancerData
   const float* AngularVelocities = nullptr; // 3 component float
   const UsdBridgeAttribute* Attributes = nullptr; // Pointer to externally managed attribute array
   uint32_t NumAttributes = 0;
-  const void* InstanceIds = nullptr; 
+  const void* InstanceIds = nullptr;
   UsdBridgeType InstanceIdsType = UsdBridgeType::UNDEFINED;
 
   const void* InvisibleIds = nullptr; //Index into points
@@ -525,7 +516,7 @@ struct UsdBridgeInstancerRefData
     SHAPE_SPHERE = -1,
     SHAPE_CYLINDER = -2,
     SHAPE_CONE = -3,
-    SHAPE_MESH = 0 // Positive values denote meshes (allows for indices into a list of meshes passed along with a list of shapes)
+    SHAPE_MESH = 0
   };
 
   InstanceShape DefaultShape = SHAPE_SPHERE;
@@ -538,7 +529,6 @@ struct UsdBridgeCurveData
 {
   static const UsdBridgeGeomType GeomType = UsdBridgeGeomType::CURVE;
 
-  //Class definitions
   enum class DataMemberId : uint32_t
   {
     NONE = 0,
@@ -619,7 +609,7 @@ struct UsdBridgeVolumeData
 #if __cplusplus >= 201703L
   static_assert(DataMemberId::TFCOLORS > DataMemberId::VOL_ALL);
 #endif
-  
+
   DataMemberId UpdatesToPerform = DataMemberId::ALL;
   DataMemberId TimeVarying = DataMemberId::ALL;
 
@@ -631,7 +621,7 @@ struct UsdBridgeVolumeData
   float Origin[3] = { 0,0,0 };
   float CellDimensions[3] = { 1,1,1 };
 
-  long long BackgroundIdx = -1; // When not -1, denotes the first element in Data which contains a background value
+  long long BackgroundIdx = -1;
 
   UsdBridgeTfData TfData;
 };
@@ -649,7 +639,7 @@ struct UsdBridgeMaterialData
   enum class DataMemberId : uint32_t
   {
     NONE = 0,
-    DIFFUSE = (1 << 0), 
+    DIFFUSE = (1 << 0),
     OPACITY = (1 << 1),
     EMISSIVECOLOR = (1 << 2),
     EMISSIVEINTENSITY = (1 << 3),
@@ -744,9 +734,6 @@ struct UsdBridgeCommonLightData
 {
   UsdFloat3 Color { 1.0f, 1.0f, 1.0f };
   float Intensity = 1.0f;
-  // Photometric exposure (powers of 2 multiplier on Intensity), authored as
-  // inputs:exposure on the UsdLuxLight. Used to keep Intensity in a
-  // human-readable range when the source magnitude is very large.
   float Exposure = 0.0f;
 };
 
@@ -764,8 +751,6 @@ struct UsdBridgeDirectionalLightData : public UsdBridgeCommonLightData
   DataMemberId TimeVarying = DataMemberId::ALL;
 
   UsdFloat3 Direction { 0.0, 0.0f, -1.0f };
-  // Apparent angular size of the source in radians (ANARI units).
-  // 0 means perfectly parallel rays; ~0.00925 rad (0.53 deg) approximates the sun.
   float AngularDiameter = 0.0f;
 };
 
@@ -783,7 +768,6 @@ struct UsdBridgePointLightData : public UsdBridgeCommonLightData
   DataMemberId TimeVarying = DataMemberId::ALL;
 
   UsdFloat3 Position { 0.0, 0.0f, 0.0f };
-  // Sphere radius in scene units. 0 means a true point source (no soft shadows).
   float Radius = 0.0f;
 };
 
@@ -804,7 +788,7 @@ struct UsdBridgeCameraData
   enum class DataMemberId : uint32_t
   {
     NONE = 0,
-    VIEW = (1 << 0), 
+    VIEW = (1 << 0),
     PROJECTION = (1 << 1),
     ALL = (1 << 2) - 1
   };
@@ -911,12 +895,12 @@ public:
   }
 
   void RemoveUpdate(typename T::DataMemberId member)
-  { 
+  {
     Data.UpdatesToPerform = (Data.UpdatesToPerform & ~member);
   }
 
-  void AddUpdate(typename T::DataMemberId member) 
-  { 
+  void AddUpdate(typename T::DataMemberId member)
+  {
     Data.UpdatesToPerform = (Data.UpdatesToPerform | member);
   }
 

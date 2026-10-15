@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeRenderContext.h"
 #include "UsdBridgeGLContext.h"
@@ -41,13 +40,6 @@
 #include <memory>
 #include <string>
 
-//#define USDBRIDGE_RENDERER_USE_COLORTEXTURE
-
-
-
-// =============================================================================
-// Common helper functions and types
-// =============================================================================
 
 namespace
 {
@@ -82,7 +74,6 @@ namespace
     }
 }
 
-// Struct to hold mapped frame state (used by both context types)
 struct MappedFrameState
 {
 #ifdef USDBRIDGE_RENDERER_USE_COLORTEXTURE
@@ -92,7 +83,6 @@ struct MappedFrameState
 #endif
 };
 
-// Common base data for render context internals (Hydra only; USD render settings live in UsdRenderManager)
 struct RenderContextInternalsBase
 {
     SdfPath CameraPath;
@@ -102,13 +92,11 @@ struct RenderContextInternalsBase
     MappedFrameState FrameState;
     bool Initialized = false;
 
-    // Check if resolution changed and update cache
     bool ResolutionChanged(uint32_t width, uint32_t height) const
     {
         return width != CachedWidth || height != CachedHeight;
     }
 
-    // Configure AOV settings on a task controller
     void ConfigureAovSettings(HdxTaskController* taskController)
     {
         HdAovDescriptor colorSettings = taskController->GetRenderOutputSettings(HdAovTokens->color);
@@ -137,7 +125,6 @@ struct RenderContextInternalsBase
     uint32_t ResolutionHeight() const { return CachedHeight; }
 };
 
-// Common frame operations that work with any source of render buffer / texture
 namespace FrameOps
 {
     bool FrameReady(HdRenderBuffer* renderBuffer)
@@ -191,9 +178,6 @@ namespace FrameOps
 #endif
 }
 
-// =============================================================================
-// UsdBridgeRendererCore::Internals
-// =============================================================================
 
 class UsdBridgeRendererCore::Internals
 {
@@ -207,7 +191,6 @@ public:
             delete RenderIndex;
         }
         delete RenderDriver;
-        // RenderDelegateHandle automatically destroys delegate and keeps plugin alive
         RenderDelegateHandle = nullptr;
     }
 
@@ -219,7 +202,7 @@ public:
             return;
         }
 
-        HdRendererPluginHandle rendererPlugin = 
+        HdRendererPluginHandle rendererPlugin =
             HdRendererPluginRegistry::GetInstance().GetOrCreateRendererPlugin(
                 TfToken(rendererPluginName));
 
@@ -274,9 +257,6 @@ public:
     bool Initialized = false;
 };
 
-// =============================================================================
-// UsdBridgeRendererCore
-// =============================================================================
 
 UsdBridgeRendererCore::UsdBridgeRendererCore(UsdBridgeUsdWriter& usdWriter)
     : UsdWriter(usdWriter)
@@ -333,9 +313,6 @@ UsdBridgeUsdWriter& UsdBridgeRendererCore::GetUsdWriter()
     return UsdWriter;
 }
 
-// =============================================================================
-// UsdBridgeRenderContextShared (internal implementation class)
-// =============================================================================
 
 class UsdBridgeRenderContextShared : public UsdBridgeRenderContext
 {
@@ -436,14 +413,10 @@ void UsdBridgeRenderContextShared::Render(double timeStep)
     sceneDelegate->ApplyPendingUpdates();
     sceneDelegate->SetTime(UsdTimeCode(timeStep));
 
-    // Not sure if required, play around with this if issues arise
-    //sceneDelegate->SetSceneMaterialsEnabled(true);
-    //sceneDelegate->SetSceneLightsEnabled(true);
 
     HdReprSelector reprSelector(HdReprTokens->smoothHull);
     HdRprimCollection collection(HdTokens->geometry, reprSelector);
 
-    // Filter to specific world if set
     if (!Internals->WorldPath.IsEmpty())
     {
         collection.SetRootPath(Internals->WorldPath);
@@ -522,7 +495,6 @@ void UsdBridgeRenderContextShared::UnmapFrame()
 #ifndef USDBRIDGE_RENDERER_USE_COLORTEXTURE
     FrameOps::UnmapFrameBuffer(Internals->TaskController->GetRenderOutput(HdAovTokens->color));
 #endif
-    // When using COLORTEXTURE, the buffer is owned by FrameState, nothing to unmap
 }
 
 bool UsdBridgeRenderContextShared::IsInitialized() const
@@ -530,11 +502,7 @@ bool UsdBridgeRenderContextShared::IsInitialized() const
     return Internals->Initialized;
 }
 
-// =============================================================================
-// UsdBridgeRenderContextStandalone (internal implementation class - debug fallback)
-// =============================================================================
 
-// Extended UsdImagingGLEngine to expose task controller
 class UsdBridgeStandaloneEngine : public UsdImagingGLEngine
 {
 public:
@@ -665,7 +633,6 @@ void UsdBridgeRenderContextStandalone::Render(double timeStep)
 
     Internals->RenderEngineGL->SetFraming(framing);
 
-    // Determine root prim for rendering - use world path if set, otherwise stage root
     UsdStageRefPtr stage = UsdWriter.GetSceneStage();
     UsdPrim rootPrim;
     if (!Internals->WorldPath.IsEmpty())
@@ -714,7 +681,6 @@ void UsdBridgeRenderContextStandalone::UnmapFrame()
 #ifndef USDBRIDGE_RENDERER_USE_COLORTEXTURE
     FrameOps::UnmapFrameBuffer(Internals->RenderEngineGL->GetAovRenderBuffer(HdAovTokens->color));
 #endif
-    // When using COLORTEXTURE, the buffer is owned by FrameState, nothing to unmap
 }
 
 bool UsdBridgeRenderContextStandalone::IsInitialized() const
@@ -722,9 +688,6 @@ bool UsdBridgeRenderContextStandalone::IsInitialized() const
     return Internals->Initialized;
 }
 
-// =============================================================================
-// Factory function
-// =============================================================================
 
 std::unique_ptr<UsdBridgeRenderContext> CreateRenderContext(
     RenderContextMode mode,
@@ -740,7 +703,6 @@ std::unique_ptr<UsdBridgeRenderContext> CreateRenderContext(
         {
             return std::make_unique<UsdBridgeRenderContextShared>(*core, contextId);
         }
-        // Fall through to standalone if core not available
         [[fallthrough]];
 
     case RenderContextMode::Standalone:
@@ -751,9 +713,6 @@ std::unique_ptr<UsdBridgeRenderContext> CreateRenderContext(
 
 #else
 
-// =============================================================================
-// Stub implementations when USD_DEVICE_RENDERING_ENABLED is not defined
-// =============================================================================
 
 class UsdBridgeRendererCore::Internals
 {
@@ -778,7 +737,6 @@ pxr::UsdStageRefPtr UsdBridgeRendererCore::GetStage()
     return UsdWriter.GetSceneStage();
 }
 
-// Stub render context that does nothing
 class UsdBridgeRenderContextStub : public UsdBridgeRenderContext
 {
 public:

@@ -5,9 +5,6 @@
 #include <algorithm>
 #include <ctime>
 
-// ---------------------------------------------------------------------------
-//  DiffCaptureStatus — standalone rank-file update status tracker
-// ---------------------------------------------------------------------------
 
 DiffCaptureStatus& GetDiffCaptureStatus() {
     static DiffCaptureStatus instance;
@@ -87,9 +84,6 @@ size_t DiffCaptureStatus::UpdatesInLastWindow(uint64_t windowSec) const {
     return count;
 }
 
-// ---------------------------------------------------------------------------
-//  ANSI helpers
-// ---------------------------------------------------------------------------
 static const char* ANSI_CLEAR  = "\033[2J\033[H";
 static const char* ANSI_CYAN   = "\033[96m";
 static const char* ANSI_GREEN  = "\033[92m";
@@ -105,9 +99,6 @@ static const char* categoryColor(const std::string& cat) {
     return ANSI_RESET;
 }
 
-// ---------------------------------------------------------------------------
-//  PrintTable
-// ---------------------------------------------------------------------------
 void DiffCaptureStatus::PrintTable(
     int    clientPort,
     const std::string& brokerIP,
@@ -118,12 +109,10 @@ void DiffCaptureStatus::PrintTable(
 
     uint64_t now = NowSec();
 
-    // --- Collect sorted ranks ---
     std::vector<int> ranks;
     for (auto& kv : rankHosts_) ranks.push_back(kv.first);
     std::sort(ranks.begin(), ranks.end());
 
-    // --- Compute totals ---
     uint64_t windowSec = 60;
     size_t updatesInWindow = 0;
     for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
@@ -131,17 +120,14 @@ void DiffCaptureStatus::PrintTable(
         ++updatesInWindow;
     }
 
-    // --- Build SSH line ---
     std::ostringstream ssh;
     ssh << "ssh -N -L " << clientPort << ":" << brokerIP << ":" << clientPort
         << " -i ~/.ssh/ed_25519_universal_openssh george2@jureca04.fz-juelich.de";
 
     int width = 80;
 
-    // --- Clear + print ---
     std::cerr << ANSI_CLEAR;
 
-    // Header box
     std::cerr << ANSI_BRIGHT;
     std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
     std::cerr << "| " << ANSI_CYAN << "DIFF-CAPTURE STATUS TABLE" << ANSI_RESET;
@@ -150,7 +136,6 @@ void DiffCaptureStatus::PrintTable(
     std::cerr << "| " << ANSI_GREEN << "interval: " << intervalSec << "s" << ANSI_RESET << " |" << std::endl;
     std::cerr << "+" << std::string(width - 2, '=') << "+" << std::endl;
 
-    // SSH command line
     if ((int)ssh.str().size() <= width - 4) {
         std::cerr << "| " << ANSI_YELLOW << ssh.str();
         std::cerr << std::string(width - 4 - (int)ssh.str().size(), ' ') << " |" << std::endl;
@@ -158,7 +143,6 @@ void DiffCaptureStatus::PrintTable(
         std::cerr << "| " << ANSI_YELLOW << ssh.str().substr(0, width - 8) << "..." << ANSI_RESET << " |" << std::endl;
     }
 
-    // Totals line
     std::ostringstream tot;
     tot << "Ranks: " << ranks.size()
         << "  |  Active: " << lastUpdate_.size()
@@ -169,7 +153,6 @@ void DiffCaptureStatus::PrintTable(
     std::cerr << " |" << std::endl;
     std::cerr << "+" << std::string(width - 2, '-') << "+" << std::endl;
 
-    // Column headers
     std::cerr << "| " << std::left << std::setw(6) << "Rank"
               << " " << std::setw(14) << "Updated"
               << " " << std::setw(8) << "Category"
@@ -177,7 +160,6 @@ void DiffCaptureStatus::PrintTable(
               << " |" << std::endl;
     std::cerr << "+" << std::string(width - 2, '-') << "+" << std::endl;
 
-    // Rows
     if (ranks.empty()) {
         std::cerr << "| " << ANSI_YELLOW << "  (no ranks registered yet)" << ANSI_RESET;
         std::cerr << std::string(width - 35, ' ') << " |" << std::endl;

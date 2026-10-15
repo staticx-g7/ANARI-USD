@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeUsdWriter.h"
 #include "xxhash/xxhash.h"
@@ -136,23 +135,18 @@ static bool GetMpiRankSizeFromEnv(int &rank, int &size)
 #ifdef OMNIVERSE_CONNECTION_ENABLE
 namespace
 {
-  // Initialize USD plugins, particularly for registering the Omni USD Resolver
   void InitializeUsdPlugins(const UsdBridgeLogObject& logObj)
   {
-    // Try to load Omniverse USD Resolver plugin by finding USD's plugin directory
     PlugRegistry& registry = PlugRegistry::GetInstance();
 
-    // Find a known USD plugin to determine the plugin directory structure
     PlugPluginPtrVector allPlugins = registry.GetAllPlugins();
     std::string usdPluginPath;
 
-    // Look for a core USD plugin (like usd) to find the plugin directory
     for (auto& plugin : allPlugins)
     {
       std::string name = plugin->GetName();
       std::string path = plugin->GetPath();
 
-      // Look for core USD plugins that should always be present
       if (name == "usd")
       {
         usdPluginPath = path;
@@ -163,7 +157,6 @@ namespace
 
     if (!usdPluginPath.empty())
     {
-      // Parse the USD plugin path to find the plugin directory structure
       std::filesystem::path usdPath(usdPluginPath);
       std::filesystem::path installDir = usdPath.parent_path().parent_path();
       std::filesystem::path resolverPluginDir = installDir / "plugin" / "omni_usd_resolver" / "resources";
@@ -179,7 +172,6 @@ namespace
     }
 
 #ifndef NDEBUG
-    // DEBUG: List all loaded plugins (refresh after potential registration)
     PlugPluginPtrVector plugins = registry.GetAllPlugins();
     UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::STATUS, "=== USD Plugins (Total: " << plugins.size() << ") ===");
 
@@ -191,7 +183,6 @@ namespace
       UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::STATUS, "Plugin: " << pluginName << " | Path: " << pluginPath << " | Loaded: " << (isLoaded ? "YES" : "NO"));
     }
 
-    // DEBUG: Check active resolver
     ArResolver& resolver = ArGetResolver();
     std::string resolverType = typeid(resolver).name();
     UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::STATUS, "Active resolver type: " << resolverType);
@@ -206,7 +197,6 @@ UsdBridgeUsdWriter::UsdBridgeUsdWriter(const UsdBridgeSettings& settings)
   : Settings(settings)
   , VolumeWriter(Create_VolumeWriter(), std::mem_fn(&UsdBridgeVolumeWriterI::Release))
 {
-  // Initialize AttributeTokens with common known attribute names
   ATTRIB_TOKEN_SEQ
 
   if(Settings.HostName)
@@ -256,13 +246,9 @@ bool UsdBridgeUsdWriter::CreateDirectories()
 {
   bool valid = true;
 
-  // When MPI is active, rank 0 has already created the root output folder and
-  // MpiBaseSessionDirectory before the barrier in InitializeSession.
-  // If MPI is not active, create the root output folder here.
   if(MpiBaseSessionDirectory.empty())
     valid = Connect->CreateFolder("", true, true);
 
-  //Connect->RemoveFolder(SessionDirectory.c_str(), true, true);
   bool folderMayExist = !Settings.CreateNewSession;
 
   valid = valid && Connect->CreateFolder(SessionDirectory.c_str(), true, folderMayExist);
@@ -311,7 +297,6 @@ namespace
 
 bool UsdBridgeUsdWriter::CreateMdlFiles()
 {
-  //Write PBR opacity file contents
   {
     std::string relMdlPath = constring::mdlFolder + std::string(constring::opaqueMaterialFile);
     this->MdlOpaqueRelFilePath = SdfAssetPath(relMdlPath);
@@ -335,7 +320,6 @@ bool UsdBridgeUsdWriter::CreateMdlFiles()
 bool UsdBridgeUsdWriter::InitializeSession()
 {
 #ifdef OMNIVERSE_CONNECTION_ENABLE
-  // Initialize USD plugins for Omni USD Resolver support before any connection is made
   InitializeUsdPlugins(this->LogObject);
 #endif
 
@@ -353,12 +337,10 @@ bool UsdBridgeUsdWriter::InitializeSession()
 
   if(Settings.ParallelController)
   {
-    // Only rank 0 discovers the session number through the Connection
     int sessionNr = -1;
     if(Settings.ParallelController->GetRank() == 0)
       sessionNr = FindSessionNumber();
 
-    // Broadcast from rank 0 to all ranks
     Settings.ParallelController->BroadcastInt(sessionNr);
     SessionNumber = sessionNr;
   }
@@ -388,7 +370,6 @@ bool UsdBridgeUsdWriter::InitializeSession()
 
   bool valid = true;
 
-  // Only create directories if we're actually saving to disk
   if(this->EnableSaving)
   {
     valid = CreateDirectories();
@@ -421,7 +402,6 @@ void UsdBridgeUsdWriter::CreateParallelEncapsulatingFile()
   bool binary = Settings.BinaryOutput;
   const char* sceneFileName = binary ? constring::fullSceneNameBin : constring::fullSceneNameAscii;
 
-  // The encapsulating file sits in the session base directory (alongside rank subdirs)
   std::string encFileName = MpiBaseSessionDirectory + (binary ? constring::parallelSceneNameBin : constring::parallelSceneNameAscii);
   const char* absEncFilePath = Connect->GetUrl(encFileName.c_str());
 
@@ -439,7 +419,6 @@ void UsdBridgeUsdWriter::CreateParallelEncapsulatingFile()
 
   for(int rank = 0; rank < Settings.MpiSize; ++rank)
   {
-    // Reference path is relative from encapsulating file location (same directory)
     std::string rankRelPath = "./rank_" + std::to_string(rank) + "/" + sceneFileName;
 
     std::string rankPrimName = "rank_" + std::to_string(rank);
@@ -476,7 +455,7 @@ void UsdBridgeUsdWriter::CreateFrameEntryStage(
   this->Connect->RemoveFile(entryRelPath.c_str(), true);
 
   const char* absEntryPath = this->Connect->GetUrl(entryRelPath.c_str());
-  if(!absEntryPath) // omniClientCombineUrls can fail; UsdStage::CreateNew would build a std::string from null
+  if(!absEntryPath)
   {
     UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::ERR,
       "Failed to resolve URL for frame entry stage '" << entryRelPath << "'");
@@ -490,7 +469,6 @@ void UsdBridgeUsdWriter::CreateFrameEntryStage(
     return;
   }
 
-  // Entry stage sits next to FullScene in the session directory.
   std::string fullSceneRef = std::string("./") + sceneFileName;
 
   UsdPrim worldPrim = entryStage->DefinePrim(worldPath);
@@ -502,9 +480,6 @@ void UsdBridgeUsdWriter::CreateFrameEntryStage(
   UsdPrim contextPrim = entryStage->DefinePrim(contextPath);
   contextPrim.GetReferences().AddReference(fullSceneRef, contextPath);
 
-  // Camera rels on Settings/Product target /Root/cameras/... which is outside
-  // the RenderContext subtree, so USD drops them when the context is referenced
-  // across a file boundary. Re-state them as local overs on the entry stage.
   SdfPath settingsPath = contextPath.AppendChild(UsdBridgeRenderTokens->Settings);
   SdfPath productPath = contextPath.AppendChild(UsdBridgeRenderTokens->Product);
 
@@ -544,7 +519,7 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
 {
   bool binary = this->Settings.BinaryOutput;
 
-  this->SceneFileName = this->SessionDirectory; 
+  this->SceneFileName = this->SessionDirectory;
   this->SceneFileName += (binary ? constring::fullSceneNameBin : constring::fullSceneNameAscii);
 
 #ifdef REPLACE_SCENE_BY_EXTERNAL_STAGE
@@ -554,7 +529,6 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
   }
 #endif
 
-  // Create in-memory stage if not saving, otherwise use file-backed stage
   if (!this->SceneStage)
   {
     if(this->EnableSaving)
@@ -567,7 +541,6 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
     }
     else
     {
-      // Create in-memory stage
       this->SceneStage = UsdStage::CreateInMemory();
     }
   }
@@ -580,7 +553,6 @@ bool UsdBridgeUsdWriter::OpenSceneStage()
 #ifndef REPLACE_SCENE_BY_EXTERNAL_STAGE
   else if (this->ExternalSceneStage)
   {
-    // Set the scene stage as a sublayer of the external stage
     ExternalSceneStage->GetRootLayer()->InsertSubLayerPath(
       this->SceneStage->GetRootLayer()->GetIdentifier());
   }
@@ -674,7 +646,6 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
   }
   else
   {
-    // Create in-memory stage
     cacheEntry->ManifestStage.second = UsdStage::CreateInMemory();
   }
 
@@ -687,8 +658,6 @@ void UsdBridgeUsdWriter::CreateManifestStage(const char* name, const char* primP
 }
 
 namespace {
-// Per-store-key state of the RawGeo idle detector (see TryStoreRawGeo);
-// pruned with the store entries in RemoveStoreEntriesForFile.
 struct RawGeoIdleState
 {
   std::vector<uint8_t> baseline;
@@ -700,12 +669,6 @@ std::map<std::string, RawGeoIdleState> g_rawGeoIdleStates;
 
 void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
 {
-  // A single stage/file can exist in the memory store under multiple keys:
-  // the raw ".usd" resource name (clip/primstage save paths) and the
-  // ".usda" streaming key used by TrackStageMemory, plus the ".usda"-suffixed
-  // variant of manifest names ("...(manifest).usda"). All variants must be
-  // dropped when the last reference goes away; any survivor keeps serving a
-  // stale mesh/image to clients (hidden actors that never disappear).
   if(relativeName.empty())
     return;
 
@@ -719,12 +682,6 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
   if(endsWith(relativeName, ".usd"))
   {
     keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
-    // NOTE: the RawGeo ".geo" twin is deliberately NOT removed. In
-    // JUSYNC_RAWGEO mode the .usd/.usda clip twins are empty placeholders and
-    // the ".geo" payload IS the streamed time step; ParaView re-creates its
-    // geometry on every commit, so this GC fires constantly and would destroy
-    // each sample before any client can fetch it. Retention is bounded by the
-    // AnimPlayer sample ring (JUSYNC_ANIM_MAXSAMPLES).
   }
   else if(endsWith(relativeName, ".usda"))
   {
@@ -733,6 +690,7 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
   else if(endsWith(relativeName, ".geo"))
   {
     // Removing the RawGeo entry must not orphan the USD twins either.
+
     keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usd");
     keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
   }
@@ -747,16 +705,13 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
         "[Purge] removed stale file from memory store: " << key);
     }
-    // RawGeo idle baselines are keyed by store key; a purged clip must not
-    // leave its (multi-MB) baseline behind, and time-rolling clip schemes
-    // mint a new key per frame, so prune here or idleStates grows unbounded.
     g_rawGeoIdleStates.erase(key);
     for(auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
     {
       if(it->filename == key)
       {
         MemoryTracking.erase(it);
-        break; // store keys are unique in MemoryTracking (deduped by filename)
+        break;
       }
     }
   }
@@ -764,10 +719,6 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
 
 void UsdBridgeUsdWriter::RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry)
 {
-  // Memory/ZMQ streaming mode: there are no on-disk files, but the in-memory store and
-  // MemoryTracking DO hold the clips. Purge both (including the ".usd"/".usda" twin keys)
-  // so unreferenced clips are not re-served to clients (and are not resurrected by
-  // RecalculateAllMemoryUsage on the next render).
   if(!this->EnableSaving)
   {
     if (!cacheEntry->ManifestStage.first.empty())
@@ -779,18 +730,14 @@ void UsdBridgeUsdWriter::RemoveManifestAndClipStages(const UsdBridgePrimCache* c
     return;
   }
 
-  // Disk-save mode (existing behavior): remove the on-disk files.
-  // May be superfluous
   if(cacheEntry->ManifestStage.second)
   {
     cacheEntry->ManifestStage.second->RemovePrim(SdfPath(RootClassName));
 
-    // Remove ManifestStage file itself
     assert(!cacheEntry->ManifestStage.first.empty());
     Connect->RemoveFile((SessionDirectory + cacheEntry->ManifestStage.first).c_str(), true);
   }
 
-  // remove all clipstage files
   for (auto& x : cacheEntry->ClipStages)
   {
     Connect->RemoveFile((SessionDirectory + x.second.first).c_str(), true);
@@ -816,16 +763,28 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
   auto it = cacheEntry->ClipStages.find(timeStep);
   if (it == cacheEntry->ClipStages.end())
   {
-    // Create a new Clipstage
     const char* folder = constring::primStageFolder;
-    std::string fullNamePostfix(namePostfix); 
+    std::string fullNamePostfix(namePostfix);
     if(isClip)
     {
       folder = constring::clipFolder;
 
-      // Add rank suffix to clip filename (but prim name stays the same)
-      int mpiRank = 0, mpiSize = 1;
-      if (GetMpiRankSizeFromEnv(mpiRank, mpiSize) && mpiSize > 1) {
+      // The rank in the key has to come from the same source as the "rank_<n>/"
+      // session directories and ParallelScene references. Preferring the
+      // communicator rank and falling back to the launcher environment keeps the
+      // two in agreement; if they disagree (sub-communicator, oversubscription, or
+      // a launcher exporting none of SLURM/OMPI/PMI), two ranks announce the same
+      // clip and .geo name and the client alternates between their contents.
+      int mpiRank = this->Settings.MpiRank;
+      int mpiSize = this->Settings.MpiSize;
+      if (mpiRank < 0 || mpiSize <= 0)
+      {
+        mpiRank = 0;
+        mpiSize = 1;
+        GetMpiRankSizeFromEnv(mpiRank, mpiSize);
+      }
+
+      if (mpiSize > 1) {
         fullNamePostfix += "_r" + std::to_string(mpiRank);
       }
 
@@ -848,7 +807,7 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
       SdfPath rootPrimPath(this->RootClassName);
       if (exists)
       {
-        primClipStage = UsdStage::Open(absoluteFileName); //Could happen if written folder is reused 
+        primClipStage = UsdStage::Open(absoluteFileName); //Could happen if written folder is reused
         assert(primClipStage->GetPrimAtPath(rootPrimPath));
       }
       else
@@ -856,13 +815,11 @@ const UsdStagePair& UsdBridgeUsdWriter::FindOrCreatePrimClipStage(UsdBridgePrimC
     }
     else
     {
-      // Create in-memory stage
       primClipStage = UsdStage::CreateInMemory();
       exists = false;
       SdfPath rootPrimPath(this->RootClassName);
       primClipStage->DefinePrim(rootPrimPath);
 
-      // Track memory if not saving
       if(!this->EnableSaving)
       {
         std::string stageName = folder + cacheEntry->Name.GetString() + fullNamePostfix;
@@ -901,7 +858,6 @@ void UsdBridgeUsdWriter::AddRootPrim(UsdBridgePrimCache* primCache, const char* 
   }
 #endif
 
-  // Always add a ref to the internal prim, which is represented by the cache
   primRefs.AddInternalReference(primCache->PrimPath);
 }
 
@@ -926,7 +882,7 @@ const std::string& UsdBridgeUsdWriter::GetResourceFileName(const std::string& ba
   this->TempNameStr += "_";
   this->TempNameStr += std::to_string(timeStep);
 #endif
-  this->TempNameStr += fileExtension; 
+  this->TempNameStr += fileExtension;
 
   return this->TempNameStr;
 }
@@ -974,7 +930,7 @@ void UsdBridgeUsdWriter::InitializePrimVisibility(UsdStageRefPtr stage, const Sd
     UsdAttribute visAttrib = imageable.GetVisibilityAttr(); // in case MakeVisible fails
     if(!visAttrib)
       visAttrib = imageable.CreateVisibilityAttr(VtValue(UsdGeomTokens->invisible)); // default is invisible
-    
+
     double startTime = stage->GetStartTimeCode();
     double endTime = stage->GetEndTimeCode();
     if (startTime < timeCode)
@@ -1006,17 +962,16 @@ void UsdBridgeUsdWriter::PrimRemoveIfInvisibleAnytime(UsdStageRefPtr stage, cons
 {
   const SdfPath& primPath = prim.GetPath();
 
-  bool removePrim = true; // TimeVarying is not automatically removed 
+  bool removePrim = true; // TimeVarying is not automatically removed
 
   if (timeVarying)
   {
     if(primCache)
     {
-      // Remove prim only if there are no more visible children AND the timecode has actually been removed
       // (so if the timecode wasn't found in the cache, do not remove the prim)
+
       removePrim = parentCache->SetChildInvisibleAtTime(primCache, timeCode.GetValue());
 
-      // If prim is still visible at other times, make sure to explicitly set this timeCode as invisible
       if(!removePrim)
       {
         UsdGeomImageable imageable = UsdGeomImageable::Get(stage, primPath);
@@ -1029,16 +984,14 @@ void UsdBridgeUsdWriter::PrimRemoveIfInvisibleAnytime(UsdStageRefPtr stage, cons
       }
     }
     else
-      removePrim = false; // If no cache is available, just don't remove, for possibility of previous timesteps (opposite from when !timeVarying)
+      removePrim = false;
   }
 
   if (removePrim)
   {
-    // Decrease the ref on the representing cache entry
     if(primCache)
       atRemoveRef(parentCache, primCache);
-    
-    // Remove the prim
+
     stage->RemovePrim(primPath);
   }
 }
@@ -1075,11 +1028,9 @@ void UsdBridgeUsdWriter::InitializeClipMetaData(const UsdPrim& clipPrim, UsdBrid
 #ifdef TIME_CLIP_STAGES
   if (clipStages)
   {
-    //set interpolatemissingclipvalues?
 
     bool exists;
     const UsdStagePair& childStagePair = FindOrCreateClipStage(childCache, clipPostfix, childTimeStep, exists);
-    //assert(exists); // In case prim creation succeeds but an update is not attempted, no clip stage is generated, so exists will be false
     if(!exists)
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::WARNING, "Child clip stage not found while setting clip metadata, using generated stage instead. Probably the child data has not been properly updated.");
 
@@ -1108,7 +1059,6 @@ void UsdBridgeUsdWriter::InitializeClipMetaData(const UsdPrim& clipPrim, UsdBrid
 
 void UsdBridgeUsdWriter::UpdateClipMetaData(const UsdPrim& clipPrim, UsdBridgePrimCache* childCache, double parentTimeStep, double childTimeStep, bool clipStages, const char* clipPostfix)
 {
-  // Add parent-child timestep or update existing relationship
   UsdClipsAPI clipsApi(clipPrim);
 
 #ifdef TIME_CLIP_STAGES
@@ -1116,8 +1066,6 @@ void UsdBridgeUsdWriter::UpdateClipMetaData(const UsdPrim& clipPrim, UsdBridgePr
   {
     bool exists;
     const UsdStagePair& childStagePair = FindOrCreateClipStage(childCache, clipPostfix, childTimeStep, exists);
-    // At this point, exists should be true, but if clip stage creation failed earlier due to user error, 
-    // exists will be false and we'll just link to the empty new stage created by FindOrCreatePrimClipStage()
 
     const std::string& refStagePath = childStagePair.first;
 
@@ -1126,38 +1074,32 @@ void UsdBridgeUsdWriter::UpdateClipMetaData(const UsdPrim& clipPrim, UsdBridgePr
     VtArray<SdfAssetPath> assetPaths;
     clipsApi.GetClipAssetPaths(&assetPaths);
 
-    // Find the asset path
     SdfAssetPath refStageSdf(refStagePath);
     auto assetIt = std::find_if(assetPaths.begin(), assetPaths.end(), [&refStageSdf](const SdfAssetPath& entry) -> bool { return refStageSdf.GetAssetPath() == entry.GetAssetPath(); });
     int assetIndex = int(assetIt - assetPaths.begin());
-    bool newAsset = (assetIndex == assetPaths.size()); // Gives the opportunity to garbage collect unused asset references
+    bool newAsset = (assetIndex == assetPaths.size());
 
     {
-      // Find the parentTimeStep
       int timeFindIdx = 0;
       for (; timeFindIdx < clipActives.size() && clipActives[timeFindIdx][0] != parentTimeStep; ++timeFindIdx)
       {}
 
       bool replaceAsset = false;
 
-      // If timestep not found, just add (time, asset ref idx) to actives
       if (timeFindIdx == clipActives.size())
         clipActives.push_back(GfVec2d(parentTimeStep, assetIndex));
       else
       {
-        // Find out whether to update existing active entry with new asset ref idx, or let the entry unchanged and replace the asset itself
         double prevAssetIndex = clipActives[timeFindIdx][1];
-       
+
         if (newAsset)
         {
-          //Find prev asset index
           int assetIdxFindIdx = 0;
-          for (; assetIdxFindIdx < clipActives.size() && 
-            (assetIdxFindIdx == timeFindIdx || clipActives[assetIdxFindIdx][1] != prevAssetIndex); 
+          for (; assetIdxFindIdx < clipActives.size() &&
+            (assetIdxFindIdx == timeFindIdx || clipActives[assetIdxFindIdx][1] != prevAssetIndex);
             ++assetIdxFindIdx)
           {}
 
-          // replacement occurs when prevAssetIndex hasn't been found in other entries
           replaceAsset = (assetIdxFindIdx == clipActives.size());
         }
 
@@ -1167,18 +1109,15 @@ void UsdBridgeUsdWriter::UpdateClipMetaData(const UsdPrim& clipPrim, UsdBridgePr
           clipActives[timeFindIdx][1] = assetIndex;
       }
 
-      // If new asset and not put in place of an old asset, add to assetPaths
       if (newAsset && !replaceAsset)
         assetPaths.push_back(refStageSdf);
 
-      // Send the result through to usd
       clipsApi.SetClipAssetPaths(assetPaths);
       clipsApi.SetClipActive(clipActives);
     }
   }
 #endif
 
-  // Find the parentTimeStep, and change its child (or add the pair if nonexistent)
   VtVec2dArray clipTimes;
   clipsApi.GetClipTimes(&clipTimes);
   {
@@ -1211,14 +1150,13 @@ SdfPath UsdBridgeUsdWriter::AddRef(UsdBridgePrimCache* parentCache, UsdBridgePri
   double parentTimeStep, double childTimeStep, bool instanceable,
   const RefModFuncs& refModCallbacks)
 {
-  // Value clip-enabled references have to be defined on the scenestage, as usd does not re-time recursively.
   return AddRef_Impl(parentCache, childCache, refPathExt, timeVarying, valueClip, clipStages, clipPostfix, parentTimeStep, childTimeStep, instanceable, refModCallbacks);
 }
 
 SdfPath UsdBridgeUsdWriter::AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache, const char* refPathExt,
-  bool timeVarying, // Timevarying existence (visible or not) of the reference itself
+  bool timeVarying,
   bool valueClip,   // Retiming through a value clip
-  bool clipStages,  // Separate stages for separate time slots (can only exist in usd if valueClip enabled)
+  bool clipStages,
   const char* clipPostfix, double parentTimeStep, double childTimeStep, bool instanceable,
   const RefModFuncs& refModCallbacks)
 {
@@ -1227,7 +1165,7 @@ SdfPath UsdBridgeUsdWriter::AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBrid
   SdfPath childBasePath = parentCache->PrimPath;
   if (refPathExt)
     childBasePath = parentCache->PrimPath.AppendPath(SdfPath(refPathExt));
-  
+
   SdfPath referencingPrimPath = childBasePath.AppendPath(childCache->Name);
   UsdPrim referencingPrim = SceneStage->GetPrimAtPath(referencingPrimPath);
 
@@ -1245,9 +1183,7 @@ SdfPath UsdBridgeUsdWriter::AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBrid
       UsdReferences references = referencingPrim.GetReferences(); //references or inherits?
       references.ClearReferences();
       references.AddInternalReference(childCache->PrimPath);
-      //referencingPrim.SetInstanceable(true);
 #ifdef VALUE_CLIP_RETIMING
-      // If the child has a prim stage but is not value-clipped/retimed, add a reference to the prim stage.
       if(!valueClip)
       {
         auto it = childCache->ClipStages.find(UsdBridgePrimCache::PrimStageTimeCode);
@@ -1260,7 +1196,6 @@ SdfPath UsdBridgeUsdWriter::AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBrid
     refModCallbacks.AtNewRef(parentCache, childCache);
 
 #ifdef TIME_BASED_CACHING
-    // If time domain of the stage extends beyond timestep in either direction, set visibility false for extremes.
     if (timeVarying)
       InitializePrimVisibility(SceneStage, referencingPrimPath, parentTimeCode,
         parentCache, childCache);
@@ -1270,12 +1205,10 @@ SdfPath UsdBridgeUsdWriter::AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBrid
   {
 #ifdef TIME_BASED_CACHING
     if (timeVarying)
-      SetPrimVisible(SceneStage, referencingPrimPath, parentTimeCode, 
+      SetPrimVisible(SceneStage, referencingPrimPath, parentTimeCode,
         parentCache, childCache);
 
 #ifdef VALUE_CLIP_RETIMING
-    // Cliptimes are added as additional info, not actively removed (visibility values remain leading in defining existing relationships over timesteps)
-    // Also, clip stages at childTimeSteps which are not referenced anymore, are not removed; they could still be referenced from other parents!
     if (valueClip)
       UpdateClipMetaData(referencingPrim, childCache, parentTimeStep, childTimeStep, clipStages, clipPostfix);
 #endif
@@ -1311,8 +1244,6 @@ void UsdBridgeUsdWriter::RemoveAllRefs(UsdStageRefPtr stage, UsdBridgePrimCache*
 
 #ifdef TIME_BASED_CACHING
       UsdTimeCode timeCode(timeStep);
-      // Make refs just for this timecode invisible and possibly remove,
-      // but leave refs which are still visible in other timecodes intact.
       bool wasRemoved = true; // assume removed, check PrimRemoveIfInvisibleAnytime
       PrimRemoveIfInvisibleAnytime(stage, child, timeVarying, timeCode, atRemoveRef,
         parentCache, childCache);
@@ -1323,7 +1254,6 @@ void UsdBridgeUsdWriter::RemoveAllRefs(UsdStageRefPtr stage, UsdBridgePrimCache*
         );
       removedCount++;
 #else
-      // Remove all refs immediately
       if(childCache)
       {
         atRemoveRef(parentCache, childCache); // Decrease reference count in caches
@@ -1337,7 +1267,7 @@ void UsdBridgeUsdWriter::RemoveAllRefs(UsdStageRefPtr stage, UsdBridgePrimCache*
       removedCount++;
 #endif
     }
-    
+
     if (removedCount > 0)
     {
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
@@ -1368,15 +1298,12 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
 
   if (basePrim)
   {
-    // For each old (referencing) child prim, find it among the new ones, otherwise
-    // possibly delete the referencing prim.
     UsdPrimSiblingRange children = basePrim.GetAllChildren();
-    
-    // Build a lookup of new child names for O(1) matching
+
     std::set<std::string> newChildNames;
     for (size_t i = 0; i < newChildren.size(); ++i)
       newChildNames.insert(newChildren[i]->PrimPath.GetNameToken().GetString());
-    
+
     size_t removedCount = 0;
     for (UsdPrim oldChild : children)
     {
@@ -1385,7 +1312,6 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
 
       UsdBridgePrimCache* oldChildCache = parentCache->GetChildCache(oldChild.GetName());
 
-      // Not an assert: allow the case where child prims in a stage aren't cached, ie. when the bridge is destroyed and recreated
       if (!found)
       {
         const char* extStr = refPathExt ? refPathExt : "(root)";
@@ -1397,16 +1323,6 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
           );
 #ifdef TIME_BASED_CACHING
         {
-          // Remove *referencing* prim if no visible timecode exists anymore.
-          //
-          // NOTE: For time-varying refs the timeset must be updated exactly
-          // once; PrimRemoveIfInvisibleAnytime() does it internally and drops
-          // the child cache ref + removes the prim only when the visible
-          // timeset becomes empty. An earlier version removed the timecode
-          // here first, so the inner call saw a missing timecode and skipped
-          // ref-removal and prim-removal entirely - orphaned surface/geometry
-          // prims kept their reference count and their clip files were never
-          // purged from the stream (hidden actors persisted in clients).
           if(timeVarying)
           {
             PrimRemoveIfInvisibleAnytime(stage, oldChild, timeVarying, timeCode, atRemoveRef,
@@ -1416,7 +1332,6 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
           }
           else
           {
-            // Non-time-varying ref: remove it right away
             if(oldChildCache)
               atRemoveRef(parentCache, oldChildCache);
             stage->RemovePrim(oldChild.GetPath());
@@ -1433,7 +1348,7 @@ void UsdBridgeUsdWriter::ManageUnusedRefs(UsdStageRefPtr stage, UsdBridgePrimCac
 #endif
       }
     }
-    
+
     if (removedCount > 0)
     {
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
@@ -1469,7 +1384,6 @@ void UsdBridgeUsdWriter::BindMaterialToGeom(const SdfPath & refGeomPath, const S
   UsdPrim refGeomPrim = this->SceneStage->GetPrimAtPath(refGeomPath);
   assert(refGeomPrim);
 
-  // Bind the material to the mesh (use paths existing fully within the surface class definition, not the inherited geometry/material)
   UsdShadeMaterial refMatPrim = UsdShadeMaterial::Get(this->SceneStage, refMatPath);
   assert(refMatPrim);
 
@@ -1488,14 +1402,12 @@ void UsdBridgeUsdWriter::UpdateUsdTransform(const SdfPath& transPrimPath, const 
 {
   TimeEvaluator<bool> timeEval(timeVarying, timeStep);
 
-  // Note: USD employs left-multiplication (vector in row-space)
-  GfMatrix4d transMat; // Transforms can only be double, see UsdGeomXform::AddTransformOp (UsdGeomXformable)
+  GfMatrix4d transMat;
   transMat.SetRow(0, GfVec4d(GfVec4f(&transform[0])));
   transMat.SetRow(1, GfVec4d(GfVec4f(&transform[4])));
   transMat.SetRow(2, GfVec4d(GfVec4f(&transform[8])));
   transMat.SetRow(3, GfVec4d(GfVec4f(&transform[12])));
 
-  //Note that instance transform nodes have already been created.
   UsdGeomXform tfPrim = UsdGeomXform::Get(this->SceneStage, transPrimPath);
   assert(tfPrim);
   tfPrim.ClearXformOpOrder();
@@ -1503,7 +1415,7 @@ void UsdBridgeUsdWriter::UpdateUsdTransform(const SdfPath& transPrimPath, const 
   ClearAndSetUsdAttribute(xformOp.GetAttr(), transMat, timeEval.Eval(), !timeEval.TimeVarying);
 }
 
-void UsdBridgeUsdWriter::UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfPath& cameraPrimPath, 
+void UsdBridgeUsdWriter::UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfPath& cameraPrimPath,
   const UsdBridgeCameraData& cameraData, double timeStep, bool timeVarHasChanged)
 {
   const TimeEvaluator<UsdBridgeCameraData> timeEval(cameraData, timeStep);
@@ -1512,18 +1424,16 @@ void UsdBridgeUsdWriter::UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfP
   UsdGeomCamera cameraPrim = UsdGeomCamera::Get(timeVarStage, cameraPrimPath);
   assert(cameraPrim);
 
-  // Set the view matrix
   GfVec3d position(cameraData.Position.Data);
   GfVec3d fwdDir(cameraData.Direction.Data);
   GfVec3d worldY(cameraData.Up.Data);
   GfVec3d worldZ(-fwdDir);
 
-  GfVec3d worldX = GfCross(worldY, worldZ);// Keep righthand (ccw) order while making sure the +z direction is -fwdDir
+  GfVec3d worldX = GfCross(worldY, worldZ);
   worldX.Normalize();
   worldY = GfCross(worldZ, worldX);
   worldY.Normalize();
 
-  // Row-major order, with pre-multiply rules (vector components scale the rows in multiply)
   GfMatrix4d camMatrix(
     worldX[0], worldX[1], worldX[2], 0.0,
     worldY[0], worldY[1], worldY[2], 0.0,
@@ -1539,24 +1449,20 @@ void UsdBridgeUsdWriter::UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfP
   const GfVec3f camScaling(0.01f); // Add a default cam scaling for UI purposes
   UsdGeomXformOp scaleOp = cameraPrim.AddScaleOp();
   scaleOp.GetAttr().Set(camScaling, UsdTimeCode::Default());
-  
-  // Helper function for the projection matrix (takes fov in degrees)
+
   GfCamera gfCam;
   gfCam.SetPerspectiveFromAspectRatioAndFieldOfView(cameraData.Aspect, GfRadiansToDegrees(cameraData.Fovy), GfCamera::FOVVertical);
 
-  // Update all attributes affected by SetPerspectiveFromAspectRatioAndFieldOfView (see implementation)
   UsdTimeCode projectTime = timeEval.Eval(DMI::PROJECTION);
   bool clearProjAttrib = timeVarHasChanged && !timeEval.IsTimeVarying(DMI::PROJECTION);
-  //float focusDistance = 400.0f;
 
-  ClearAndSetUsdAttribute(cameraPrim.GetProjectionAttr(), 
-    (gfCam.GetProjection() == GfCamera::Perspective) ? UsdGeomTokens->perspective : UsdGeomTokens->orthographic, 
+  ClearAndSetUsdAttribute(cameraPrim.GetProjectionAttr(),
+    (gfCam.GetProjection() == GfCamera::Perspective) ? UsdGeomTokens->perspective : UsdGeomTokens->orthographic,
     projectTime, clearProjAttrib);
   ClearAndSetUsdAttribute(cameraPrim.GetHorizontalApertureAttr(), gfCam.GetHorizontalAperture(), projectTime, clearProjAttrib);
   ClearAndSetUsdAttribute(cameraPrim.GetVerticalApertureAttr(), gfCam.GetVerticalAperture(), projectTime, clearProjAttrib);
   ClearAndSetUsdAttribute(cameraPrim.GetFocalLengthAttr(), gfCam.GetFocalLength(), projectTime, clearProjAttrib);
   ClearAndSetUsdAttribute(cameraPrim.GetClippingRangeAttr(), GfVec2f(cameraData.Near, cameraData.Far), projectTime, clearProjAttrib);
-  //ClearAndSetUsdAttribute(cameraPrim.GetFocusDistanceAttr(), focusDistance, projectTime, clearProjAttrib);
 }
 
 void UsdBridgeUsdWriter::UpdateBeginEndTime(double timeStep)
@@ -1643,28 +1549,11 @@ void UsdBridgeUsdWriter::ResetSharedResourceModified()
   }
 }
 
-void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 
+void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter,
   const char* resourceFolder, const char* fileExtension)
 {
-  // Directly from usd is inaccurate, as timesteps may have been cleared without file removal
-  //// Assuming prim without clip stages.
-  //const UsdStageRefPtr volumeStage = usdWriter.GetTimeVarStage(cache);
-  //const UsdStageRefPtr volumeStage = usdWriter.GetTimeVarStage(cache);
-  //const SdfPath& volPrimPath = cache->PrimPath;
-  //
-  //UsdVolVolume volume = UsdVolVolume::Get(volumeStage, volPrimPath);
-  //assert(volume);
-  //
-  //SdfPath ovdbFieldPath = volPrimPath.AppendPath(SdfPath(constring::openVDBPrimPf));
-  //UsdVolOpenVDBAsset ovdbField = UsdVolOpenVDBAsset::Get(volumeStage, ovdbFieldPath);
-  //
-  //UsdAttribute fileAttr = ovdbField.GetFilePathAttr();
-  //
-  //std::vector<double> fileTimes;
-  //fileAttr.GetTimeSamples(&fileTimes);
 
   assert(cache->ResourceKeys);
-  // Release-build safety: a prim cache may exist without a resource-key container.
   if(!cache || !cache->ResourceKeys)
     return;
   UsdBridgePrimCache::ResourceContainer& keys = *(cache->ResourceKeys);
@@ -1678,23 +1567,15 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
 
     if(removeFile)
     {
-      double timeStep = 
+      double timeStep =
 #ifdef TIME_BASED_CACHING
         key.timeStep;
 #else
         0.0;
 #endif
-      // key.name may legitimately be null (default-constructed resource keys): use the
-      // null-safe overload and fall back to the prim name, matching how the volume/sampler
-      // files were named when written (UsdBridgeUsdWriter_Volume.cpp). Passing a null
-      // const char* directly into the std::string overload aborts with
-      // "basic_string::_M_construct null not valid".
       const std::string& resFileName = usdWriter.GetResourceFileName(basePath.c_str(), key.name, cache->Name.GetString(), timeStep, fileExtension);
       usdWriter.Connect->RemoveFile(resFileName.c_str(), true);
 
-      // Also drop the streaming in-memory store key(s) for this resource,
-      // otherwise clients keep receiving stale images/files after the prim
-      // owning them is garbage collected.
       std::string rel = resFileName;
       const std::string& dir = usdWriter.SessionDirectory;
       if(!dir.empty() && rel.size() > dir.size() && rel.compare(0, dir.size(), dir) == 0)
@@ -1705,21 +1586,6 @@ void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWrite
   keys.resize(0);
 }
 
-// Export the authored root layer to a string, honoring Settings.BinaryOutput.
-//  - ASCII (default): ExportToString — memory-only, zero disk I/O.
-//  - Binary (usd::serialize.outputBinary=true): pxr 25.11 has NO in-memory
-//    crate API — SdfLayer::ExportToString and even SdfUsdcFileFormat's
-//    WriteToString override emit "#usda" TEXT while still returning true
-//    (verified empirically against this exact USD build). The only reliable
-//    crate producer is SdfLayer::Export() to a ".usdc" path, so we round-trip
-//    through /dev/shm: a RAM-backed tmpfs. Bytes never touch a block device,
-//    the cost is two memcpys, and the temp file is unlinked immediately.
-//    JUSYNC_CRATE_TMP overrides the directory (empty string forces the ASCII
-//    fallback; point it at other tmpfs-backed mounts if /dev/shm is small).
-//  - The result is validated against the PXR-USDC magic, so the crate MIME
-//    label put on the wire can never again mislabel ASCII bytes.
-//  - Falls back to ASCII automatically if the binary round-trip fails, so
-//    the pipeline never loses a frame's data.
 void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
                                              const std::string& stageName,
                                              std::string& outContent,
@@ -1741,8 +1607,8 @@ void UsdBridgeUsdWriter::ExportLayerToString(const SdfLayerRefPtr& rootLayer,
     const std::string crateDir(envTmp ? envTmp : defaultCrateTmp);
     if(!crateDir.empty())
     {
-      // Atomic counter: TrackStageMemory (render thread) and
       // RecalculateAllMemoryUsage (broker thread) can export concurrently.
+
       static std::atomic<uint64_t> tmpCounter{0};
       const std::string tmpPath = crateDir + "/jusync_crate_" +
                                   std::to_string(tmpCounter.fetch_add(1)) + ".usdc";
@@ -1805,13 +1671,10 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   if(!stage)
     return;
 
-  // Export authored root layer — captures time-sampled data Catalyst writes in-place.
   // ExportLayerToString honors Settings.BinaryOutput (usd::serialize.outputBinary):
-  // binary crate when enabled, ASCII by default.
-  // NOTE: the store key keeps its historical ".usda" name in BOTH modes — several
-  // client-side gates (spawn filters, rank-name parsing) key off that suffix, and
-  // clients (e.g. the JUSYNC middleware) detect the real format by content
+
   // (zstd magic, then crate binary vs "#usda").
+
   size_t estimatedBytes = 0;
   std::string fullUsdContent;
   bool isBinaryContent = false;
@@ -1823,7 +1686,6 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
     estimatedBytes = fullUsdContent.size();
   }
 
-  // Keep the .usda store key (see note above)
   std::string filename;
   if(stageName == "FullScene")
     filename = "FullScene.usda";
@@ -1844,12 +1706,8 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   const uint64_t contentHash = fullUsdContent.empty()
       ? 0 : XXH64(fullUsdContent.data(), fullUsdContent.size(), 0);
 
-  // Store in memory file store for ZMQ streaming.
-  // StoreFile zstd-compresses USD payloads internally (self-describing on the
-  // wire via the zstd magic) and stores the hash/size of the on-the-wire bytes.
   if(g_rankMemoryStore != nullptr && !fullUsdContent.empty())
   {
-    // DIFF-CAPTURE-HOOK: capture old file data before StoreFile overwrites
     GetDiffCapture().CapturePreStore(filename);
 
     g_rankMemoryStore->StoreFile(
@@ -1863,7 +1721,6 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
               << " bytes (" << (isBinaryContent ? "binary .usdc" : "ascii .usda") << ")" << std::endl;
   }
 
-  // Add to tracking (dedup by filename to avoid duplicate entries for same stage)
   for (auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it) {
     if (it->filename == filename) {
       it->stage = stage;
@@ -1875,7 +1732,7 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   {
     StageMemoryInfo info;
     info.name = stageName;
-    info.filename = filename; // Store actual filename to avoid .usd/.usda duplicates on recalculation
+    info.filename = filename;
     info.estimatedBytes = estimatedBytes;
     info.stage = stage; // Store reference for later recalculation
     info.lastExportedHash = contentHash;
@@ -1883,7 +1740,6 @@ void UsdBridgeUsdWriter::TrackStageMemory(const std::string& stageName, UsdStage
   }
 tracking_done:;
 
-  // Log the memory usage
   double sizeMB = estimatedBytes / (1024.0 * 1024.0);
   UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
     "In-memory stage '" << stageName << "': ~" << sizeMB << " MB");
@@ -1903,9 +1759,6 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 {
   std::cout << "[RecalculateAllMemoryUsage] Processing " << MemoryTracking.size() << " tracked stages" << std::endl;
 
-  // Re-export all tracked stages to ASCII USD (ExportToString) — memory-only, zero
-  // disk I/O, and present in the target USD builds (in-memory ExportBinary is not).
-  // The store key is the tracked ".usda" name (unchanged; see TrackStageMemory note).
   for(auto& info : MemoryTracking)
   {
     if(info.stage)
@@ -1924,23 +1777,16 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 
        info.estimatedBytes = estimatedBytes;
 
-       // Re-store updated file content to memory store (use stored .usda filename)
        if(g_rankMemoryStore != nullptr)
        {
           if (fullUsdContent.empty() && info.stage)
           {
-            // Stage exists but export returned empty — this can happen if the stage
-            // was just created and has no data yet. Keep the existing entry available.
             std::cout << "[RecalculateAllMemoryUsage] WARNING: empty export for '"
                       << (info.filename.empty() ? info.name : info.filename)
                       << "' — keeping previous entry" << std::endl;
           }
           else if (!fullUsdContent.empty())
           {
-            // Skip the store (zstd compress + hash + memory churn) when the
-            // exported content is byte-identical to the last store. Unchanged
-            // stages (lights/cameras/materials/manifests) otherwise get re-stored
-            // every render frame, which is pure overhead while streaming.
             const uint64_t contentHash = XXH64(fullUsdContent.data(), fullUsdContent.size(), 0);
             if (info.lastExportedHash == contentHash)
             {
@@ -1949,8 +1795,6 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
             }
             info.lastExportedHash = contentHash;
 
-            // Store key is the tracked name as-is (TrackStageMemory always stores
-            // under a ".usda" key, so no extension rewriting is needed anymore).
             const std::string& filename = info.filename.empty() ? info.name : info.filename;
 
             g_rankMemoryStore->StoreFile(
@@ -1968,16 +1812,6 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
   }
 }
 
-// ===========================================================================
-// JUSYNC RawGeo streaming (JUSYNC_RAWGEO=1)
-//
-// Mirrors instancer point data straight into the in-memory store under the
-// clip key with a ".geo" extension (self-describing JusyncRawGeoHeader + raw
-// float arrays), letting streaming clients skip USD parsing entirely. The
-// caller (SetGeometryDataTemplate) skips UpdateUsdGeometry/TrackStageMemory
-// when this succeeds, which removes the per-frame crate serialization that
-// dominated sender CPU at multi-million point clouds.
-// ===========================================================================
 
 namespace
 {
@@ -2015,8 +1849,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(!RawGeoEnabled() || !g_rankMemoryStore || !cacheEntry)
     return false;
 
-  // v1 wire format is float3 positions only; anything else silently falls
-  // back to the USD path instead of being dropped.
   if(!data.Points || data.NumPoints == 0 || RawGeoFloatComponents(data.PointsType) != 3)
     return false;
 
@@ -2024,7 +1856,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(clipIt == cacheEntry->ClipStages.end())
     return false;
 
-  // Store key: the clip stage's relative filename with the extension swapped.
   std::string geoKey = clipIt->second.first;
   if(RawGeoEndsWith(geoKey, ".usda"))
     geoKey.resize(geoKey.size() - 5);
@@ -2034,8 +1865,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
 
   const uint64_t nSrc = data.NumPoints;
 
-  // Sender-side LOD: sample every Sth point. The JSG1 header self-describes
-  // the (smaller) count, so the client-side path is completely stride-unaware.
   static const uint64_t stride = [](){
     const char* v = getenv("JUSYNC_RAWGEO_STRIDE");
     uint64_t s = (v && v[0]) ? strtoull(v, nullptr, 10) : 1;
@@ -2053,7 +1882,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(colorComponents != 3 && colorComponents != 4)
     colorComponents = 0;
 
-  // Per-vertex float attributes ride along as plain float blocks.
   anari_usd_protocol::JusyncRawGeoAttrDesc attrDescs[16];
   uint32_t attrSrcIdx[16];
   uint32_t numAttrs = 0;
@@ -2076,8 +1904,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     }
   }
 
-  // Packing depends only on the effective point count, so the idle-burst
-  // path can re-pack the same source arrays at full resolution.
   const size_t descBytes = numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
   auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeader &outHdr)
   {
@@ -2102,7 +1928,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       attrBytes += n * attrDescs[a].components * sizeof(float);
     outHdr.payload_bytes = posBytes + colBytes + attrBytes;
 
-    // One allocation, memcpy everything in — no pxr involvement.
     std::vector<uint8_t> b;
     b.resize(sizeof(outHdr) + descBytes + outHdr.payload_bytes);
     uint8_t* d = b.data();
@@ -2161,8 +1986,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   anari_usd_protocol::JusyncRawGeoHeader hdr;
   std::vector<uint8_t> buf = packRawGeo(stride, hdr);
 
-  // Client download buffers and per-point blocks are int32-indexed; refuse
-  // RawGeo rather than hand the client an unloadable payload.
   static const uint64_t kMaxRawGeoPayload = 1536ull * 1024 * 1024;
   if(hdr.payload_bytes > kMaxRawGeoPayload)
   {
@@ -2174,13 +1997,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     return false;
   }
 
-  // Idle -> full-resolution burst: after JUSYNC_RAWGEO_IDLE_FRAMES (default 6,
-  // 0 disables) byte-identical sampled payloads, store ONE full-res frame so a
-  // paused scene settles at full density, then suppress identical stores until
-  // the geometry changes again. The baseline always holds the STRIDED payload,
-  // so the burst frame itself does not re-arm the detector. Known limit: motion
-  // that only touches indices the stride sampler skips reads as idle until a
-  // sampled point moves.
   static const uint64_t idleFrames = [](){
     const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
     uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
@@ -2200,7 +2016,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       if(!st.burstDone && stride > 1)
       {
-        // All blocks are per-point uniform, so payload/point is exact.
         const uint64_t perPoint = hdr.payload_bytes / hdr.num_points;
         st.burstDone = true;
         if(nSrc * perPoint <= kMaxRawGeoPayload)
@@ -2215,8 +2030,6 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     }
   }
 
-  // Opt-in: dump every JUSYNC_RAWGEO_SNAPSHOT_EVERY-th packed payload as a
-  // binary PLY (cloud_<frame>.ply) for offline ParaView inspection.
   static const char* snapDir = getenv("JUSYNC_RAWGEO_SNAPSHOT_DIR");
   static const uint64_t snapEvery = [](){
     const char* v = getenv("JUSYNC_RAWGEO_SNAPSHOT_EVERY");

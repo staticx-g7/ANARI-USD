@@ -1,5 +1,4 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
 #include <errno.h>
 #include <stdint.h>
@@ -10,7 +9,6 @@
 #include <alloca.h>
 #endif
 #include "anari/anari.h"
-// stb_image
 #include "stb_image_write.h"
 
 #include "anariTutorial_usd_common.h"
@@ -19,11 +17,6 @@ int main(int argc, const char **argv)
 {
   parseArgs(argc, argv);
 
-  // Phase control: the scene is built in two passes. Pass 1 creates all
-  // timesteps; pass 2 revisits the first half of the timeline and changes the
-  // scene (removes instance_0, swaps geometry/material times). "--phases 1"
-  // stops after the create pass so the intermediate result can be captured;
-  // "--phases 2" (default) runs the full sequence.
   int numPhases = 2;
   for (int argi = 1; argi < argc; ++argi)
   {
@@ -34,7 +27,6 @@ int main(int argc, const char **argv)
 
   stbi_flip_vertically_on_write(1);
 
-  // image size
   int frameSize[2] = { 1024, 768 };
   int textureSize[2] = { 256, 256 };
 
@@ -42,7 +34,6 @@ int main(int argc, const char **argv)
   int numTexComponents = 3;
   textureData = generateTexture(textureSize, numTexComponents);
 
-  // camera
   float cam_pos[] = {78.0f, 117.0f, 130.0f};
   float cam_up[] = {0.f, 1.f, 0.f};
   float cam_view[] = {-1.0f, -1.5f, -1.0f};
@@ -53,7 +44,6 @@ int main(int argc, const char **argv)
     0.0f, 0.0f, 3.0f, 0.0f,
     2.0f, 3.0f, 4.0f, 1.0f };
 
-  // triangle mesh data
   float vertex[] = {-1.0f,
       -1.0f,
       3.0f,
@@ -190,7 +180,7 @@ int main(int argc, const char **argv)
     return 1;
   }
 
-  int outputBinary = 1; // binary crate output: smaller on the wire, faster client parse
+  int outputBinary = 1;
   int outputOmniverse = 0;
   int connLogVerbosity = 0;
 
@@ -203,13 +193,11 @@ int main(int argc, const char **argv)
   }
   anariSetParameter(dev, dev, "usd::serialize.outputBinary", ANARI_BOOL, &outputBinary);
 
-  // commit device
   anariCommitParameters(dev, dev);
 
   printf("done!\n");
   printf("setting up camera...");
 
-  // create and setup camera
   ANARICamera camera = anariNewCamera(dev, "perspective");
   float aspect = frameSize[0] / (float)frameSize[1];
   anariSetParameter(dev, camera, "aspect", ANARI_FLOAT32, &aspect);
@@ -218,7 +206,6 @@ int main(int argc, const char **argv)
   anariSetParameter(dev, camera, "up", ANARI_FLOAT32_VEC3, cam_up);
   anariCommitParameters(dev, camera); // commit each object to indicate mods are done
 
-  // Setup texture array
   ANARIArray2D texArray = anariNewArray2D(dev, textureData, 0, 0, ANARI_UINT8_VEC3, textureSize[0], textureSize[1]); // Make sure this matches numTexComponents
 
   printf("done!\n");
@@ -233,11 +220,9 @@ int main(int argc, const char **argv)
   int useTexture = 1;
   int useUsdGeomPoints = 0;
 
-  // CREATE ALL TIMESTEPS:
 
   for (int timeIdx = 0; timeIdx < numTimeSteps; ++timeIdx)
   {
-    // Balls visible at timestep 0, 5, 6, 10
     int doubleNodes = ((timeIdx % 3) == 1);
 
     anariSetParameter(dev, dev, "usd::time", ANARI_FLOAT64, timeValues + timeIdx);
@@ -245,7 +230,6 @@ int main(int argc, const char **argv)
 
     ANARIWorld world = anariNewWorld(dev);
 
-    // create and setup model and mesh
     ANARIGeometry mesh = anariNewGeometry(dev, "triangle");
     anariSetParameter(dev, mesh, "name", ANARI_STRING, "tutorialMesh");
 
@@ -278,7 +262,7 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, mesh, "primitive.index", ANARI_ARRAY, &array);
     anariRelease(dev, array);
 
-    int timevaryTexcoord = 0; // Texcoords are not timeVarying (should now appear in fullscene stage)
+    int timevaryTexcoord = 0;
     anariSetParameter(dev, mesh, "usd::timeVarying.attribute0", ANARI_BOOL, &timevaryTexcoord);
     anariSetParameter(dev, mesh, "usd::time", ANARI_FLOAT64, geomTimeValues + timeIdx);
 
@@ -286,7 +270,6 @@ int main(int argc, const char **argv)
 
     ANARISampler sampler = anariNewSampler(dev, "image2D");
     anariSetParameter(dev, sampler, "name", ANARI_STRING, "tutorialSampler_0");
-    //anariSetParameter(dev, sampler, "usd::imageUrl", ANARI_STRING, texFile);
     anariSetParameter(dev, sampler, "image", ANARI_ARRAY, &texArray);
     anariSetParameter(dev, sampler, "inAttribute", ANARI_STRING, "attribute0");
     anariSetParameter(dev, sampler, "wrapMode1", ANARI_STRING, wrapS);
@@ -308,7 +291,6 @@ int main(int argc, const char **argv)
     anariCommitParameters(dev, mat);
     anariRelease(dev, sampler);
 
-    // put the mesh into a model
     ANARISurface surface;
     surface = anariNewSurface(dev);
     anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface_0");
@@ -318,7 +300,6 @@ int main(int argc, const char **argv)
     anariRelease(dev, mesh);
     anariRelease(dev, mat);
 
-    // put the surface into a group
     ANARIGroup group;
     group = anariNewGroup(dev);
     anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup_0");
@@ -329,7 +310,6 @@ int main(int argc, const char **argv)
     anariRelease(dev, surface);
     anariRelease(dev, array);
 
-    // put the group into an instance (give the group a world transform)
     ANARIInstance instance[2];
     instance[0] = anariNewInstance(dev, "transform");
     anariSetParameter(dev, instance[0], "name", ANARI_STRING, "tutorialInstance_0");
@@ -337,7 +317,6 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, instance[0], "group", ANARI_GROUP, &group);
     anariRelease(dev, group);
 
-    // create and setup light for Ambient Occlusion
     ANARILight light = anariNewLight(dev, "hdri");
     anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
     float lightRadiance = 1.0f;
@@ -353,41 +332,10 @@ int main(int argc, const char **argv)
 
     if (doubleNodes)
     {
-      //ANARIGeometry protoMesh = anariNewGeometry(dev, "triangle");
-      //anariSetParameter(dev, protoMesh, "name", ANARI_STRING, "tutorialProtoMesh");
-//
-      //ANARIArray1D array = anariNewArray1D(dev, protoVertex, 0, 0, ANARI_FLOAT32_VEC3, 8);
-      //anariCommitParameters(dev, array);
-      //anariSetParameter(dev, protoMesh, "vertex.position", ANARI_ARRAY, &array);
-      //anariRelease(dev, array); // we are done using this handle
-//
-      //if (useVertexColors)
-      //{
-      //  array = anariNewArray1D(dev, protoColor, 0, 0, ANARI_FLOAT32_VEC4, 8);
-      //  anariCommitParameters(dev, array);
-      //  anariSetParameter(dev, protoMesh, "vertex.color", ANARI_ARRAY, &array);
-      //  anariRelease(dev, array);
-      //}
-//
-      //array = anariNewArray1D(dev, protoTexcoord, 0, 0, ANARI_FLOAT32_VEC2, 8);
-      //anariCommitParameters(dev, array);
-      //anariSetParameter(dev, protoMesh, "vertex.attribute0", ANARI_ARRAY, &array);
-      //anariRelease(dev, array);
-//
-      //array = anariNewArray1D(dev, protoIndex, 0, 0, ANARI_INT32_VEC3, 8);
-      //anariCommitParameters(dev, array);
-      //anariSetParameter(dev, protoMesh, "primitive.index", ANARI_ARRAY, &array);
-      //anariRelease(dev, array);
-//
-      //anariCommitParameters(dev, protoMesh);
 
       mesh = anariNewGeometry(dev, "sphere");
       anariSetParameter(dev, mesh, "name", ANARI_STRING, "tutorialPoints");
       anariSetParameter(dev, mesh, "usd::useUsdGeomPoints", ANARI_BOOL, &useUsdGeomPoints);
-      //anariSetParameter(dev, mesh, "shapeType", ANARI_STRING, "cylinder");
-      //anariSetParameter(dev, mesh, "shapeGeometry", ANARI_GEOMETRY, &protoMesh);
-      //anariSetParameter(dev, mesh, "shapeTransform", ANARI_FLOAT32_MAT4, protoTransform);
-      //anariRelease(dev, protoMesh);
 
       array = anariNewArray1D(dev, vertex, 0, 0, ANARI_FLOAT32_VEC3, 4);
       anariCommitParameters(dev, array);
@@ -410,7 +358,6 @@ int main(int argc, const char **argv)
       array = anariNewArray1D(dev, sphereSizes, 0, 0, ANARI_FLOAT32, 4);
       anariCommitParameters(dev, array);
       anariSetParameter(dev, mesh, "vertex.radius", ANARI_ARRAY, &array);
-      //anariSetParameter(dev, mesh, "vertex.scale", ANARI_ARRAY, &array);
       anariRelease(dev, array);
 
       anariSetParameter(dev, mesh, "usd::time", ANARI_FLOAT64, timeValues + timeIdx);
@@ -419,7 +366,6 @@ int main(int argc, const char **argv)
 
       sampler = anariNewSampler(dev, "image2D");
       anariSetParameter(dev, sampler, "name", ANARI_STRING, "tutorialSampler_1");
-      //anariSetParameter(dev, sampler, "usd::imageUrl", ANARI_STRING, texFile);
       anariSetParameter(dev, sampler, "image", ANARI_ARRAY, &texArray);
       anariSetParameter(dev, sampler, "inAttribute", ANARI_STRING, "attribute0");
       anariSetParameter(dev, sampler, "wrapMode1", ANARI_STRING, wrapS);
@@ -435,7 +381,6 @@ int main(int argc, const char **argv)
       else
         anariSetParameter(dev, mat, "color", ANARI_FLOAT32_VEC3, kd);
       anariSetParameter(dev, mat, "usd::time", ANARI_FLOAT64, timeValues + timeIdx);
-      // Only colors and opacities are timevarying
       int timeVaryingMetallic = 1;
       int timeVaryingOpacities = 1;
       anariSetParameter(dev, mat, "usd::timeVarying.metallic", ANARI_BOOL, &timeVaryingMetallic);
@@ -443,7 +388,6 @@ int main(int argc, const char **argv)
       anariCommitParameters(dev, mat);
       anariRelease(dev, sampler);
 
-      // put the mesh into a model
       surface = anariNewSurface(dev);
       anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface_1");
       anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &mesh);
@@ -452,7 +396,6 @@ int main(int argc, const char **argv)
       anariRelease(dev, mesh);
       anariRelease(dev, mat);
 
-      // put the surface into a group
       group = anariNewGroup(dev);
       anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup_1");
       array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -462,7 +405,6 @@ int main(int argc, const char **argv)
       anariRelease(dev, surface);
       anariRelease(dev, array);
 
-      // put the group into an instance (give the group a world transform)
       instance[1] = anariNewInstance(dev, "transform");
       anariSetParameter(dev, instance[1], "name", ANARI_STRING, "tutorialInstance_1");
       anariSetParameter(dev, instance[1], "transform", ANARI_FLOAT32_MAT4, transform);
@@ -472,7 +414,6 @@ int main(int argc, const char **argv)
       anariCommitParameters(dev, instance[1]);
     }
 
-    // put the instance in the world
     anariSetParameter(dev, world, "name", ANARI_STRING, "tutorialWorld");
     array = anariNewArray1D(dev, instance, 0, 0, ANARI_INSTANCE, (doubleNodes ? 2 : 1));
     anariCommitParameters(dev, array);
@@ -483,16 +424,13 @@ int main(int argc, const char **argv)
     anariRelease(dev, array);
     anariCommitParameters(dev, world);
 
-    // create renderer
     ANARIRenderer renderer =
       anariNewRenderer(dev, "hydra");
 
-    // complete setup of renderer
     float bgColor[4] = { 1.f, 1.f, 1.f, 1.f }; // white
     anariSetParameter(dev, renderer, "backgroundColor", ANARI_FLOAT32_VEC4, bgColor);
     anariCommitParameters(dev, renderer);
 
-    // create and setup frame
     ANARIFrame frame = anariNewFrame(dev);
     ANARIDataType colFormat = ANARI_UFIXED8_RGBA_SRGB;
     ANARIDataType depthFormat = ANARI_FLOAT32;
@@ -508,34 +446,22 @@ int main(int argc, const char **argv)
 
     printf("rendering frame...");
 
-    // render one frame
     anariRenderFrame(dev, frame);
     anariFrameReady(dev, frame, ANARI_WAIT);
 
-    // final cleanups
     anariRelease(dev, renderer);
     anariRelease(dev, frame);
     anariRelease(dev, world);
 
-    // USD-SPECIFIC RUNTIME:
 
-    // Remove unused prims in usd
-    // Only useful when objects are possibly removed over the whole timeline
     anariSetParameter(dev, dev, "usd::garbageCollect", ANARI_VOID_POINTER, 0);
 
-    // Reset generation of unique names for next frame
-    // Only necessary when relying upon auto-generation of names instead of manual creation, AND not retaining ANARI objects over timesteps
     anariSetParameter(dev, dev, "usd::removeUnusedNames", ANARI_VOID_POINTER, 0);
 
-    // ~
 
-    // Constant color get a bit more red every step
     kd[0] = timeIdx / (float)numTimeSteps;
   }
 
-
-  // CHANGE THE SCENE: Attach only the instance_1 to the world, so instance_0 gets removed.
-  // Only performed when a second phase is requested (see --phases).
 
   if (numPhases >= 2)
   {
@@ -581,7 +507,6 @@ int main(int argc, const char **argv)
       array = anariNewArray1D(dev, sphereSizes, 0, 0, ANARI_FLOAT32, 4);
       anariCommitParameters(dev, array);
       anariSetParameter(dev, mesh, "vertex.radius", ANARI_ARRAY, &array);
-      //anariSetParameter(dev, mesh, "vertex.scale", ANARI_ARRAY, &array);
       anariRelease(dev, array);
 
       anariSetParameter(dev, mesh, "usd::time", ANARI_FLOAT64, timeValues + timeIdx*2); // Switch the child timestep for something else
@@ -590,7 +515,6 @@ int main(int argc, const char **argv)
 
       sampler = anariNewSampler(dev, "image2D");
       anariSetParameter(dev, sampler, "name", ANARI_STRING, "tutorialSampler_1");
-      //anariSetParameter(dev, sampler, "usd::imageUrl", ANARI_STRING, texFile);
       anariSetParameter(dev, sampler, "image", ANARI_ARRAY, &texArray);
       anariSetParameter(dev, sampler, "inAttribute", ANARI_STRING, "attribute0");
       anariSetParameter(dev, sampler, "wrapMode1", ANARI_STRING, wrapS);
@@ -607,7 +531,6 @@ int main(int argc, const char **argv)
       anariCommitParameters(dev, mat);
       anariRelease(dev, sampler);
 
-      // put the mesh into a model
       surface = anariNewSurface(dev);
       anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface_1");
       anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &mesh);
@@ -616,7 +539,6 @@ int main(int argc, const char **argv)
       anariRelease(dev, mesh);
       anariRelease(dev, mat);
 
-      // put the surface into a group
       group = anariNewGroup(dev);
       anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup_1");
       array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -626,7 +548,6 @@ int main(int argc, const char **argv)
       anariRelease(dev, surface);
       anariRelease(dev, array);
 
-      // put the group into an instance (give the group a world transform)
       instance = anariNewInstance(dev, "transform");
       anariSetParameter(dev, instance, "name", ANARI_STRING, "tutorialInstance_1");
       anariSetParameter(dev, instance, "transform", ANARI_FLOAT32_MAT4, transform);
@@ -638,14 +559,12 @@ int main(int argc, const char **argv)
 
     anariSetParameter(dev, world, "name", ANARI_STRING, "tutorialWorld");
 
-    // put the instance in the world
     array = anariNewArray1D(dev, &instance, 0, 0, ANARI_INSTANCE, 1);
     anariCommitParameters(dev, array);
     anariSetParameter(dev, world, "instance", ANARI_ARRAY, &array);
     anariRelease(dev, instance);
     anariRelease(dev, array);
 
-    // Add the light as well
     light = anariNewLight(dev, "hdri");
     anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
     float lightRadiance = 1.0f;
@@ -659,16 +578,13 @@ int main(int argc, const char **argv)
 
     anariCommitParameters(dev, world);
 
-    // create renderer
     ANARIRenderer renderer =
       anariNewRenderer(dev, "hydra");
 
-    // complete setup of renderer
     float bgColor[4] = { 1.f, 1.f, 1.f, 1.f }; // white
     anariSetParameter(dev, renderer, "backgroundColor", ANARI_FLOAT32_VEC4, bgColor);
     anariCommitParameters(dev, renderer);
 
-    // create and setup frame
     ANARIFrame frame = anariNewFrame(dev);
     ANARIDataType colFormat = ANARI_UFIXED8_RGBA_SRGB;
     ANARIDataType depthFormat = ANARI_FLOAT32;
@@ -684,26 +600,18 @@ int main(int argc, const char **argv)
 
     printf("rendering frame...");
 
-    // render one frame
     anariRenderFrame(dev, frame);
     anariFrameReady(dev, frame, ANARI_WAIT);
 
-    // final cleanups
     anariRelease(dev, renderer);
     anariRelease(dev, frame);
     anariRelease(dev, world);
 
-    // USD-SPECIFIC RUNTIME:
 
-    // Remove unused prims in usd
-    // Only useful when objects are possibly removed over the whole timeline
     anariSetParameter(dev, dev, "usd::garbageCollect", ANARI_VOID_POINTER, 0);
 
-    // Reset generation of unique names for next frame
-    // Only necessary when relying upon auto-generation of names instead of manual creation, AND not retaining ANARI objects over timesteps
     anariSetParameter(dev, dev, "usd::removeUnusedNames", ANARI_VOID_POINTER, 0);
 
-    // ~
   }
   } // end of phase 2 (numPhases >= 2)
 

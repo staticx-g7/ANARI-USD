@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdGeometry.h"
 #include "UsdAnari.h"
@@ -321,12 +320,11 @@ namespace
 
       ANARIDataType colorType = perPrimColors ? paramData.primitiveColors->getType() : ANARI_UINT8; // Vertex colors aren't reordered
 
-      // Effectively only has to reorder if the source array is perPrim, otherwise this function effectively falls through and the source array is assigned directly at parent scope.
       tempArrays->NormalsArray.resize(perPrimNormals ? numVertices*3 : 0);
       tempArrays->RadiiArray.resize(perPrimScales ?  numVertices : 0);
       tempArrays->ScalesArray.resize(perPrimScales ?  numVertices*scaleComps : 0);
       tempArrays->OrientationsArray.resize(perPrimOrientations ? numVertices*4 : 0);
-      tempArrays->IdsArray.resize(numVertices, -1); // Always filled, since indices implies necessity for invisibleIds, and therefore also an Id array
+      tempArrays->IdsArray.resize(numVertices, -1);
       tempArrays->resetColorsArray(perPrimColors ?  numVertices : 0, colorType);
       for(size_t attribIdx = 0; attribIdx < attribDataArrays.size(); ++attribIdx)
       {
@@ -342,28 +340,24 @@ namespace
       {
         size_t vertIdx = getIndex(indices, indexType, primIdx);
 
-        // Normals
         if (perPrimNormals)
         {
           float* normalsDest = &tempArrays->NormalsArray[vertIdx * 3];
           getValues3(paramData.primitiveNormals->getData(), paramData.primitiveNormals->getType(), primIdx, normalsDest);
         }
 
-        // Orientations
         if (perPrimOrientations)
         {
           float* orientsDest = &tempArrays->OrientationsArray[vertIdx*4];
           getValues4(paramData.primitiveOrientations->getData(), paramData.primitiveOrientations->getType(), primIdx, orientsDest);
         }
 
-        // Radii
         if (perPrimRadii)
         {
           float* radiiDest = &tempArrays->RadiiArray[vertIdx];
           getValues1(paramData.primitiveRadii->getData(), paramData.primitiveRadii->getType(), primIdx, radiiDest);
         }
 
-        // Scales
         if (perPrimScales)
         {
           float* scalesDest = &tempArrays->ScalesArray[vertIdx*scaleComps];
@@ -373,14 +367,12 @@ namespace
             getValues3(paramData.primitiveScales->getData(), paramData.primitiveScales->getType(), primIdx, scalesDest);
         }
 
-        // Colors
         if (perPrimColors)
         {
           assert(primIdx < paramData.primitiveColors->getLayout().numItems1);
           tempArrays->copyToColorsArray(paramData.primitiveColors->getData(), primIdx, vertIdx, 1);
         }
 
-        // Attributes
         for(size_t attribIdx = 0; attribIdx < attribDataArrays.size(); ++attribIdx)
         {
           if(attributeArray[attribIdx].PerPrimData)
@@ -389,7 +381,6 @@ namespace
           }
         }
 
-        // Ids
         if (paramData.primitiveIds)
         {
           int64_t id = static_cast<int64_t>(getIndex(paramData.primitiveIds->getData(), paramData.primitiveIds->getType(), primIdx));
@@ -404,7 +395,6 @@ namespace
         }
       }
 
-      // Assign unused ids to untouched vertices, then add those ids to invisible array
       tempArrays->InvisIdsArray.resize(0);
       tempArrays->InvisIdsArray.reserve(numVertices);
 
@@ -421,7 +411,6 @@ namespace
 
   void convertLinesToSticks(const UsdGeometryData& paramData, const UsdGeometry::AttributeArray& attributeArray, UsdGeometryTempArrays* tempArrays)
   {
-    // Converts arrays of vertex endpoint 2-tuples (optionally obtained via index 2-tuples) into center vertices with correct seglengths.
 
     auto& attribDataArrays = tempArrays->AttributeDataArrays;
     assert(attribDataArrays.size() == attributeArray.size());
@@ -441,7 +430,6 @@ namespace
     tempArrays->ScalesArray.resize(numSticks * 3); // Scales are always present
     tempArrays->OrientationsArray.resize(numSticks * 4);
     tempArrays->IdsArray.resize(paramData.primitiveIds ? numSticks : 0);
-    // Only reorder per-vertex arrays, per-prim is already in order of the output stick center vertices
     ANARIDataType colorType = paramData.vertexColors ? paramData.vertexColors->getType() : ANARI_UINT8;
     tempArrays->resetColorsArray(paramData.vertexColors ?  numSticks : 0,  colorType);
     for(size_t attribIdx = 0; attribIdx < attribDataArrays.size(); ++attribIdx)
@@ -485,18 +473,14 @@ namespace
       tempArrays->ScalesArray[primIdx * 3 + 1] = scaleVal;
       tempArrays->ScalesArray[primIdx * 3 + 2] = segLength * 0.5f;
 
-      // Rotation
-      // USD shapes are always lengthwise-oriented along the z axis
       usdbridgenumerics::DirectionToQuaternionZ(segDir, segLength, tempArrays->OrientationsArray.data() + primIdx*4);
 
-      //Colors
       if (paramData.vertexColors)
       {
         assert(vertIdx0 < paramData.vertexColors->getLayout().numItems1);
         tempArrays->copyToColorsArray(paramData.vertexColors->getData(), vertIdx0, primIdx, 1);
       }
 
-      // Attributes
       for(size_t attribIdx = 0; attribIdx < attribDataArrays.size(); ++attribIdx)
       {
         if(!attributeArray[attribIdx].PerPrimData)
@@ -505,7 +489,6 @@ namespace
         }
       }
 
-      // Ids
       if (paramData.primitiveIds)
       {
         tempArrays->IdsArray[primIdx] = (int64_t)getIndex(paramData.primitiveIds->getData(), paramData.primitiveIds->getType(), primIdx);
@@ -526,7 +509,6 @@ namespace
     tempArrays->PointsArray.push_back(point[1]);
     tempArrays->PointsArray.push_back(point[2]);
 
-    // Normals
     if (hasNormals)
     {
       float normals[3];
@@ -544,7 +526,6 @@ namespace
       tempArrays->NormalsArray.push_back(normals[2]);
     }
 
-    // Radii
     if (hasRadii)
     {
       float radii;
@@ -560,7 +541,6 @@ namespace
       tempArrays->ScalesArray.push_back(radii);
     }
 
-    // Colors
     if (hasColors)
     {
       size_t destIdx = tempArrays->expandColorsArray(1);
@@ -574,7 +554,6 @@ namespace
       }
     }
 
-    // Attributes
     for(size_t attribIdx = 0; attribIdx < attribDataArrays.size(); ++attribIdx)
     {
       size_t srcIdx = attributeArray[attribIdx].PerPrimData ? primIdx : segStart;
@@ -665,7 +644,6 @@ namespace
   void setInstancerDataArray(const char* arrayName, const UsdDataArray* vertArray, const UsdDataArray* primArray, const std::vector<T>& tmpArray, UsdBridgeType tmpArrayType,
     void const*& instancerDataArray, UsdBridgeType& instancerDataArrayType, const UsdGeometryData& paramData, const UsdGeometryDebugData& dbgData)
   {
-    // Normals
     if (paramData.indices && tmpArray.size())
     {
       instancerDataArray = tmpArray.data();
@@ -732,7 +710,6 @@ void UsdGeometry::filterSetParam(const char *name,
     return;
   }
 
-  // In case of an attribute name change, notify observers (such as the surface, to change material/sampler bindings)
   static const char* attribNamePrefix = "usd::attribute";
   if(strcmp(name, attribNamePrefix) > 0)
   {
@@ -747,14 +724,12 @@ void UsdGeometry::filterSetParam(const char *name,
 
 void UsdGeometry::commit(UsdDevice* device)
 {
-  // Make sure to notify observers of attrib array name changes before the actual commit (doCommitData may have a locked commitlist)
   if(hasNewAttribName)
   {
     notify(this, device);
     hasNewAttribName = false;
   }
 
-  // Continue with the normal commit, ie. adding to the commit list or immediate execution of doCommitData
   BridgedBaseObjectType::commit(device);
 }
 
@@ -779,7 +754,6 @@ void UsdGeometry::syncAttributeArrays()
 {
   const UsdGeometryData& paramData = getReadParams();
 
-  // Find the max index of the last attribute that still contains an array
   int attribCount = 0;
   for(int i = 0; i < MAX_ATTRIBS; ++i)
   {
@@ -787,7 +761,6 @@ void UsdGeometry::syncAttributeArrays()
       attribCount = i+1;
   }
 
-  // Set the attribute arrays and related info, resize temporary attribute array data for reordering
   if(attribCount)
   {
     attributeArray.resize(attribCount);
@@ -864,7 +837,7 @@ void UsdGeometry::initializeGeomData(UsdBridgeInstancerData& geomData)
     & (isTimeVarying(CType::INDEX) ? DMI::ALL : ~DMI::INVISIBLEIDS)
     & (isTimeVarying(CType::COLOR) ? DMI::ALL : ~DMI::COLORS)
     & (isTimeVarying(CType::ID) ? DMI::ALL : ~DMI::INSTANCEIDS)
-    & ~DMI::SHAPEINDICES; // Shapeindices are always the same, and USD clients typically do not support timevarying shapes
+    & ~DMI::SHAPEINDICES;
   setAttributeTimeVarying<UsdBridgeInstancerData>(geomData.TimeVarying);
 
   geomData.UseUsdGeomPoints = geomType == GEOM_SPHERE && paramData.UseUsdGeomPoints;
@@ -875,7 +848,6 @@ void UsdGeometry::initializeGeomData(UsdBridgeCurveData& geomData)
   typedef UsdBridgeCurveData::DataMemberId DMI;
   const UsdGeometryData& paramData = getReadParams();
 
-  // Turn off what is not timeVarying
   geomData.TimeVarying = DMI::ALL
     & (isTimeVarying(CType::POSITION) ? DMI::ALL : ~DMI::POINTS)
     & (isTimeVarying(CType::NORMAL) ? DMI::ALL : ~DMI::NORMALS)
@@ -889,7 +861,6 @@ void UsdGeometry::initializeGeomRefData(UsdBridgeInstancerRefData& geomRefData)
 {
   const UsdGeometryData& paramData = getReadParams();
 
-  // The anari side currently only supports only one shape, so just set DefaultShape
   bool isGlyph = geomType == GEOM_GLYPH;
   if(isGlyph && paramData.shapeGeometry)
     geomRefData.DefaultShape = UsdBridgeInstancerRefData::SHAPE_MESH;
@@ -998,7 +969,7 @@ bool UsdGeometry::checkGeomParams(UsdDevice* device)
     if( (geomType == GEOM_TRIANGLE || geomType == GEOM_QUAD) &&
       (flattenedType == UsdBridgeType::UINT || flattenedType == UsdBridgeType::ULONG || flattenedType == UsdBridgeType::LONG))
     {
-      static bool reported = false; // Hardcode this to show only once to make sure developers get to see it, without spamming the console.
+      static bool reported = false;
       if(!reported)
       {
         device->reportStatus(this, ANARI_GEOMETRY, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT, "UsdGeometry '%s' has 'primitive.index' of type other than ANARI_INT32, which may result in an overflow for FaceVertexIndicesAttr of UsdGeomMesh.", debugName);
@@ -1145,12 +1116,10 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
   }
   else
   {
-    meshData.NumIndices = meshData.NumPoints; // Vertices are implicitly indexed consecutively (FaceVertexCount determines how many prims)
-    // AssignArrayToTypedAttribute dispatches on this type even when Indices is null (span fill only); must not be UNDEFINED.
+    meshData.NumIndices = meshData.NumPoints;
     meshData.IndicesType = UsdBridgeType::INT;
   }
 
-  //meshData.UpdatesToPerform = Still to be implemented
 
   double worldTimeStep = device->getReadParams().timeStep;
   double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
@@ -1164,9 +1133,6 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
   if (geomType == GEOM_SPHERE || geomType == GEOM_GLYPH)
   {
-    // A paramData.indices (primitive-indexed spheres) array, is not supported in USD, also duplicate spheres make no sense.
-    // Instead, Ids/InvisibleIds are assigned to emulate sparsely indexed spheres (sourced from paramData.primitiveIds if available),
-    // with the per-vertex arrays remaining intact. Any per-prim arrays are explicitly converted to per-vertex via the tempArrays.
     generateIndexedSphereData(paramData, attributeArray, tempArrays.get());
 
     const UsdDataArray* vertices = paramData.vertexPositions;
@@ -1176,8 +1142,6 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
     UsdGeometryDebugData dbgData = { device, this, debugName };
 
-    // Orientations
-    // are a bit extended beyond the spec: even spheres can set them, and the use of normals is also supported
     if(paramData.vertexOrientations || paramData.primitiveOrientations)
     {
       setInstancerDataArray("orientation", paramData.vertexOrientations, paramData.primitiveOrientations, tempArrays->OrientationsArray, UsdBridgeType::FLOAT4,
@@ -1191,7 +1155,6 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
         paramData, dbgData);
     }
 
-    // Scales
     if(geomType == GEOM_SPHERE)
     {
       setInstancerDataArray("radius", paramData.vertexRadii, paramData.primitiveRadii,
@@ -1211,23 +1174,17 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
         paramData, dbgData);
     }
 
-    // Colors
     setInstancerDataArray("color", paramData.vertexColors, paramData.primitiveColors,
       tempArrays->ColorsArray, AnariToUsdBridgeType(tempArrays->ColorsArrayType),
       instancerData.Colors, instancerData.ColorsType,
       paramData, dbgData);
 
-    // Attributes
-    // By default, syncAttributeArrays and initializeGeomData already set up instancerData.Attributes
-    // Just set attributeArray's data to tempArrays where necessary
     if(paramData.indices)
     {
-      // Type remains the same, everything per-vertex (as explained above)
       assignTempDataToAttributes(false);
     }
     else
     {
-      // Check whether any perprim attributes exist
       for(size_t attribIdx = 0; attribIdx < attributeArray.size(); ++attribIdx)
       {
         if(attributeArray[attribIdx].Data && attributeArray[attribIdx].PerPrimData)
@@ -1239,7 +1196,6 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
       }
     }
 
-    // Ids
     if (paramData.indices && tempArrays->IdsArray.size())
     {
       instancerData.InstanceIds = tempArrays->IdsArray.data();
@@ -1255,7 +1211,6 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
       }
     }
 
-    // Invisible Ids
     if (paramData.indices && tempArrays->InvisIdsArray.size())
     {
       instancerData.InvisibleIds = tempArrays->InvisIdsArray.data();
@@ -1282,22 +1237,19 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
       instancerData.Orientations = tempArrays->OrientationsArray.data();
       instancerData.OrientationsType = UsdBridgeType::FLOAT4;
 
-      // Colors
       if (tempArrays->ColorsArray.size())
       {
         instancerData.Colors = tempArrays->ColorsArray.data();
         instancerData.ColorsType = AnariToUsdBridgeType(tempArrays->ColorsArrayType);
       }
       else if(const UsdDataArray* colors = paramData.primitiveColors)
-      { // Per-primitive color array corresponds to per-vertex stick output
+      {
         instancerData.Colors = colors->getData();
         instancerData.ColorsType = AnariToUsdBridgeType(colors->getType());
       }
 
-      // Attributes
       assignTempDataToAttributes(false);
 
-      // Ids
       if (tempArrays->IdsArray.size())
       {
         instancerData.InstanceIds = tempArrays->IdsArray.data();
@@ -1333,20 +1285,17 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
       curveData.Normals = tempArrays->NormalsArray.data();
       curveData.NormalsType = UsdBridgeType::FLOAT3;
     }
-    curveData.PerPrimNormals = false;// Always vertex colored as per reorderCurveGeometry. One entry per whole curve would be useless
+    curveData.PerPrimNormals = false;
 
-    // Attributes
     assignTempDataToAttributes(false);
 
-    // Copy colors
     if (tempArrays->ColorsArray.size())
     {
       curveData.Colors = tempArrays->ColorsArray.data();
       curveData.ColorsType = AnariToUsdBridgeType(tempArrays->ColorsArrayType);
     }
-    curveData.PerPrimColors = false; // Always vertex colored as per reorderCurveGeometry. One entry per whole curve would be useless
+    curveData.PerPrimColors = false;
 
-    // Assign scales
     if (tempArrays->ScalesArray.size())
     {
       curveData.Scales = tempArrays->ScalesArray.data();
@@ -1379,8 +1328,6 @@ bool UsdGeometry::commitTemplate(UsdDevice* device)
     isNew = usdBridge->CreateGeometry(debugName, usdHandle, geomData);
   }
 
-  // Force update in memory-only mode: Catalyst may update geometry data in-place
-  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
   if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
@@ -1431,7 +1378,7 @@ bool UsdGeometry::doCommitData(UsdDevice* device)
     default: break;
   }
 
-  return geomType == GEOM_GLYPH && (isNew || protoShapeChanged); // Defer commit of prototypes until the geometry refs are in place
+  return geomType == GEOM_GLYPH && (isNew || protoShapeChanged);
 }
 
 void UsdGeometry::doCommitRefs(UsdDevice* device)
@@ -1443,7 +1390,6 @@ void UsdGeometry::doCommitRefs(UsdDevice* device)
 
   double worldTimeStep = device->getReadParams().timeStep;
 
-  // Make sure the references are updated on the Bridge side.
   if (paramData.shapeGeometry)
   {
     double geomObjTimeStep = paramData.shapeGeometry->getReadParams().timeStep;
@@ -1465,7 +1411,6 @@ void UsdGeometry::doCommitRefs(UsdDevice* device)
     usdBridge->DeletePrototypeRefs(usdHandle, worldTimeStep);
   }
 
-  // Now set the prototype relations to the reference paths (Bridge uses paths from SetPrototypeRefs)
   commitPrototypes(usdBridge);
 
   protoShapeChanged = false;

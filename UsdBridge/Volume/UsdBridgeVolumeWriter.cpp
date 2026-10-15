@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeVolumeWriter.h"
 
@@ -70,14 +69,12 @@ class UsdBridgeVolumeWriterInternals
 {
   public:
     UsdBridgeVolumeWriterInternals()
-      //: GridStream(std::ios::in | std::ios::out)
     {}
     ~UsdBridgeVolumeWriterInternals()
     {}
 
     std::ostream& ResetStream()
     {
-      //GridStream.clear(); // Bug in OpenVDB prevents reuse of stream
       delete GridStream;
       GridStream = new std::stringstream(std::ios::in | std::ios::out);
       return *GridStream;
@@ -139,26 +136,6 @@ public:
     Transformer.Transform(normValue, iter);
   }
 
-  /*
-  inline void operator()(
-    const openvdb::FloatGrid::ValueOnCIter& iter,
-    openvdb::tree::ValueAccessor<TreeOutType>& accessor)
-  {
-    openvdb::Vec4f transformedColor;
-    transformColor(*iter, transformedColor);
-
-    if (iter.isVoxelValue())
-    { // set a single voxel
-      accessor.setValue(iter.getCoord(), transformedColor);
-    }
-    else
-    { // fill an entire tile
-      openvdb::CoordBBox bbox;
-      iter.getBoundingBox(bbox);
-      accessor.getTree()->fill(bbox, transformedColor);
-    }
-  }
-  */
 
   const TransformerType& Transformer;
   const DataType* VolData;
@@ -250,7 +227,6 @@ void TfTransformCall(TfTransformInput& tfTransformInput)
 
 static void SelectTfTransform(const UsdBridgeLogObject& logObj, TfTransformInput& tfTransformInput)
 {
-  // Transform the float data to color data
   switch (tfTransformInput.volumeData.DataType)
   {
   case UsdBridgeType::CHAR:
@@ -290,7 +266,6 @@ static void SelectTfTransform(const UsdBridgeLogObject& logObj, TfTransformInput
       break;
     }
   }
-  //openvdb::tools::transformValues(valArray->cbeginValueOn(), *colorGrid, transformOp);
 }
 
 struct CopyToGridInput
@@ -299,7 +274,7 @@ struct CopyToGridInput
   const openvdb::CoordBBox& bBox;
 };
 
-struct DoublePH // placeholder for double type to implicitly convert to float without warnings
+struct DoublePH
 {
   public:
     DoublePH(double val) : v(val) {}
@@ -329,7 +304,7 @@ struct GridConvert
     size_t linearIndex = Dims.y() * Dims.x() * coord.z() + Dims.x() * coord.y() + coord.x();
     const InDataType* curVal = VolData + linearIndex;
 
-    typename OutGridType::ValueType outVal(*curVal); 
+    typename OutGridType::ValueType outVal(*curVal);
 
     iter.setValue(outVal);
   }
@@ -342,7 +317,7 @@ struct GridConvert
     }
 
     const InDataType* backVal = VolData + BackgroundIdx;
-    typename OutGridType::ValueType outVal(*backVal); 
+    typename OutGridType::ValueType outVal(*backVal);
 
     return outVal;
   }
@@ -380,7 +355,7 @@ struct NormalizedToGridConvert
 
   float BackgroundValue()
   {
-    return (BackgroundIdx == -1) ? 0.0f : 
+    return (BackgroundIdx == -1) ? 0.0f :
       (static_cast<float>(*(VolData + BackgroundIdx)) - MinValue) * InvRange;
   }
 
@@ -410,7 +385,7 @@ template<typename DataType>
 openvdb::GridBase::Ptr NormalizedCopyToGridTemplate(const CopyToGridInput& copyInput)
 {
   NormalizedToGridConvert<DataType> gridConverter(copyInput.volumeData, copyInput.bBox);
-  
+
   openvdb::FloatGrid::Ptr floatGrid = openvdb::FloatGrid::create(gridConverter.BackgroundValue());
   floatGrid->denseFill(copyInput.bBox, 0.0f, true);
 
@@ -424,14 +399,14 @@ openvdb::GridBase::Ptr CopyToGridTemplate(const CopyToGridInput& copyInput)
 {
   const DataType* typedData = static_cast<const DataType*>(copyInput.volumeData.Data);
   long long backgroundIdx = copyInput.volumeData.BackgroundIdx;
-  typename GridType::ValueType backGroundValue( (backgroundIdx == -1) ? 
+  typename GridType::ValueType backGroundValue( (backgroundIdx == -1) ?
     static_cast<DataType>(0) : *(typedData + backgroundIdx)
     );
 
   typename GridType::Ptr scalarGrid = GridType::create(backGroundValue);
 
   openvdb::tools::Dense<const DataType, openvdb::tools::LayoutXYZ> valArray(copyInput.bBox, typedData);
-  openvdb::tools::copyFromDense(valArray, *scalarGrid, (DataType)0); // No tolerance set to clamp values to background value for sparsity.
+  openvdb::tools::copyFromDense(valArray, *scalarGrid, (DataType)0);
 
   return scalarGrid;
 }
@@ -439,7 +414,6 @@ openvdb::GridBase::Ptr CopyToGridTemplate(const CopyToGridInput& copyInput)
 static openvdb::GridBase::Ptr CopyToGrid(const UsdBridgeLogObject& logObj, const CopyToGridInput& copyInput, bool convertDoubleToFloat)
 {
   openvdb::GridBase::Ptr scalarGrid;
-  // Transform the float data to color data
   switch (copyInput.volumeData.DataType)
   {
   case UsdBridgeType::CHAR:
@@ -506,7 +480,6 @@ static void CreateGridAndAdd(const UsdBridgeLogObject& logObj, const UsdBridgeVo
 
     outGrid->setTransform(linTrans);
 
-    // Push density grid into grid container
     grids->push_back(outGrid);
   }
 }
@@ -514,7 +487,7 @@ static void CreateGridAndAdd(const UsdBridgeLogObject& logObj, const UsdBridgeVo
 UsdBridgeVolumeWriter::UsdBridgeVolumeWriter()
   : Internals(std::make_unique<UsdBridgeVolumeWriterInternals>())
 {
-  
+
 }
 
 UsdBridgeVolumeWriter::~UsdBridgeVolumeWriter()
@@ -535,21 +508,16 @@ void UsdBridgeVolumeWriter::ToVDB(const UsdBridgeVolumeData& volumeData)
   const char* densityGridName = "density";
   const char* colorGridName = "diffuse";
 
-  // Keep the grid/tree transform at identity, and set coord bounding box to element dimensions. 
-  // This will correspond to a worldspace size of element dimensions too, with rest of scaling handled outside of openvdb.
   const size_t* coordDims = volumeData.NumElements;
   size_t maxInt = std::numeric_limits<int>::max();
   assert(coordDims[0] <= maxInt && coordDims[1] <= maxInt && coordDims[2] <= maxInt);
 
-  // Wrap data in a Dense and copy to color grid
   openvdb::CoordBBox bBox(0, 0, 0, int(coordDims[0] - 1), int(coordDims[1] - 1), int(coordDims[2] - 1)); //Fill is inclusive
 
-  // Compose volume transformation
   openvdb::math::Transform::Ptr linTrans = openvdb::math::Transform::createLinearTransform();
   linTrans->preScale(openvdb::Vec3f(volumeData.CellDimensions));
   linTrans->postTranslate(openvdb::Vec3f(volumeData.Origin));
 
-  // Prepare output grids
   openvdb::GridPtrVecPtr grids(new openvdb::GridPtrVec);
 
   if(volumeData.preClassified)
@@ -566,28 +534,23 @@ void UsdBridgeVolumeWriter::ToVDB(const UsdBridgeVolumeData& volumeData)
 #endif
       true);
 
-    // Transform the volumedata and output into color grid
     TfTransformInput tfTransformInput = { colorGrid, opacityGrid, volumeData, bBox };
     SelectTfTransform(this->LogObject, tfTransformInput);
 
-    // Set grid names
     opacityGrid->setName(densityGridName);
     colorGrid->setName(colorGridName);
 
-    // Set grid transformation
     opacityGrid->setTransform(linTrans);
     colorGrid->setTransform(linTrans);
 
-    // Push color and opacity grid into grid container
     grids->push_back(opacityGrid);
     grids->push_back(colorGrid);
   }
   else
   {
-    CreateGridAndAdd(this->LogObject, volumeData, bBox, densityGridName, linTrans, ConvertDoubleToFloat, grids); 
+    CreateGridAndAdd(this->LogObject, volumeData, bBox, densityGridName, linTrans, ConvertDoubleToFloat, grids);
   }
 
-  // Must write all grids at once
   openvdb::io::Stream(Internals->ResetStream()).write(*grids);
 }
 

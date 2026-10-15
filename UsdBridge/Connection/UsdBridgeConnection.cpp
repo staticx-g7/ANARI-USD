@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeConnection.h"
 
@@ -187,15 +186,12 @@ public:
     return &RemoteStream;
   }
 
-  // To facility the Omniverse path methods
   static constexpr size_t MaxBaseUrlSize = 4096;
   char BaseUrlBuffer[MaxBaseUrlSize];
   char TempUrlBuffer[MaxBaseUrlSize];
 
-  // Status callback handle
   uint32_t StatusCallbackHandle = 0;
 
-  // Stream
   const char* StreamFilePath;
   bool StreamIsBinary;
   std::stringstream RemoteStream;
@@ -253,8 +249,6 @@ namespace
     static std::mutex statusMutex;
     std::unique_lock<std::mutex> lk(statusMutex);
 
-    // This will return "Verbose", "Info", "Warning", "Error"
-    //const char* levelString = omniClientGetLogLevelString(level);
     char levelChar = omniClientGetLogLevelChar(level);
 
     UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "OmniClient status message: ");
@@ -354,11 +348,9 @@ bool UsdBridgeRemoteConnection::Initialize(const UsdBridgeConnectionSettings& se
 
   if (initSuccess)
   {
-    // Check for Url validity for its various components
     std::string serverUrl;
     if (Settings.HostName.find("://") != std::string::npos)
     {
-      // HostName already contains a protocol prefix
       serverUrl = Settings.HostName;
       if (serverUrl.back() != '/') {
         serverUrl += "/";
@@ -366,7 +358,6 @@ bool UsdBridgeRemoteConnection::Initialize(const UsdBridgeConnectionSettings& se
     }
     else
     {
-      // Add omniverse:// protocol prefix
       serverUrl = "omniverse://" + Settings.HostName + "/";
     }
     std::string rawUrl = serverUrl + Settings.WorkingDirectory;
@@ -432,7 +423,6 @@ bool UsdBridgeRemoteConnection::Initialize(const UsdBridgeConnectionSettings& se
 
       if (NumInitializedConnInstances == 0)
       {
-        //omniClientPushBaseUrl(urlRes); // Base urls only apply to *normal* omniClient calls, not usd stage creation
       }
 
       ++NumInitializedConnInstances;
@@ -455,9 +445,7 @@ void UsdBridgeRemoteConnection::Shutdown()
 
     omniClientLiveWaitForPendingUpdates();
 
-    //omniClientPopBaseUrl(Internals->BaseUrlBuffer);
 
-    //omniClientShutdown();
   }
 }
 
@@ -497,7 +485,6 @@ int UsdBridgeRemoteConnection::MaxSessionNr() const
 
 bool UsdBridgeRemoteConnection::CreateFolder(const char* dirName, bool isRelative, bool mayExist) const
 {
-  // If folder operations are not supported, just return true (no-op)
   if (!FolderOperationsSupported)
     return true;
 
@@ -520,7 +507,6 @@ bool UsdBridgeRemoteConnection::CreateFolder(const char* dirName, bool isRelativ
 
 bool UsdBridgeRemoteConnection::RemoveFolder(const char* dirName, bool isRelative) const
 {
-  // If folder operations are not supported, just return true (no-op)
   if (!FolderOperationsSupported)
     return true;
 
@@ -595,15 +581,12 @@ bool UsdBridgeRemoteConnection::CheckWritePermissions()
 
   UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "Check write permissions");
 
-  // Test file operations (required for permissions)
-  // Temporarily enable folder operations for the test
   FolderOperationsSupported = true;
   const char* testData = "UsdBridge Write Permission Test";
   fileWriteSuccess = this->WriteFile(testData, strlen(testData), "_WriteTest_File.txt", true, false);
   if (fileWriteSuccess)
   {
     UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "File write successful");
-    // Clean up the test file
     fileDeleteSuccess = this->RemoveFile("_WriteTest_File.txt", true);
     if (fileDeleteSuccess)
     {
@@ -619,7 +602,6 @@ bool UsdBridgeRemoteConnection::CheckWritePermissions()
     UsdBridgeLogMacro(UsdBridgeLogLevel::ERR, "File write failed");
   }
 
-  // Test folder operations (informational only - doesn't affect permissions test)
   UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "Testing folder operations support...");
 
   DefaultContext folderContext;
@@ -633,14 +615,13 @@ bool UsdBridgeRemoteConnection::CheckWritePermissions()
     })
   );
 
-  folderCreateSuccess = folderContext.result == eOmniClientResult_Ok || folderContext.result == eOmniClientResult_OkLatest 
+  folderCreateSuccess = folderContext.result == eOmniClientResult_Ok || folderContext.result == eOmniClientResult_OkLatest
     || folderContext.result == eOmniClientResult_ErrorAlreadyExists;
 
   if (folderCreateSuccess)
   {
     UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "Folder creation successful");
 
-    // Try to clean up the test folder
     DefaultContext deleteContext;
     omniClientWait(omniClientDelete(testFolderUrl, &deleteContext,
       [](void* userData, OmniClientResult result) OMNICLIENT_NOEXCEPT
@@ -666,7 +647,6 @@ bool UsdBridgeRemoteConnection::CheckWritePermissions()
     UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "Folder creation failed");
   }
 
-  // Set folder operations support flag
   FolderOperationsSupported = folderCreateSuccess && folderDeleteSuccess;
   if (FolderOperationsSupported)
   {
@@ -677,7 +657,6 @@ bool UsdBridgeRemoteConnection::CheckWritePermissions()
     UsdBridgeLogMacro(UsdBridgeLogLevel::STATUS, "Folder operations are NOT supported - will be disabled");
   }
 
-  // Return file write success as the primary permission check result
   return fileWriteSuccess && fileDeleteSuccess;
 }
 
@@ -872,7 +851,7 @@ const char* UsdBridgeVoidConnection::GetUrl(const char* path) const
 bool UsdBridgeVoidConnection::Initialize(const UsdBridgeConnectionSettings& settings, const UsdBridgeLogObject& logObj)
 {
   bool initialized = UsdBridgeConnection::Initialize(settings, logObj);
-  Settings.WorkingDirectory = "./";// Force relative working directory in case of unforeseen usd saves based on GetUrl()
+  Settings.WorkingDirectory = "./";
   return initialized;
 }
 

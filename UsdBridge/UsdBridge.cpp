@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridge.h"
 
@@ -9,7 +8,7 @@
 #include "UsdRenderManager.h"
 #include "UsdBridgeDiagnosticMgrDelegate.h"
 #include "UsdBridgeAnimPlayer.h" // JUSYNC time-sample streaming
-#include "Common/UsdBridgeParallelController.h"	
+#include "Common/UsdBridgeParallelController.h"
 #include "Common/UsdBridgeUtils.h"
 
 #include <string>
@@ -28,7 +27,6 @@ CARB_GLOBALS("anariUsdBridge")
 
 namespace
 {
-  // Parent paths for class definitions (Class path)
   const char* const worldPathCp = "worlds";
   const char* const instancePathCp = "instances";
   const char* const groupPathCp = "groups";
@@ -41,7 +39,6 @@ namespace
   const char* const cameraPathCp = "cameras";
   const char* const lightPathCp = "lights";
 
-  // Parent path extensions for references in parent classes (Reference path)
   const char* const instancePathRp = "instances";
   const char* const surfacePathRp = "surfaces";
   const char* const volumePathRp = "volumes";
@@ -49,11 +46,10 @@ namespace
   const char* const geometryPathRp = "geometry"; // created in surface parent class
   const char* const fieldPathRp = "spatialfield"; // created in volume parent class
   const char* const materialPathRp = "material"; // created in surface parent class
-  const char* const samplerPathRp = "samplers"; // created in material parent class (separation from other UsdShader prims in material)
+  const char* const samplerPathRp = "samplers";
   const char* const protoShapePathRp = "protoshapes"; // created in geometry parent class
   const char* const protoGeometryPathRp = "protogeometries"; // created in geometry parent class
 
-  // Postfixes for prim stage names, also used for manifests
   const char* const geomPrimStagePf = "_Geom";
   const char* const fieldPrimStagePf = "_Field";
   const char* const materialPrimStagePf = "_Material";
@@ -61,7 +57,6 @@ namespace
   const char* const cameraPrimStagePf = "_Camera";
   const char* const lightPrimStagePf = "_Light";
 
-  // Postfixes for clip stage names
   const char* const geomClipPf = "_Geom_";
 
   bool PrimIsNew(const BoolEntryPair& createResult)
@@ -80,7 +75,6 @@ struct UsdBridgeInternals
     , RenderManager(UsdWriter)
   {
     RefModCallbacks.AtNewRef = [this](UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache){
-      // Increase the reference count for the child on creation of referencing prim
       this->Cache.AddChild(parentCache, childCache);
     };
 
@@ -118,26 +112,19 @@ struct UsdBridgeInternals
 
   UsdGeomPrimvarsAPI GetBoundGeomPrimvars(const UsdBridgeHandle& material) const;
 
-  // Cache
   UsdBridgePrimCacheManager Cache;
 
-  // USDWriter
   UsdBridgeUsdWriter UsdWriter;
 
-  // USD Render Manager (new multi-frame system)
   UsdRenderManager RenderManager;
 
-  // Material->geometry binding suggestion
   std::map<UsdBridgePrimCache*, SdfPath> MaterialToGeometryBinding;
 
-  // Callbacks
   UsdBridgeUsdWriter::RefModFuncs RefModCallbacks;
 
-  // Diagnostic Manager
   std::unique_ptr<UsdBridgeDiagnosticMgrDelegate> DiagnosticDelegate;
   std::function<void (UsdBridgeDiagnosticMgrDelegate*)> DiagRemoveFunc;
 
-  // Temp arrays
   UsdBridgePrimCacheList TempPrimCaches;
   SdfPrimPathList TempPrimPaths;
   SdfPrimPathList ProtoPrimPaths;
@@ -157,14 +144,12 @@ BoolEntryPair UsdBridgeInternals::FindOrCreatePrim(const char* category, const c
 
   UsdBridgePrimCache* primCache = nullptr;
 
-  // Find existing entry
   ConstPrimCacheIterator it = Cache.FindPrimCache(name);
   bool cacheExists = Cache.ValidIterator(it);
   bool stageExists = true;
 
   if (cacheExists)
   {
-    // Get the existing entry
     primCache = it->second.get();
   }
   else
@@ -180,10 +165,6 @@ BoolEntryPair UsdBridgeInternals::FindOrCreatePrim(const char* category, const c
 void UsdBridgeInternals::FindAndDeletePrim(const UsdBridgeHandle& handle)
 {
   ConstPrimCacheIterator it = Cache.FindPrimCache(handle);
-  // The cache entry may already have been garbage-collected while the owning
-  // ANARI object outlived it (GC erases caches of unreferenced prims; the
-  // object's stored handle then points to freed memory and is no longer
-  // registered). Bail out instead of dereferencing the end iterator.
   if(!Cache.ValidIterator(it))
     return;
 
@@ -323,8 +304,6 @@ bool UsdBridge::OpenSession(UsdBridgeLogCallback logCallback, void* logUserData)
   SessionValid = BRIDGE_USDWRITER.InitializeSession();
   SessionValid = SessionValid && BRIDGE_USDWRITER.OpenSceneStage();
 
-  // Ensure all ranks have created their scene stages before rank 0
-  // writes the encapsulating file that references them.
   if(SessionValid && BRIDGE_USDWRITER.Settings.ParallelController)
     BRIDGE_USDWRITER.Settings.ParallelController->Barrier();
 
@@ -348,7 +327,6 @@ bool UsdBridge::CreateWorld(const char* name, UsdWorldHandle& handle)
 {
   if (!SessionValid) return false;
 
-  // Find or create a cache entry belonging to a prim located under worldPathCp in the usd.
   BoolEntryPair createResult = Internals->FindOrCreatePrim(worldPathCp, name);
   UsdBridgePrimCache* cacheEntry = createResult.second;
   bool cacheExists = createResult.first.second;
@@ -357,7 +335,7 @@ bool UsdBridge::CreateWorld(const char* name, UsdWorldHandle& handle)
   {
     Internals->CreateRootPrimAndAttach(cacheEntry, worldPathCp);
   }
-  
+
   handle.value = cacheEntry;
   return PrimIsNew(createResult);
 }
@@ -400,7 +378,6 @@ bool UsdBridge::CreateSurface(const char* name, UsdSurfaceHandle& handle)
 {
   if (!SessionValid) return false;
 
-  // Although surface doesn't support transform operations, a transform prim supports timevarying visibility.
   BoolEntryPair createResult = Internals->FindOrCreatePrim(surfacePathCp, name);
   UsdBridgePrimCache* cacheEntry = createResult.second;
   bool cacheExists = createResult.first.second;
@@ -439,7 +416,6 @@ bool UsdBridge::CreateLight(const char* name, UsdBridgeLightType lightType, UsdL
   UsdBridgePrimCache* cacheEntry = createResult.second;
   bool cacheExists = createResult.first.second;
 
-  // No manifest or value clip (stages) are created for lights, so we just create the extra prim stage only.
   if (!cacheExists)
   {
 #ifdef VALUE_CLIP_RETIMING
@@ -471,7 +447,6 @@ bool UsdBridge::CreateGeometryTemplate(const char* name, UsdGeometryHandle& hand
     BRIDGE_USDWRITER.CreateManifestStage(name, geomPrimStagePf, cacheEntry);
 
 #ifndef TIME_CLIP_STAGES
-    // Default primstage created for clip assetpaths of parents. If this path is not active, individual clip stages are created lazily during data update.
     UsdStageRefPtr geomPrimStage = BRIDGE_USDWRITER.FindOrCreatePrimStage(cacheEntry, geomPrimStagePf).second;
     BRIDGE_USDWRITER.InitializeUsdGeometry(geomPrimStage, cacheEntry->PrimPath, geomData, false);
 #endif
@@ -511,12 +486,11 @@ bool UsdBridge::CreateSpatialField(const char * name, UsdSpatialFieldHandle& han
   if (!cacheExists)
   {
 #ifdef VALUE_CLIP_RETIMING
-    // Create manifest and primstage
     BRIDGE_USDWRITER.CreateManifestStage(name, fieldPrimStagePf, cacheEntry);
 
     UsdStageRefPtr volPrimStage = BRIDGE_USDWRITER.FindOrCreatePrimStage(cacheEntry, fieldPrimStagePf).second;
     BRIDGE_USDWRITER.InitializeUsdVolume(volPrimStage, cacheEntry->PrimPath, false);
-#endif   
+#endif
 
     UsdPrim volumePrim = BRIDGE_USDWRITER.InitializeUsdVolume(BRIDGE_USDWRITER.GetSceneStage(), cacheEntry->PrimPath, true);
     volumePrim.ApplyAPI<UsdShadeMaterialBindingAPI>();
@@ -530,7 +504,6 @@ bool UsdBridge::CreateMaterial(const char* name, UsdMaterialHandle& handle)
 {
   if (!SessionValid) return false;
 
-  // Create the material
   BoolEntryPair createResult = Internals->FindOrCreatePrim(materialPathCp, name);
   UsdBridgePrimCache* matCacheEntry = createResult.second;
   bool cacheExists = createResult.first.second;
@@ -540,7 +513,6 @@ bool UsdBridge::CreateMaterial(const char* name, UsdMaterialHandle& handle)
   if (!cacheExists)
   {
 #ifdef VALUE_CLIP_RETIMING
-    // Create manifest and primstage
     BRIDGE_USDWRITER.CreateManifestStage(name, materialPrimStagePf, matCacheEntry);
 
     UsdStageRefPtr matPrimStage = BRIDGE_USDWRITER.FindOrCreatePrimStage(matCacheEntry, materialPrimStagePf).second;
@@ -565,7 +537,6 @@ bool UsdBridge::CreateSampler(const char* name, UsdSamplerHandle& handle, UsdBri
   if (!cacheExists)
   {
 #ifdef VALUE_CLIP_RETIMING
-    // Create manifest and primstage
     BRIDGE_USDWRITER.CreateManifestStage(name, samplerPrimStagePf, cacheEntry);
 
     UsdStageRefPtr samplerPrimStage = BRIDGE_USDWRITER.FindOrCreatePrimStage(cacheEntry, samplerPrimStagePf).second;
@@ -585,16 +556,11 @@ bool UsdBridgeInternals::CreateWorldIndependentObject(
   const std::function<void(UsdStageRefPtr, const SdfPath&)>& initializeObjectFunc,
   UsdHandleType& handle)
 {
-  // Creates an object that is not (indirectly) referenced by the world,
-  // so it's creating a prim directly under the root with a reference to make the class prim concrete.
 
-  // Find or create a cache entry belonging to a prim located under objectPathCp in the usd.
   BoolEntryPair createResult = this->FindOrCreatePrim(objectPathCp, name);
   UsdBridgePrimCache* cacheEntry = createResult.second;
   bool cacheExists = createResult.first.second;
 
-  // The object has no value clips and manifest, instead the primstage+path is directly referenced by the root
-  // instance prim.
   if (!cacheExists)
   {
     const char* layerId = nullptr; // The path to the referenced USD layer.
@@ -610,9 +576,9 @@ bool UsdBridgeInternals::CreateWorldIndependentObject(
 
     CreateRootPrimAndAttach(cacheEntry, objectPathCp, layerId);
   }
-  
+
   handle.value = cacheEntry;
-  return PrimIsNew(createResult); 
+  return PrimIsNew(createResult);
 }
 
 bool UsdBridge::CreateCamera(const char* name, UsdCameraHandle& handle)
@@ -633,7 +599,6 @@ void UsdBridge::DeleteWorld(UsdWorldHandle handle)
 
   Internals->RemoveRootPrimAndDetach(worldCache, worldPathCp);
 
-  // Remove the abstract class
   Internals->FindAndDeletePrim(handle);
 }
 
@@ -669,7 +634,6 @@ void UsdBridge::DeleteLight(UsdLightHandle handle)
 {
   if (handle.value == nullptr) return;
 
-  // Remove the abstract class
   Internals->FindAndDeletePrim(handle);
 }
 
@@ -712,12 +676,11 @@ void UsdBridge::DeleteCamera(UsdCameraHandle handle)
 
   Internals->RemoveRootPrimAndDetach(cameraCache, cameraPathCp);
 
-  // Remove the abstract class 
   Internals->FindAndDeletePrim(handle);
 }
 
 template<typename ParentHandleType, typename ChildHandleType>
-void UsdBridge::SetNoClipRefs(ParentHandleType parentHandle, const ChildHandleType* childHandles, uint64_t numChildren, 
+void UsdBridge::SetNoClipRefs(ParentHandleType parentHandle, const ChildHandleType* childHandles, uint64_t numChildren,
   const char* refPathExt, bool timeVarying, double timeStep, const int* instanceableValues)
 {
   if (parentHandle.value == nullptr) return;
@@ -791,7 +754,7 @@ void UsdBridge::SetGeometryRef(UsdSurfaceHandle surface, UsdGeometryHandle geome
   UsdBridgePrimCache* surfaceCache = BRIDGE_CACHE.ConvertToPrimCache(surface);
   UsdBridgePrimCache* geometryCache = BRIDGE_CACHE.ConvertToPrimCache(geometry);
 
-  constexpr bool timeVarying = false; // On a surface, the path to the geometry cannot change over time (ie. is uniformly set), since material is not timevarying either (due to the material binding path rel from the geometry) and the geometry contents itself are already timevarying.
+  constexpr bool timeVarying = false;
   constexpr bool valueClip = true;
   constexpr bool clipStages = true;
   constexpr bool instanceable = false; // Can only make Xform prims instanceable
@@ -812,8 +775,6 @@ void UsdBridge::SetGeometryMaterialRef(UsdSurfaceHandle surface, UsdGeometryHand
   UsdBridgePrimCache* geometryCache = BRIDGE_CACHE.ConvertToPrimCache(geometry);
   UsdBridgePrimCache* materialCache = BRIDGE_CACHE.ConvertToPrimCache(material);
 
-  // For updating material attribute reader output types, update the suggested material->geompath mapping.
-  // Since multiple geometries can be bound to a material, only one is taken, so it is up to the user to ensure correct attribute connection types.
   SdfPath& geomPrimPath = geometryCache->PrimPath;
   Internals->MaterialToGeometryBinding[material.value] = geomPrimPath;
 
@@ -824,15 +785,12 @@ void UsdBridge::SetGeometryMaterialRef(UsdSurfaceHandle surface, UsdGeometryHand
   constexpr bool valueClip = true;
   constexpr bool instanceable = false; // Can only make Xform prims instanceable
 
-  // Remove any dangling references
   BRIDGE_USDWRITER.ManageUnusedRefs(surfaceCache, Internals->ToCacheList(geometryCache), geometryPathRp, timeVarying, timeStep, Internals->RefModCallbacks.AtRemoveRef);
   BRIDGE_USDWRITER.ManageUnusedRefs(surfaceCache, Internals->ToCacheList(materialCache), materialPathRp, timeVarying, timeStep, Internals->RefModCallbacks.AtRemoveRef);
 
-  // Update the references
-  SdfPath refGeomPath = BRIDGE_USDWRITER.AddRef(surfaceCache, geometryCache, geometryPathRp, timeVarying, valueClip, true, geomClipPf, timeStep, geomTimeStep, instanceable, Internals->RefModCallbacks); // Can technically be timeVarying, but would be a bit confusing. Instead, timevary the surface.
+  SdfPath refGeomPath = BRIDGE_USDWRITER.AddRef(surfaceCache, geometryCache, geometryPathRp, timeVarying, valueClip, true, geomClipPf, timeStep, geomTimeStep, instanceable, Internals->RefModCallbacks);
   SdfPath refMatPath = BRIDGE_USDWRITER.AddRef(surfaceCache, materialCache, materialPathRp, timeVarying, valueClip, false, nullptr, timeStep, matTimeStep, instanceable, Internals->RefModCallbacks);
 
-  // Bind the referencing material to the referencing geom prim (as they are within same scope in this usd prim)
   BRIDGE_USDWRITER.BindMaterialToGeom(refGeomPath, refMatPath);
 }
 
@@ -851,7 +809,7 @@ void UsdBridge::SetSpatialFieldRef(UsdVolumeHandle volume, UsdSpatialFieldHandle
 
   BRIDGE_USDWRITER.ManageUnusedRefs(volumeCache, Internals->ToCacheList(fieldCache), fieldPathRp, timeVarying, timeStep, Internals->RefModCallbacks.AtRemoveRef);
 
-  SdfPath refVolPath = BRIDGE_USDWRITER.AddRef(volumeCache, fieldCache, fieldPathRp, timeVarying, valueClip, clipStages, nullptr, timeStep, fieldTimeStep, instanceable, Internals->RefModCallbacks); // Can technically be timeVarying, but would be a bit confusing. Instead, timevary the volume.
+  SdfPath refVolPath = BRIDGE_USDWRITER.AddRef(volumeCache, fieldCache, fieldPathRp, timeVarying, valueClip, clipStages, nullptr, timeStep, fieldTimeStep, instanceable, Internals->RefModCallbacks);
 }
 
 void UsdBridge::SetSamplerRefs(UsdMaterialHandle material, const UsdSamplerHandle* samplers, size_t numSamplers, double timeStep, const UsdSamplerRefData* samplerRefData)
@@ -862,8 +820,6 @@ void UsdBridge::SetSamplerRefs(UsdMaterialHandle material, const UsdSamplerHandl
   UsdBridgePrimCache* matCache = BRIDGE_CACHE.ConvertToPrimCache(material);
   const UsdBridgePrimCacheList& samplerCaches = Internals->ExtractPrimCaches<UsdSamplerHandle>(samplers, numSamplers);
 
-  // Sampler references cannot be time-varying (ie. path to sampler cannot change over time - connectToSource doesn't allow for that), and are set on the scenestage prim (so they inherit the type of the sampler prim)
-  // However, they do allow value clip retiming.
   constexpr bool timeVarying = false;
   constexpr bool valueClip = true;
   constexpr bool clipStages = false;
@@ -871,7 +827,6 @@ void UsdBridge::SetSamplerRefs(UsdMaterialHandle material, const UsdSamplerHandl
 
   BRIDGE_USDWRITER.ManageUnusedRefs(matCache, samplerCaches, samplerPathRp, timeVarying, timeStep, Internals->RefModCallbacks.AtRemoveRef);
 
-  // Bind sampler and material
   SdfPath& matPrimPath = matCache->PrimPath;// .AppendPath(SdfPath(materialAttribPf));
   UsdStageRefPtr materialStage = BRIDGE_USDWRITER.GetTimeVarStage(matCache);
 
@@ -897,7 +852,6 @@ void UsdBridge::SetPrototypeRefs(UsdGeometryHandle geometry, const UsdGeometryHa
   UsdBridgePrimCache* geometryCache = BRIDGE_CACHE.ConvertToPrimCache(geometry);
   const UsdBridgePrimCacheList& protoGeomCaches = Internals->ExtractPrimCaches<UsdGeometryHandle>(protoGeometries, numProtoGeometries);
 
-  // Due to prototype rel paths, the path to the prototype itself cannot change. Also, the contents of the prototype itself can already timevary.
   constexpr bool timeVarying = false;
   constexpr bool valueClip = true;
   constexpr bool clipStages = true;
@@ -1023,22 +977,15 @@ void UsdBridge::SetGeometryDataTemplate(UsdGeometryHandle geometry, const GeomDa
   UsdStageRefPtr geomStage = BRIDGE_USDWRITER.GetTimeVarStage(cache
 #ifdef TIME_CLIP_STAGES
     , true, geomClipPf, timeStep
-    , [usdWriter=&BRIDGE_USDWRITER, &geomPath, &geomData] (UsdStageRefPtr geomStage) 
+    , [usdWriter=&BRIDGE_USDWRITER, &geomPath, &geomData] (UsdStageRefPtr geomStage)
         { usdWriter->InitializeUsdGeometry(geomStage, geomPath, geomData, false); }
 #endif
   );
 
-  // JUSYNC RawGeo (JUSYNC_RAWGEO=1, memory-store mode): mirror the raw float
-  // arrays into the store as "clips/<...>.geo" and skip USD authoring + crate
-  // export for this geometry. The empty clip stage created above keeps the
-  // scene/manifest references valid; streaming clients take the .geo payload
-  // and its sub-size-threshold twins are ignored client-side.
-  // JUSYNC time-sample detection: commits of "<actor>_spheres_<n>" prims are
-  // absorbed while a multiblock timeline set is being assembled (ParaView
-  // Extract Time Steps + composite ANARI mapper). The player re-publishes
-  // them one sample per frame through SetGeometryData, which re-enters here
-  // with its own guard and takes the normal store path below.
   if(jusync_anim::MaybeRegister(this, geometry, cache ? cache->Name.GetString().c_str() : "", geomData, timeStep))
+    return;
+
+  if(jusync_anim::IsStaleVariantMember(geometry))
     return;
 
   if(BRIDGE_USDWRITER.TryStoreRawGeo(cache, geomData, timeStep))
@@ -1095,7 +1042,6 @@ void UsdBridge::SetSpatialFieldData(UsdSpatialFieldHandle field, const UsdBridge
 
   UsdStageRefPtr volumeStage = BRIDGE_USDWRITER.GetTimeVarStage(cache);
 
-  // To avoid data duplication when using of clip stages, we need to potentially use the scenestage prim for time-uniform data.
   BRIDGE_USDWRITER.UpdateUsdVolume(volumeStage, cache, volumeData, timeStep);
 
 #ifdef VALUE_CLIP_RETIMING
@@ -1118,7 +1064,7 @@ void UsdBridge::SetMaterialData(UsdMaterialHandle material, const UsdBridgeMater
 
   UsdBridgePrimCache* cache = BRIDGE_CACHE.ConvertToPrimCache(material);
   SdfPath& matPrimPath = cache->PrimPath;
-  
+
 #ifdef VALUE_CLIP_RETIMING
   if(cache->TimeVarBitsUpdate(matData.TimeVarying))
     BRIDGE_USDWRITER.UpdateUsdMaterialManifest(cache, matData);
@@ -1155,7 +1101,7 @@ void UsdBridge::SetSamplerData(UsdSamplerHandle sampler, const UsdBridgeSamplerD
 #endif
 
   UsdStageRefPtr samplerStage = BRIDGE_USDWRITER.GetTimeVarStage(cache);
-  
+
   BRIDGE_USDWRITER.UpdateUsdSampler(samplerStage, cache, samplerData, timeStep);
 
 #ifdef VALUE_CLIP_RETIMING
@@ -1260,12 +1206,11 @@ void UsdBridge::SetPrototypeData(UsdGeometryHandle geometry, const UsdBridgeInst
 
   SdfPath& geomPath = geomCache->PrimPath;
 
-  BRIDGE_USDWRITER.UpdateUsdInstancerPrototypes(geomPath, instancerRefData, Internals->ProtoPrimPaths, protoShapePathRp); // The geometry reference path is already merged into ProtoPrimPaths
+  BRIDGE_USDWRITER.UpdateUsdInstancerPrototypes(geomPath, instancerRefData, Internals->ProtoPrimPaths, protoShapePathRp);
 }
 
 void UsdBridge::ChangeMaterialInputAttributes(UsdMaterialHandle material, const MaterialInputAttribName* inputAttribs, size_t numInputAttribs, double timeStep, MaterialDMI timeVarying)
 {
-  // This function only applies to materials being bound to a different (type of) geometry, which means that for example attribute connection names can change
 
   if (material.value == nullptr) return;
 
@@ -1279,8 +1224,6 @@ void UsdBridge::ChangeMaterialInputAttributes(UsdMaterialHandle material, const 
     BRIDGE_USDWRITER.UpdateAttributeReader(materialStage, matPrimPath, inputAttribs[i].first, inputAttribs[i].second, boundGeomPrimvars, timeStep, timeVarying);
 
 #ifdef VALUE_CLIP_RETIMING
-  //if(this->EnableSaving)
-  //  materialStage->Save(); // Attrib readers do not have timevarying info at the moment
 #endif
 }
 
@@ -1292,7 +1235,7 @@ void UsdBridge::ChangeInAttribute(UsdSamplerHandle sampler, const char* newName,
   SdfPath& samplerPrimPath = cache->PrimPath;// .AppendPath(SdfPath(samplerAttribPf));
 
   UsdStageRefPtr samplerStage = BRIDGE_USDWRITER.GetTimeVarStage(cache);
-  
+
   BRIDGE_USDWRITER.UpdateInAttribute(samplerStage, samplerPrimPath, newName, timeStep, timeVarying);
 
 #ifdef VALUE_CLIP_RETIMING
@@ -1311,10 +1254,8 @@ void UsdBridge::SaveScene()
   }
   else
   {
-    // Recalculate actual memory usage for all stages (now that data is written)
     BRIDGE_USDWRITER.RecalculateAllMemoryUsage();
 
-    // Report total memory usage
     size_t totalBytes = BRIDGE_USDWRITER.GetTotalMemoryUsage();
     double totalMB = totalBytes / (1024.0 * 1024.0);
     UsdBridgeLogMacro(BRIDGE_USDWRITER.LogObject, UsdBridgeLogLevel::STATUS,
@@ -1322,9 +1263,6 @@ void UsdBridge::SaveScene()
   }
 }
 
-// =============================================================================
-// Multi-frame rendering API
-// =============================================================================
 
 void UsdBridge::RegisterFrame(const char* frameName)
 {
@@ -1434,14 +1372,10 @@ void UsdBridge::ResetResourceUpdateState()
 
 void UsdBridge::PurgeUnreferencedPrims(bool saveScene)
 {
-  // Collect names of about-to-be-deleted prim caches for logging
   std::vector<std::string> deletedPrimNames;
   BRIDGE_CACHE.RemoveUnreferencedPrimCaches(
     [this, &deletedPrimNames](UsdBridgePrimCache* cacheEntry)
     {
-      // A shared child (e.g. one geometry referenced by two orphaned surfaces)
-      // can be reached by multiple RemoveUnreferencedChildTree cascades in the
-      // same pass - delete it only once.
       if(cacheEntry->IsGcDeleted())
         return;
       cacheEntry->MarkGcDeleted();

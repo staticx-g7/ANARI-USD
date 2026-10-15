@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -53,11 +52,11 @@ class UsdGroup : public UsdBridgedBaseObject<UsdGroup, UsdGroupData, UsdGroupHan
 
 typedef void (UsdBridge::*SetRefFunc)(UsdGroupHandle, const UsdSurfaceHandle*, uint64_t, bool, double);
 
-template<int ChildAnariTypeEnum, typename ChildAnariType, typename ChildUsdType, 
+template<int ChildAnariTypeEnum, typename ChildAnariType, typename ChildUsdType,
   typename ParentHandleType, typename ChildHandleType>
 void ManageRefArray(ParentHandleType parentHandle, UsdDataArray* childArray, bool refsTimeVarying, double timeStep,
   std::vector<ChildHandleType>& tempChildHandles, std::vector<int>& tempInstanceableValues,
-  void (UsdBridge::*SetRefFunc)(ParentHandleType, const ChildHandleType*, uint64_t, bool, double, const int*), void (UsdBridge::*DeleteRefFunc)(ParentHandleType, bool, double), 
+  void (UsdBridge::*SetRefFunc)(ParentHandleType, const ChildHandleType*, uint64_t, bool, double, const int*), void (UsdBridge::*DeleteRefFunc)(ParentHandleType, bool, double),
   UsdBridge* usdBridge, UsdLogInfo& logInfo, const char* typeErrorMsg)
 {
   bool validRefs = AssertArrayType(childArray, ChildAnariTypeEnum, logInfo, typeErrorMsg);

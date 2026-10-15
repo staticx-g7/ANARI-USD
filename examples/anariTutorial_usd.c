@@ -1,5 +1,4 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
 #include <errno.h>
 #include <assert.h>
@@ -11,7 +10,6 @@
 #include <alloca.h>
 #endif
 #include "anari/anari.h"
-// stb_image
 #include "stb_image_write.h"
 
 #include "anariTutorial_usd_common.h"
@@ -50,7 +48,6 @@ float transform[16] = {
   0.0f, 0.0f, 3.0f, 0.0f,
   2.0f, 3.0f, 4.0f, 1.0f };
 
-// triangle mesh data
 float vertex[] = { -1.0f,
   -1.0f,
   3.0f,
@@ -178,14 +175,12 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
   int useTexture = testParams.useTexture;
   int isTransparent = testParams.isTransparent;
 
-  // create and setup mesh
   ANARIGeometry mesh = anariNewGeometry(dev, "triangle");
   anariSetParameter(dev, mesh, "name", ANARI_STRING, "tutorialMesh");
 
   ANARIArray1D array = anariNewArray1D(dev, vertex, 0, 0, ANARI_FLOAT32_VEC3, 4);
   anariCommitParameters(dev, array);
   anariSetParameter(dev, mesh, "vertex.position", ANARI_ARRAY, &array);
-  //anariRelease(dev, array); // we are done using this handle
   *positionArray = array; // carry over to parent scope
 
   array = anariNewArray1D(dev, normal, 0, 0, ANARI_FLOAT32_VEC3, 4);
@@ -193,7 +188,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
   anariSetParameter(dev, mesh, "vertex.normal", ANARI_ARRAY, &array);
   anariRelease(dev, array);
 
-  // Set the vertex colors
   if (useVertexColors)
   {
     array = anariNewArray1D(dev, color, 0, 0, ANARI_FLOAT32_VEC4, 4);
@@ -224,7 +218,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
 
   anariCommitParameters(dev, mesh);
 
-  // Create a sampler
   ANARISampler sampler = 0;
   if(useTexture)
   {
@@ -236,7 +229,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
     anariSetParameter(dev, sampler, "wrapMode2", ANARI_STRING, wrapT);
 
     array = anariNewArray2D(dev, testData.textureData, 0, 0, ANARI_UINT8_VEC3, testData.textureSize[0], testData.textureSize[1]); // Make sure this matches numTexComponents
-    //anariSetParameter(dev, sampler, "usd::imageUrl", ANARI_STRING, texFile);
     anariSetParameter(dev, sampler, "image", ANARI_ARRAY, &array);
 
     anariCommitParameters(dev, sampler);
@@ -260,7 +252,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
     anariRelease(dev, array);
   }
 
-  // Create a material
   ANARIMaterial mat = anariNewMaterial(dev, "matte");
   anariSetParameter(dev, mat, "name", ANARI_STRING, "tutorialMaterial");
 
@@ -287,13 +278,12 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
     anariSetParameter(dev, mat, "opacity", ANARI_FLOAT32, &opacityConstant);
   }
 
-  int timevaryEmissive = 1; // Set emissive to timevarying (should appear in material stage under primstages/)
+  int timevaryEmissive = 1;
   anariSetParameter(dev, mat, "usd::timeVarying.emissive", ANARI_BOOL, &timevaryEmissive);
   anariCommitParameters(dev, mat);
   anariRelease(dev, sampler);
   anariRelease(dev, opacitySampler);
 
-  // put the mesh into a surface
   ANARISurface surface = anariNewSurface(dev);
   anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface");
   anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &mesh);
@@ -302,7 +292,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, mesh);
   anariRelease(dev, mat);
 
-  // put the surface into a group
   ANARIGroup group = anariNewGroup(dev);
   anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup");
   array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -312,7 +301,6 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, surface);
   anariRelease(dev, array);
 
-  // put the group into an instance (give the group a world transform)
   ANARIInstance instance = anariNewInstance(dev, "transform");
   anariSetParameter(dev, instance, "name", ANARI_STRING, "tutorialInstance");
   anariSetParameter(dev, instance, "transform", ANARI_FLOAT32_MAT4, transform);
@@ -325,14 +313,12 @@ ANARIInstance createMeshInstance(ANARIDevice dev, TestParameters_t testParams,
 ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
   GridData_t testData, ANARIArray1D* positionArray)
 {
-  // create and setup geom
   ANARIGeometry cones = anariNewGeometry(dev, "cone");
   anariSetParameter(dev, cones, "name", ANARI_STRING, "tutorialMesh");
 
   int sizeX = testData.gridSize[0], sizeY = testData.gridSize[1];
   int numVertices = sizeX*sizeY;
 
-  // Create a snake pattern through the vertices
   int numIndexTuples = sizeY*sizeX-1;
   int* indices = (int*)malloc(2*(numIndexTuples+1)*sizeof(int)); // Extra space for a dummy tuple
   int vertIdxTo = 0;
@@ -352,7 +338,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
   ANARIArray1D array = anariNewArray1D(dev, testData.gridVertex, 0, 0, ANARI_FLOAT32_VEC3, numVertices);
   anariCommitParameters(dev, array);
   anariSetParameter(dev, cones, "vertex.position", ANARI_ARRAY, &array);
-  //anariRelease(dev, array); // we are done using this handle
   *positionArray = array; // carry over to parent scope
 
   if(testParams.useIndices)
@@ -363,7 +348,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
     anariRelease(dev, array);
   }
 
-  // Set the vertex colors
   if (testParams.useVertexColors)
   {
     array = anariNewArray1D(dev, testData.gridColor, 0, 0, ANARI_FLOAT32_VEC3, numVertices);
@@ -380,7 +364,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
     anariRelease(dev, array);
   }
 
-  // Use per-primitive radii when not using indices, to test that codepath too
   array = anariNewArray1D(dev, testData.gridRadius, 0, 0, ANARI_FLOAT32, testParams.useIndices ? numVertices : numVertices/2); // per-primitive is half the vertex count
   anariCommitParameters(dev, array);
   anariSetParameter(dev, cones, testParams.useIndices ? "vertex.radius" : "primitive.radius", ANARI_ARRAY, &array);
@@ -388,7 +371,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
 
   anariCommitParameters(dev, cones);
 
-  // Create a material
   ANARIMaterial mat = anariNewMaterial(dev, "matte");
   anariSetParameter(dev, mat, "name", ANARI_STRING, "tutorialMaterial");
 
@@ -413,7 +395,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
 
   anariCommitParameters(dev, mat);
 
-  // put the mesh into a surface
   ANARISurface surface = anariNewSurface(dev);
   anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface");
   anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &cones);
@@ -422,7 +403,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, cones);
   anariRelease(dev, mat);
 
-  // put the surface into a group
   ANARIGroup group = anariNewGroup(dev);
   anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup");
   array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -432,7 +412,6 @@ ANARIInstance createConesInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, surface);
   anariRelease(dev, array);
 
-  // put the group into an instance (give the group a world transform)
   ANARIInstance instance = anariNewInstance(dev, "transform");
   anariSetParameter(dev, instance, "name", ANARI_STRING, "tutorialInstance");
   anariSetParameter(dev, instance, "group", ANARI_GROUP, &group);
@@ -452,7 +431,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
   ANARIArray1D array;
   ANARIGeometry protoMesh;
 
-  // The prototype mesh (instanced geometry)
   if(testParams.useGlyphMesh)
   {
     protoMesh = anariNewGeometry(dev, "triangle");
@@ -479,7 +457,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
     anariCommitParameters(dev, protoMesh);
   }
 
-  // The glyph geometry
   ANARIGeometry glyphs = anariNewGeometry(dev, "glyph");
   if(testParams.useGlyphMesh)
     anariSetParameter(dev, glyphs, "shapeGeometry", ANARI_GEOMETRY, &protoMesh);
@@ -494,7 +471,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
   array = anariNewArray1D(dev, testData.gridVertex, 0, 0, ANARI_FLOAT32_VEC3, numVertices);
   anariCommitParameters(dev, array);
   anariSetParameter(dev, glyphs, "vertex.position", ANARI_ARRAY, &array);
-  //anariRelease(dev, array); // we are done using this handle
   *positionArray = array; // carry over to parent scope
 
   if (testParams.useVertexColors)
@@ -517,7 +493,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
 
   anariCommitParameters(dev, glyphs);
 
-  // Create a material
   ANARIMaterial mat = anariNewMaterial(dev, "matte");
   anariSetParameter(dev, mat, "name", ANARI_STRING, "tutorialMaterial");
 
@@ -542,7 +517,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
 
   anariCommitParameters(dev, mat);
 
-  // put the mesh into a surface
   ANARISurface surface = anariNewSurface(dev);
   anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface");
   anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &glyphs);
@@ -551,7 +525,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, glyphs);
   anariRelease(dev, mat);
 
-  // put the surface into a group
   ANARIGroup group = anariNewGroup(dev);
   anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup");
   array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -561,7 +534,6 @@ ANARIInstance createGlyphsInstance(ANARIDevice dev, TestParameters_t testParams,
   anariRelease(dev, surface);
   anariRelease(dev, array);
 
-  // put the group into an instance (give the group a world transform)
   ANARIInstance instance = anariNewInstance(dev, "transform");
   anariSetParameter(dev, instance, "name", ANARI_STRING, "tutorialInstance");
   anariSetParameter(dev, instance, "group", ANARI_GROUP, &group);
@@ -576,12 +548,10 @@ void changeAndRender(ANARIDevice dev, ANARIArray1D positionArray, ANARIFrame fra
   float* positions = (float*)(anariMapArray(dev, positionArray));
   if(positions)
   {
-    // Save original values
     origPositions[0] = positions[0];
     origPositions[1] = positions[1];
     origPositions[2] = positions[2];
 
-    // Change one element to something recognizable
     positions[0] = 123.0f;
     positions[1] = 456.0f;
     positions[2] = 789.0f;
@@ -591,7 +561,6 @@ void changeAndRender(ANARIDevice dev, ANARIArray1D positionArray, ANARIFrame fra
   anariRenderFrame(dev, frame);
   anariFrameReady(dev, frame, ANARI_WAIT);
 
-  // Restore original position values so consecutive test runs are unaffected
   positions = (float*)(anariMapArray(dev, positionArray));
   if(positions)
   {
@@ -611,7 +580,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
 
   stbi_flip_vertically_on_write(1);
 
-  // image sizes
   int frameSize[2] = { 1024, 768 };
   int textureSize[2] = { 256, 256 };
   int gridSize[2] = { 100, 100 };
@@ -632,12 +600,9 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
   texData.textureSize[0] = textureSize[0];
   texData.textureSize[1] = textureSize[1];
 
-  // camera (scene-dependent placement, top-down looking into -X/-Z)
   float cam_up[] = {0.f, 1.f, 0.f};
   float cam_pos_mesh[] = {9.0f, 13.0f, 16.0f};
   float cam_view_mesh[] = {-1.0f, -1.5f, -1.0f};
-  // Grid spans ~[0,495] in X/Y around center (247.5, 247.5, 0). Framed close and
-  // aimed at that center so the whole grid nearly fills the 4:3 viewport.
   float cam_pos_grid[] = {336.7f, 414.4f, 505.8f};
   float cam_view_grid[] = {-0.16519f, -0.30907f, -0.93667f};
   float* cam_pos = (testParams.testType == TEST_MESH) ? cam_pos_mesh : cam_pos_grid;
@@ -654,7 +619,7 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
     return;
   }
 
-  int outputBinary = 1; // binary crate output: smaller on the wire, faster client parse
+  int outputBinary = 1;
   int outputOmniverse = 0;
   int connLogVerbosity = 0;
   int outputMaterial = 1;
@@ -674,13 +639,11 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
   anariSetParameter(dev, dev, "usd::output.mdlShader", ANARI_BOOL, &outputMdl);
   anariSetParameter(dev, dev, "usd::writeAtCommit", ANARI_BOOL, &testParams.writeAtCommit);
 
-  // commit device
   anariCommitParameters(dev, dev);
 
   printf("done!\n");
   printf("setting up camera...");
 
-  // create and setup camera
   ANARICamera camera = anariNewCamera(dev, "perspective");
   float aspect = frameSize[0] / (float)frameSize[1];
   anariSetParameter(dev, camera, "aspect", ANARI_FLOAT32, &aspect);
@@ -717,7 +680,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
 
   anariCommitParameters(dev, instance);
 
-  // create and setup light for Ambient Occlusion
   ANARILight light = anariNewLight(dev, "hdri");
   anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
   float lightRadiance = 1.0f;
@@ -729,7 +691,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
   anariRelease(dev, light);
   anariRelease(dev, array);
 
-  // put the instance in the world
   anariSetParameter(dev, world, "name", ANARI_STRING, "tutorialWorld");
   array = anariNewArray1D(dev, &instance, 0, 0, ANARI_INSTANCE, 1);
   anariCommitParameters(dev, array);
@@ -741,7 +702,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
 
   printf("done!\n");
 
-  // print out world bounds
   float worldBounds[6];
   if (anariGetProperty(dev,
     world,
@@ -764,16 +724,13 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
 
   printf("setting up renderer...");
 
-  // create renderer
   ANARIRenderer renderer =
     anariNewRenderer(dev, "hydra");
 
-// complete setup of renderer
   float bgColor[4] = { 1.f, 1.f, 1.f, 1.f }; // white
   anariSetParameter(dev, renderer, "backgroundColor", ANARI_FLOAT32_VEC4, bgColor);
   anariCommitParameters(dev, renderer);
 
-  // create and setup frame
   ANARIFrame frame = anariNewFrame(dev);
   ANARIDataType colFormat = ANARI_UFIXED8_RGBA_SRGB;
   ANARIDataType depthFormat = ANARI_FLOAT32;
@@ -789,7 +746,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
 
   printf("rendering frame...");
 
-  // render one frame
   anariRenderFrame(dev, frame);
   anariFrameReady(dev, frame, ANARI_WAIT);
 
@@ -800,7 +756,6 @@ void doTest(ANARILibrary lib, TestParameters_t testParams)
     changeAndRender(dev, positionArray, frame);
   anariRelease(dev, positionArray);
 
-  // final cleanups
   anariRelease(dev, renderer);
   anariRelease(dev, camera);
   anariRelease(dev, frame);
@@ -831,84 +786,68 @@ int main(int argc, const char **argv)
   testParams.isTransparent = 0;
   testParams.changePositionArray = 0;
 
-  // Test standard flow with textures
   testParams.useVertexColors = 0;
   testParams.useTexture = 1;
   doTest(lib, testParams);
 
-  // With vertex colors
   testParams.useVertexColors = 1;
   testParams.useTexture = 0;
   doTest(lib, testParams);
 
-  // With color constant
   testParams.useVertexColors = 0;
   testParams.useTexture = 0;
   doTest(lib, testParams);
 
-  // With changing position array
   testParams.changePositionArray = 1;
   doTest(lib, testParams);
   testParams.changePositionArray = 0;
 
-  // Transparency
   testParams.useVertexColors = 0;
   testParams.useTexture = 0;
   testParams.isTransparent = 1;
   doTest(lib, testParams);
 
-  // Transparency (vertex)
   testParams.useVertexColors = 1;
   testParams.useTexture = 0;
   doTest(lib, testParams);
 
-  // Transparency (sampler)
   testParams.useVertexColors = 0;
   testParams.useTexture = 1;
   doTest(lib, testParams);
 
-  // Test immediate mode writing
   testParams.writeAtCommit = 1;
   testParams.useVertexColors = 0;
   testParams.useTexture = 1;
   testParams.isTransparent = 0;
   doTest(lib, testParams);
 
-  // Cones tests
   testParams.testType = TEST_CONES;
   testParams.writeAtCommit = 0;
   testParams.useTexture = 0;
   testParams.useIndices = 0;
 
-  // With vertex colors
   testParams.useVertexColors = 1;
   doTest(lib, testParams);
 
-  // With color constant
   testParams.useVertexColors = 0;
   doTest(lib, testParams);
 
-  // Using indices (and vertex colors)
   testParams.useIndices = 1;
   testParams.useVertexColors = 1;
   doTest(lib, testParams);
 
-  // Glyphs tests
   testParams.testType = TEST_GLYPHS;
   testParams.writeAtCommit = 0;
   testParams.useTexture = 0;
   testParams.useIndices = 0;
   testParams.useGlyphMesh = 0;
 
-  // With vertex colors
   testParams.useVertexColors = 1;
   doTest(lib, testParams);
 
-  // With color constant
   testParams.useVertexColors = 0;
   doTest(lib, testParams);
 
-  // Using glyph mesh (and vertex colors)
   testParams.useGlyphMesh = 1;
   testParams.useVertexColors = 1;
   doTest(lib, testParams);

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -23,7 +22,7 @@ struct UsdSamplerData
 
   const UsdDataArray* imageData = nullptr;
 
-  UsdSharedString* inAttribute = nullptr; 
+  UsdSharedString* inAttribute = nullptr;
   UsdSharedString* imageUrl = nullptr;
   UsdSharedString* wrapS = nullptr;
   UsdSharedString* wrapT = nullptr;
@@ -68,5 +67,5 @@ class UsdSampler : public UsdBridgedBaseObject<UsdSampler, UsdSamplerData, UsdSa
     SamplerType samplerType = SAMPLER_UNKNOWN;
 
     bool perInstance = false; // Whether sampler is attached to a point instancer
-    bool instanceAttributeAttached = false; // Whether a value to inAttribute has been set which in USD is different between per-instance and regular geometries
+    bool instanceAttributeAttached = false;
 };

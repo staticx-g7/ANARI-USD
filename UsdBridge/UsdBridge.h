@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridge_h
 #define UsdBridge_h
@@ -22,11 +21,11 @@ class UsdBridge
     void SetExternalSceneStage(SceneStagePtr sceneStage);
     void SetEnableSaving(bool enableSaving);
     void SetSelectiveFileSaving(bool selectiveFileSaving);
-  
+
     bool OpenSession(UsdBridgeLogCallback logCallback, void* logUserData);
     bool GetSessionValid() const { return SessionValid; }
     void CloseSession();
-  
+
     bool CreateWorld(const char* name, UsdWorldHandle& handle);
     bool CreateInstance(const char* name, UsdInstanceHandle& handle);
     bool CreateGroup(const char* name, UsdGroupHandle& handle);
@@ -40,7 +39,7 @@ class UsdBridge
     bool CreateMaterial(const char* name, UsdMaterialHandle& handle);
     bool CreateSampler(const char* name, UsdSamplerHandle& handle, UsdBridgeSamplerData::SamplerType type);
     bool CreateCamera(const char* name, UsdCameraHandle& handle);
-  
+
     void DeleteWorld(UsdWorldHandle handle);
     void DeleteInstance(UsdInstanceHandle handle);
     void DeleteGroup(UsdGroupHandle handle);
@@ -52,7 +51,7 @@ class UsdBridge
     void DeleteMaterial(UsdMaterialHandle handle);
     void DeleteSampler(UsdSamplerHandle handle);
     void DeleteCamera(UsdCameraHandle handle);
-  
+
     void SetInstanceRefs(UsdWorldHandle world, const UsdInstanceHandle* instances, uint64_t numInstances, bool timeVarying, double timeStep, const int* instanceableValues);
     void SetGroupRef(UsdInstanceHandle instance, UsdGroupHandle group, bool timeVarying, double timeStep);
     void SetSurfaceRefs(UsdWorldHandle world, const UsdSurfaceHandle* surfaces, uint64_t numSurfaces, bool timeVarying, double timeStep, const int* instanceableValues);
@@ -66,7 +65,7 @@ class UsdBridge
     void SetSpatialFieldRef(UsdVolumeHandle volume, UsdSpatialFieldHandle field, double timeStep, double fieldTimeStep);
     void SetSamplerRefs(UsdMaterialHandle material, const UsdSamplerHandle* samplers, size_t numSamplers, double timeStep, const UsdSamplerRefData* samplerRefData);
     void SetPrototypeRefs(UsdGeometryHandle geometry, const UsdGeometryHandle* protoGeometries, size_t numProtoGeometries, double timeStep, double* protoTimeSteps);
-  
+
     void DeleteInstanceRefs(UsdWorldHandle world, bool timeVarying, double timeStep);
     void DeleteGroupRef(UsdInstanceHandle instance, bool timeVarying, double timeStep);
     void DeleteSurfaceRefs(UsdWorldHandle world, bool timeVarying, double timeStep);
@@ -80,7 +79,7 @@ class UsdBridge
     void DeleteMaterialRef(UsdSurfaceHandle surface, double timeStep);
     void DeleteSamplerRefs(UsdMaterialHandle material, double timeStep);
     void DeletePrototypeRefs(UsdGeometryHandle geometry, double timeStep);
-  
+
     void UpdateBeginEndTime(double timeStep);
     void SetInstanceTransform(UsdInstanceHandle instance, const float* transform, bool timeVarying, double timeStep);
     void SetGeometryData(UsdGeometryHandle geometry, const UsdBridgeMeshData& meshData, double timeStep);
@@ -93,14 +92,13 @@ class UsdBridge
     void SetLightData(UsdLightHandle light, const UsdBridgePointLightData& lightData, double timeStep);
     void SetLightData(UsdLightHandle light, const UsdBridgeDomeLightData& lightData, double timeStep);
     void SetCameraData(UsdCameraHandle camera, const UsdBridgeCameraData& cameraData, double timeStep);
-    void SetPrototypeData(UsdGeometryHandle geometry, const UsdBridgeInstancerRefData& instancerRefData); // UsdBridgeInstancerRefData::Shapes used to index into refs from last SetPrototypeRefs (if SHAPE_MESH)
+    void SetPrototypeData(UsdGeometryHandle geometry, const UsdBridgeInstancerRefData& instancerRefData);
 
     void ChangeMaterialInputAttributes(UsdMaterialHandle material, const MaterialInputAttribName* inputAttribs, size_t numInputAttribs, double timeStep, MaterialDMI timeVarying);
     void ChangeInAttribute(UsdSamplerHandle sampler, const char* newName, double timeStep, SamplerDMI timeVarying);
-  
+
     void SaveScene();
 
-    // Multi-frame rendering API
     void RegisterFrame(const char* frameName);
     void UnregisterFrame(const char* frameName);
     void UnregisterFrameByState(void* frameState); // Unregister by state pointer (for name changes)
@@ -118,21 +116,14 @@ class UsdBridge
     void ResetResourceUpdateState(); // Eg. clears all dirty flags on shared resources
 
     void GarbageCollect(); // Deletes all handles without parents (from Set<X>Refs)
-    // Remove unreferenced prim caches and purge their clips from the in-memory store
-    // + MemoryTracking. saveScene=true re-saves the scene after purging (explicit
-    // usd::garbageCollect param); false skips the save (per-renderFrame auto-cleanup,
-    // which already saved this frame).
     void PurgeUnreferencedPrims(bool saveScene);
 
     const char* GetPrimPath(UsdBridgeHandle* handle);
 
-    //
-    // Static parameter interface
-    //
 
-    static void SetConnectionLogVerbosity(int logVerbosity); // 0 <= logVerbosity <= USDBRIDGE_MAX_LOG_VERBOSITY, 0 is quietest
+    static void SetConnectionLogVerbosity(int logVerbosity);
 
-  protected: 
+  protected:
 
     template<typename GeomDataType>
     bool CreateGeometryTemplate(const char* name, UsdGeometryHandle& handle, const GeomDataType& geomData);
@@ -144,14 +135,14 @@ class UsdBridge
     void SetLightDataTemplate(UsdLightHandle light, const LightDataType& lightData, double timeStep);
 
     template<typename ParentHandleType, typename ChildHandleType>
-    void SetNoClipRefs(ParentHandleType parentHandle, const ChildHandleType* childHandles, uint64_t numChildren, 
+    void SetNoClipRefs(ParentHandleType parentHandle, const ChildHandleType* childHandles, uint64_t numChildren,
       const char* refPathExt, bool timeVarying, double timeStep, const int* instanceableValues = nullptr);
 
     template<typename ParentHandleType>
     void DeleteAllRefs(ParentHandleType parentHandle, const char* refPathExt, bool timeVarying, double timeStep);
 
     UsdBridgeInternals* Internals;
-  
+
     bool EnableSaving;
     bool SessionValid;
 };

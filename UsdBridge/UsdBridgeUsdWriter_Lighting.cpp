@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeUsdWriter.h"
 
@@ -71,21 +70,16 @@ namespace
     ClearAndSetUsdAttribute(lightPrim.GetIntensityAttr(), lightData.Intensity,
       timeEval.Eval(DMI::INTENSITY), timeVarHasChanged && !timeEval.IsTimeVarying(DMI::INTENSITY));
 
-    // Exposure shares the time-varying behavior of intensity since it is
-    // derived from the same source magnitude.
     ClearAndSetUsdAttribute(lightPrim.GetExposureAttr(), lightData.Exposure,
       timeEval.Eval(DMI::INTENSITY), timeVarHasChanged && !timeEval.IsTimeVarying(DMI::INTENSITY));
 
-    // Author normalize=true so 'intensity' has a renderer-independent
-    // physical meaning across light types: lux for DistantLight,
-    // candela for SphereLight, nits for DomeLight.
     lightPrim.GetNormalizeAttr().Set(true);
 
     return lightPrim;
   }
 }
 
-void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
     const UsdBridgeDirectionalLightData& lightData, double timeStep, bool timeVarHasChanged)
 {
   typedef typename UsdBridgeDirectionalLightData::DataMemberId DMI;
@@ -94,13 +88,11 @@ void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPa
   UsdLuxDistantLight lightPrim = UpdateUsdLightCommon<UsdBridgeDirectionalLightData, UsdLuxDistantLight>(
     timeVarStage, lightPrimPath, lightData, timeStep, timeVarHasChanged, timeEval);
 
-  // ANARI angularDiameter is in radians; UsdLuxDistantLight inputs:angle is in degrees.
   const float angleDeg = lightData.AngularDiameter * (180.0f / float(M_PI));
   ClearAndSetUsdAttribute(lightPrim.GetAngleAttr(), angleDeg,
     timeEval.Eval(DMI::ANGULAR_DIAMETER),
     timeVarHasChanged && !timeEval.IsTimeVarying(DMI::ANGULAR_DIAMETER));
 
-  // Set the direction transform via a viewmatrix
   GfVec3d eyePoint(0.0, 0.0, 0.0);
   GfVec3d fwdDir(lightData.Direction.Data);
   const double absX = std::fabs(lightData.Direction.Data[0]);
@@ -120,7 +112,7 @@ void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPa
     timeVarHasChanged && !timeEval.IsTimeVarying(DMI::DIRECTION));
 }
 
-void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
   const UsdBridgePointLightData& lightData, double timeStep, bool timeVarHasChanged)
 {
   typedef typename UsdBridgePointLightData::DataMemberId DMI;
@@ -142,7 +134,7 @@ void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPa
     timeVarHasChanged && !timeEval.IsTimeVarying(DMI::POSITION));
 }
 
-void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+void UsdBridgeUsdWriter::UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
   const UsdBridgeDomeLightData& lightData, double timeStep, bool timeVarHasChanged)
 {
   typedef typename UsdBridgeDomeLightData::DataMemberId DMI;

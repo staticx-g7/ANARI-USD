@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdDevice.h"
 #include "UsdBridgedBaseObject.h"
@@ -107,13 +106,11 @@ public:
   std::unique_ptr<UsdBridge> bridge;
   SceneStagePtr externalSceneStage{nullptr};
 
-  // MPI parallel support (KHR_DATA_PARALLEL_MPI)
   std::unique_ptr<UsdBridgeParallelController> mpiController;
 
   std::set<std::string> uniqueNames;
 };
 
-//---- Make sure to update clearDeviceParameters() on refcounted objects
 DEFINE_PARAMETER_MAP(UsdDevice,
   REGISTER_PARAMETER_MACRO("usd::serialize.hostName", ANARI_STRING, hostName)
   REGISTER_PARAMETER_MACRO("usd::serialize.location", ANARI_STRING, outputPath)
@@ -134,7 +131,6 @@ void UsdDevice::clearDeviceParameters()
   filterResetParam("usd::serialize.location");
   transferWriteToReadParams();
 }
-//----
 
 UsdDevice::UsdDevice()
   : UsdParameterizedBaseObject<UsdDevice, UsdDeviceData>(ANARI_DEVICE)
@@ -149,23 +145,18 @@ UsdDevice::UsdDevice(ANARILibrary library)
 
 UsdDevice::~UsdDevice()
 {
-  // Stop the background file-serving thread first: a joinable std::thread member
-  // destroyed with its owner calls std::terminate ("terminate called without an
-  // active exception" on MPI shutdown, where this thread exists on rank 0 / workers).
 #ifdef ANARI_USD_ENABLE_MPI
   fileServingActive_ = false;
   if (fileServingThread_.joinable())
     fileServingThread_.join();
 #endif
 
-  // Make sure no more references are held before cleaning up the device (and checking for memleaks)
-  clearCommitList(); 
+  clearCommitList();
 
   clearDeviceParameters(); // Release device parameters with object references
 
   clearResourceStringList(); // Do the same for resource string references
 
-  //internals->bridge->SaveScene(); //Uncomment to test cleanup of usd files.
 
 #ifdef CHECK_MEMLEAKS
   if(!allocatedObjects.empty() || !allocatedStrings.empty() || !allocatedRawMemory.empty())
@@ -185,7 +176,6 @@ UsdDevice::~UsdDevice()
   {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR, "Reference memleak check complete, no issues found.");
   }
-  //assert(allocatedObjects.empty());
 #endif
 }
 
@@ -216,8 +206,6 @@ void UsdDevice::reportStatus(void* source,
   const char *format,
   va_list* arglist)
 {
-  // Use a thread-local buffer: USD diagnostic callbacks may fire from any thread,
-  // so a shared member vector would cause data races.
   thread_local std::vector<char> messageBuffer;
 
   if(arglist)
@@ -259,7 +247,6 @@ void UsdDevice::filterSetParam(
 {
   if (strEquals(name, "usd::garbageCollect"))
   {
-    // SAFETY: Respect disableGarbageCollect flag
     if (disableGarbageCollect_)
     {
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
@@ -267,36 +254,33 @@ void UsdDevice::filterSetParam(
       return;
     }
     // Perform garbage collection on usd objects (needs to move into the user interface)
+
     if(internals->bridge)
       internals->bridge->GarbageCollect();
   }
   else if(strEquals(name, "usd::disableGarbageCollect"))
   {
-    // SAFETY: Disable GC to prevent orphaned prim cleanup from removing scene objects prematurely
     disableGarbageCollect_ = true;
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
       "USDRMNG: usd::disableGarbageCollect = true — GC disabled to prevent missing actors");
   }
   else if(strEquals(name, "usd::debug.sceneSummary"))
   {
-    // DEBUG: Dump full scene summary to logs
     if(internals->bridge)
     {
       std::stringstream ss;
       ss << "USDRMNG: === SCENE SUMMARY ===\n";
-      
-      // Commit list status
+
       ss << "CommitList: " << commitList.size() << " pending objects\n";
       ss << "RemoveList: " << removeList.size() << " marked for removal\n";
-      
+
       ss << "Worlds: " << commitList.size() << " objects in commit list\n";
        for (const auto& entry : commitList)
        {
          ss << "  - [" << (int)entry.first.ptr->getType() << "] " << entry.first.ptr->getType()
             << " commitData=" << entry.second << "\n";
        }
-      
-      // Memory store
+
       if (g_rankMemoryStore)
       {
         auto files = g_rankMemoryStore->ListFiles();
@@ -307,15 +291,14 @@ void UsdDevice::filterSetParam(
           ss << "  - " << f << " (" << (fe ? fe->size() : 0) << " bytes)\n";
         }
       }
-      
-      // Remove list
+
       if (!removeList.empty())
       {
         ss << "RemoveList objects:\n";
         for (auto* obj : removeList)
           ss << "  - [" << (int)obj->getType() << "] " << obj->getType() << "\n";
       }
-      
+
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR, "%s", ss.str().c_str());
     }
   }
@@ -323,7 +306,7 @@ void UsdDevice::filterSetParam(
   {
     internals->uniqueNames.clear();
   }
-  else if (strEquals(name, "usd::connection.logVerbosity")) // 0 <= verbosity <= USDBRIDGE_MAX_LOG_VERBOSITY, with USDBRIDGE_MAX_LOG_VERBOSITY being the loudest
+  else if (strEquals(name, "usd::connection.logVerbosity"))
   {
     if(type == ANARI_INT32)
       UsdBridge::SetConnectionLogVerbosity(*(reinterpret_cast<const int*>(mem)));
@@ -413,10 +396,6 @@ void UsdDevice::initializeBridge()
 
   bridgeInitAttempt = true;
 
-  // Scene-boundary cleanup: the in-memory file store is a process-lifetime global and is
-  // never otherwise cleared. When a fresh bridge is being created and the store still holds
-  // files from a previous scene/device, clear them so stale geometry is not re-served to
-  // clients after a scene replacement. (No-op for the very first device, whose store is empty.)
   if (g_rankMemoryStore && g_rankMemoryStore->GetFileCount() > 0)
   {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
@@ -440,7 +419,6 @@ void UsdDevice::initializeBridge()
     }
   }
 
-  // Geometry-commit auto-flush removed — USD + ZMQ now only triggered by renderFrame (camera pan)
   reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
       "usd::flush = renderFrame only (camera pan triggers USD save + ZMQ)");
 
@@ -472,7 +450,6 @@ void UsdDevice::initializeBridge()
     return;
   }
 
-  // MPI rank detection from environment variables
   #ifdef ANARI_USD_ENABLE_MPI
   const char* slurmprocid = getenv("SLURM_PROCID");
   const char* slurmntasks = getenv("SLURM_NTASKS");
@@ -540,7 +517,6 @@ void UsdDevice::initializeBridge()
                  "Memory store initialized for rank %d", mpiRank);
   }
   else if (mpiAvailable) {
-    // Single-rank MPI: still use IB IP for broker
     zmqBroker_ = std::make_unique<usd_bridge::ZmqBroker>(5555);
     if (!zmqBroker_->Initialize(0)) {
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_WARNING, ANARI_STATUS_UNKNOWN_ERROR,
@@ -854,14 +830,12 @@ UsdBridge* UsdDevice::getUsdBridge()
 
 void UsdDevice::renderFrame(ANARIFrame frame)
 {
-  // Always commit device changes if not initialized, otherwise no conversion can be performed.
   if(!bridgeInitAttempt)
     initializeBridge();
 
   if(!isInitialized())
     return;
 
-  // Log pre-flush state
   if (!commitList.empty())
   {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
@@ -870,9 +844,6 @@ void UsdDevice::renderFrame(ANARIFrame frame)
 
   flushCommitList();
 
-  // Ensure device usd::time is committed before USD save — this guarantees
-  // the bridge processes data at the correct timestep, preventing missing actors.
-  // This is required when the user does usd::writeAtCommit = false (default).
   transferWriteToReadParams();
   const UsdDeviceData& paramData = getReadParams();
   internals->bridge->UpdateBeginEndTime(paramData.timeStep);
@@ -882,56 +853,42 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   if(frame)
   {
     UsdFrame* frameObjPtr = AnariToUsdObjectPtr(frame);
-    
-    // Debug: log pre-save file state
+
     if (g_rankMemoryStore)
     {
       auto files = g_rankMemoryStore->ListFiles();
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
         "USDRMNG: renderFrame — MemoryStore has %zu files before save", files.size());
     }
-    
-    // JUSYNC: advance time-sample playback (no-op unless JUSYNC_ANIM_USD is
-    // set). Runs before the save so samples committed through
-    // SetGeometryData here get their clip stages saved and their RawGeo
-    // payloads DiffCapture'd, then dispatched by the notification block at
-    // the bottom of this function — same frame, same machinery as VTK.
+
     jusync_anim::Tick();
 
     frameObjPtr->saveUsd(this);
-    
-    // Debug: log post-save file state
+
     if (g_rankMemoryStore)
     {
       auto files = g_rankMemoryStore->ListFiles();
       reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
         "USDRMNG: renderFrame — MemoryStore has %zu files after save", files.size());
     }
-    
+
     frameObjPtr->renderFrame(this);
   }
 
-  // Auto-garbage-collect: purge prims no longer referenced by the current scene and
-  // their clips from the in-memory store, so a scene replacement (removing a dataset
-  // and adding a new one) does not keep re-serving stale geometry to clients. Runs
-  // after the frame save so the current scene's prims are already committed/referenced.
   if (!disableGarbageCollect_ && internals->bridge)
   {
     internals->bridge->PurgeUnreferencedPrims(/*saveScene=*/false);
   }
 
-  // Send ZMQ notifications to laptop client (only from rank 0 to avoid duplicates)
   #ifdef ANARI_USD_ENABLE_MPI
-  // Single-rank (non-MPI) startup creates no ZmqWorker — its DEALER only exists on
-  // MPI ranks > 0. The broker lives in this same process there, so push the same
-  // notifications through it directly; otherwise clients only ever learn about
-  // changes by polling the file list.
   const bool notifViaWorker = zmqWorker_ && zmqWorker_->IsConnected();
   const bool notifViaBroker = !notifViaWorker && zmqBroker_ && zmqBroker_->IsInitialized();
-  if ((notifViaWorker || notifViaBroker) && frame) {
-    uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
+  const bool bAnnounceFiles = (notifViaWorker || notifViaBroker) && frame;
+  // Declared outside the branch: rank 0 announces the commit after the barrier,
+  // which sits outside that branch too.
+  const uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  if (bAnnounceFiles) {
     auto sendFileV2 = [&](const std::string& name, uint64_t size,
                           const uint64_t* h, const uint64_t* oldh, bool hasOld) {
       if (notifViaWorker)
@@ -941,18 +898,10 @@ void UsdDevice::renderFrame(ANARIFrame frame)
             static_cast<uint32_t>(usd_bridge::ZmqMessageType::NOTIFY_FILE_UPDATE_V2), h, oldh, hasOld);
     };
 
-    // 1. First: notify ONLY about files that were actually written this renderFrame cycle.
-    //    DiffCapture holds entries for files whose CapturePreStore() was called right before
-    //    StoreFile(). Iterating DiffCapture instead of MemoryStore.ListFiles() avoids sending
-    //    stale V2 notifications for clips from previous frames (rank redistribution left them
-    //    in the store but they weren't written this cycle).
     auto& diffCap = GetDiffCapture();
     auto capturedFiles = diffCap.GetCapturedFilenames();
 
     if (capturedFiles.empty()) {
-      // Fallback: if DiffCapture is empty but MemoryStore has clips,
-      // still notify them (first frame after connection, no old hashes yet).
-      // These are genuinely new files — the client has never seen them.
       if (g_rankMemoryStore) {
         auto allFiles = g_rankMemoryStore->ListFiles();
         for (const auto& name : allFiles) {
@@ -965,9 +914,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         }
       }
     } else {
-      // Only V2-notify files that were actually written this frame
       for (const auto& name : capturedFiles) {
-        // Only geometry and image files get V2 notifications
         if (name.find("clips/") != 0 && name.find("images/") != 0) {
           diffCap.Commit(name);
           continue;
@@ -981,18 +928,20 @@ void UsdDevice::renderFrame(ANARIFrame frame)
         diffCap.Commit(name);
       }
     }
+  }
 
-    // 2. Barrier: wait for all ranks to finish sending their file notifications
-    //    This ensures CommitComplete arrives AFTER all V2 file notifications,
-    //    so the UE client's dedup sets are cleared at the right time.
+  // Every rank has to reach this. Left inside the branch above it deadlocked the
+  // job whenever a single rank had no worker connection or no frame: the ranks
+  // that entered waited forever for a peer that had skipped the call.
 #ifdef USD_DEVICE_MPI_ENABLED
-    if (internals->mpiController) {
-      internals->mpiController->Barrier();
-    }
+  if (internals->mpiController) {
+    internals->mpiController->Barrier();
+  }
 #endif
 
-    // 3. Last: only rank 0 sends the commit notification to avoid 16 duplicates
-    if (mpiRank == 0) {
+  // After the barrier, so a client cannot learn that a commit finished before
+  // every rank has announced the clips it contributes to that commit.
+  if (bAnnounceFiles && mpiRank == 0) {
       const char* frameFilename = "FullScene.usda";
       auto fileEntry = g_rankMemoryStore ? g_rankMemoryStore->GetFile(frameFilename) : nullptr;
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
@@ -1010,9 +959,7 @@ void UsdDevice::renderFrame(ANARIFrame frame)
       else
         zmqBroker_->SendSceneUpdateToClients(timestamp, sceneRevision, timestamp);
     }
-  }
 
-  // Serve file requests from laptop client
   if (zmqWorker_ && zmqWorker_->IsConnected()) {
     ServeFileRequests();
   }
@@ -1099,7 +1046,6 @@ void UsdDevice::flushCommitList()
 {
   lockCommitList = true;
 
-  // Log commit list summary before processing
   size_t totalCount = commitList.size();
   size_t perTypeCounts[16] = {0}; // Track per-type counts
   for (const auto& entry : commitList)
@@ -1283,7 +1229,7 @@ int UsdDevice::getProperty(ANARIObject object,
     }
     else if (strEquals(name, "geometryMaxIndex") && type == ANARI_UINT64)
     {
-      uint64_t maxIndex = std::numeric_limits<uint64_t>::max(); // Only restricted to int for UsdGeomMesh: GetFaceVertexIndicesAttr() takes a VtArray<int>
+      uint64_t maxIndex = std::numeric_limits<uint64_t>::max();
       writeToVoidP(mem, maxIndex);
       return 1;
     }
@@ -1632,10 +1578,6 @@ void UsdDevice::ServeFileRequests()
     }
 
     if (request.message_type == static_cast<uint32_t>(ZmqMessageType::REQ_GET_FRAME)) {
-      // Frame = every file currently in this rank's store, streamed under the
-      // single request_id, and terminated by a ZmqFileComplete whose filename
-      // is "__frame_complete__" (same marker convention the rank-0 broker
-      // uses; reuses existing message types, so no protocol change).
       if (g_rankMemoryStore) {
         const size_t kMaxChunkSize = 128 * 1024 * 1024;
         size_t frameChunkSize = (request.chunk_size > 0)
@@ -1657,8 +1599,6 @@ void UsdDevice::ServeFileRequests()
           zmqWorker_->SendFileComplete(request.request_id, filename, total);
           ++filesSent;
         }
-        // Terminal marker: the broker keeps the client mapping alive until this
-        // arrives, then drops it (see frame_requests_ in the broker loop).
         zmqWorker_->SendFileComplete(request.request_id, "__frame_complete__",
             static_cast<uint64_t>(filesSent));
       }
@@ -1677,9 +1617,6 @@ void UsdDevice::ServeFileRequests()
     }
 
     size_t totalSize = fileEntry->data.size();
-    // Honor the client's preferred chunk size (larger chunks = fewer ZMQ
-    // round-trips through the broker loop). Fall back to the default, and cap
-    // at 128MB against a malformed request.
     const size_t kMaxChunkSize = 128 * 1024 * 1024;
     size_t chunkSize = (request.chunk_size > 0)
         ? std::min<size_t>(request.chunk_size, kMaxChunkSize)
@@ -1713,21 +1650,14 @@ void UsdDevice::NotifyFrameReady(double timestep)
 }
 #endif
 
-// -----------------------------------------------------------------------------
-// Event-driven flush on geometry commit
-// Called from commitParameters() when ParaView commits geometry data.
-// Debounced: only fires once per 500ms window to batch multiple geometry commits.
-// -----------------------------------------------------------------------------
 
 void UsdDevice::FlushSceneAndNotify()
 {
   if (!isInitialized()) return;
 
-  // Debounce: skip if we flushed recently (ParaView commits multiple objects per frame)
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFlushTime_).count();
   if (elapsed < 500) {
-    // Log the debounce skip to help diagnosis
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
       "USDRMNG: FlushSceneAndNotify — debounced (%ldms < 500ms), will flush in %ldms",
       (long)elapsed, (long)(500 - elapsed));
@@ -1735,18 +1665,15 @@ void UsdDevice::FlushSceneAndNotify()
   }
   lastFlushTime_ = now;
 
-  // Flush pending commit list
   if (!commitList.empty()) {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
       "USDRMNG: FlushSceneAndNotify — flushing %zu pending objects", commitList.size());
     flushCommitList();
   }
 
-  // Save USD scene to disk
   internals->bridge->ResetResourceUpdateState();
   internals->bridge->SaveScene();
 
-  // Debug: log MemoryStore file count
   if (g_rankMemoryStore)
   {
     auto files = g_rankMemoryStore->ListFiles();
@@ -1755,19 +1682,16 @@ void UsdDevice::FlushSceneAndNotify()
   }
 
 #ifdef ANARI_USD_ENABLE_MPI
-  // Send ZMQ notifications
   if (zmqWorker_ && zmqWorker_->IsConnected()) {
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    // 1. First: notify about clip files and image files that changed on this rank
     if (g_rankMemoryStore) {
       auto allFiles = g_rankMemoryStore->ListFiles();
       for (const auto& name : allFiles) {
         if (name.find("clips/") == 0 || name.find("images/") == 0) {
           auto entry = g_rankMemoryStore->GetFile(name);
           if (entry) {
-            // DIFF-CAPTURE-HOOK: send old-hash-aware notification
             const uint64_t* oldHash = GetDiffCapture().GetOldHash128(name);
             bool hasOld = GetDiffCapture().HasOldEntry(name);
             zmqWorker_->SendFileNotificationV2(name, entry->data.size(), timestamp, entry->hash128, oldHash, hasOld);
@@ -1777,16 +1701,12 @@ void UsdDevice::FlushSceneAndNotify()
       }
     }
 
-    // 2. Barrier: wait for all ranks to finish sending their file notifications
-    //    This ensures CommitComplete arrives AFTER all V2 file notifications,
-    //    so the UE client's dedup sets are cleared at the right time.
 #ifdef USD_DEVICE_MPI_ENABLED
     if (internals->mpiController) {
       internals->mpiController->Barrier();
     }
 #endif
 
-    // 3. Last: only rank 0 sends commit notification to avoid duplicates
     if (mpiRank == 0 && g_rankMemoryStore) {
       auto fileEntry = g_rankMemoryStore->GetFile("FullScene.usda");
       uint64_t fileSize = fileEntry ? fileEntry->data.size() : 0;
@@ -1798,7 +1718,6 @@ void UsdDevice::FlushSceneAndNotify()
       zmqWorker_->SendCommitSceneUpdate(timestamp, sceneRevision, timestamp);
     }
 
-    // Serve any pending file requests
     ServeFileRequests();
   }
 #endif

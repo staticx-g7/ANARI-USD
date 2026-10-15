@@ -3,17 +3,6 @@
 #include <iostream>
 #include <chrono>
 
-// ============================================================
-//  UsdBridgeDiffCapture — standalone old-state capture
-// ============================================================
-// Only depends on: <string>, <vector>, <map>, <mutex>, UsdBridgeMemoryStore.h
-//
-// Lifecycle:
-//  1. TrackStageMemory() calls CapturePreStore(filename) BEFORE StoreFile
-//  2. StoreFile overwrites the current data
-//  3. Notification handler reads GetOldEntry() / GetOldHash128()
-//  4. Commit() clears old data for that filename
-// ============================================================
 
 UsdBridgeDiffCapture& GetDiffCapture() {
     static UsdBridgeDiffCapture instance;
@@ -21,13 +10,11 @@ UsdBridgeDiffCapture& GetDiffCapture() {
 }
 
 void UsdBridgeDiffCapture::CapturePreStore(const std::string& filename) {
-    // Read the current (about-to-be-overwritten) entry from memory store
     if (!g_rankMemoryStore)
         return;
 
     auto oldEntry = g_rankMemoryStore->GetFile(filename);
     if (!oldEntry) {
-        // File doesn't exist yet in store — nothing to capture
         return;
     }
 
@@ -40,7 +27,6 @@ void UsdBridgeDiffCapture::CapturePreStore(const std::string& filename) {
     entry.oldHash128[0] = oldEntry->hash128[0];
     entry.oldHash128[1] = oldEntry->hash128[1];
 
-    // Copy old data for diff engine (JUSYNC can request it over ZMQ)
     entry.oldData.reserve(oldEntry->data.size());
     entry.oldData.assign(oldEntry->data.begin(), oldEntry->data.end());
 

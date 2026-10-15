@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdSampler.h"
 #include "UsdAnari.h"
@@ -7,7 +6,7 @@
 #include "UsdDataArray.h"
 #include "UsdBridgeMemoryStore.h"
 
-DEFINE_PARAMETER_MAP(UsdSampler, 
+DEFINE_PARAMETER_MAP(UsdSampler,
   REGISTER_PARAMETER_MACRO("name", ANARI_STRING, name)
   REGISTER_PARAMETER_MACRO("usd::name", ANARI_STRING, usdName)
   REGISTER_PARAMETER_MACRO("usd::time", ANARI_FLOAT64, timeStep)
@@ -24,7 +23,7 @@ DEFINE_PARAMETER_MAP(UsdSampler,
 constexpr UsdSampler::ComponentPair UsdSampler::componentParamNames[]; // Workaround for C++14's lack of inlining constexpr arrays
 
 namespace
-{ 
+{
   UsdBridgeSamplerData::WrapMode ANARIToUsdBridgeWrapMode(const char* anariWrapMode)
   {
     UsdBridgeSamplerData::WrapMode usdWrapMode = UsdBridgeSamplerData::WrapMode::BLACK;
@@ -73,22 +72,21 @@ void UsdSampler::remove(UsdDevice* device)
   applyRemoveFunc(device, &UsdBridge::DeleteSampler);
 }
 
-void UsdSampler::updateBoundParameters(bool boundToInstance, const UsdSharedString*const* attribNames, size_t numAttribNames, UsdDevice* device) 
-{ 
+void UsdSampler::updateBoundParameters(bool boundToInstance, const UsdSharedString*const* attribNames, size_t numAttribNames, UsdDevice* device)
+{
   UsdBridge* usdBridge = device->getUsdBridge();
 
   if(!usdHandle.value)
     return;
-  
+
   perInstance = boundToInstance;
 
   UsdLogInfo logInfo(device, this, ANARI_SAMPLER, getName());
 
-  // Fix up the position attribute
   const UsdSamplerData& paramData = getReadParams();
   const char* inAttribName = UsdSharedString::c_str(paramData.inAttribute);
-  
-  auto [hasMeshDependentAttribs, meshDependentAttribName] = 
+
+  auto [hasMeshDependentAttribs, meshDependentAttribName] =
     GetGeomDependentAttributeName(inAttribName, perInstance, device->getReadParams().useDisplayColorOpacity, attribNames, numAttribNames, logInfo);
 
   if(hasMeshDependentAttribs)
@@ -98,9 +96,9 @@ void UsdSampler::updateBoundParameters(bool boundToInstance, const UsdSharedStri
 
     UsdBridgeSamplerData::DataMemberId timeVarying;
     setSamplerTimeVarying(timeVarying);
-    
+
     usdBridge->ChangeInAttribute(usdHandle, meshDependentAttribName, dataTimeStep, timeVarying);
-  } 
+  }
 }
 
 bool UsdSampler::deferCommit(UsdDevice* device)
@@ -118,8 +116,8 @@ bool UsdSampler::doCommitData(UsdDevice* device)
 
   const UsdSamplerData& paramData = getReadParams();
 
-  UsdBridgeSamplerData::SamplerType type = 
-    (samplerType == SAMPLER_1D ? UsdBridgeSamplerData::SamplerType::SAMPLER_1D : 
+  UsdBridgeSamplerData::SamplerType type =
+    (samplerType == SAMPLER_1D ? UsdBridgeSamplerData::SamplerType::SAMPLER_1D :
       (samplerType == SAMPLER_2D ? UsdBridgeSamplerData::SamplerType::SAMPLER_2D :
         UsdBridgeSamplerData::SamplerType::SAMPLER_3D
         )
@@ -129,13 +127,11 @@ bool UsdSampler::doCommitData(UsdDevice* device)
   if (!usdHandle.value)
     isNew = usdBridge->CreateSampler(getName(), usdHandle, type);
 
-  // Force update in memory-only mode: Catalyst may update sampler/texture data in-place
-  // without changing the pointer, so memcmp sees no change. Re-read data each frame.
   if (g_rankMemoryStore) paramChanged = true;
 
   if (paramChanged || isNew)
   {
-    if (paramData.inAttribute && (std::strlen(UsdSharedString::c_str(paramData.inAttribute)) > 0) 
+    if (paramData.inAttribute && (std::strlen(UsdSharedString::c_str(paramData.inAttribute)) > 0)
       && (paramData.imageUrl || paramData.imageData))
     {
       bool supportedImage = true;
@@ -145,7 +141,7 @@ bool UsdSampler::doCommitData(UsdDevice* device)
         numComponents = static_cast<int>(anari::componentsOf(paramData.imageData->getType()));
 
         if(numComponents > 4)
-          device->reportStatus(this, ANARI_SAMPLER, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT, 
+          device->reportStatus(this, ANARI_SAMPLER, ANARI_SEVERITY_WARNING, ANARI_STATUS_INVALID_ARGUMENT,
             "UsdSampler '%s' image data has more than 4 components. Anything above the 4th component will be ignored.", paramData.imageData->getName());
       }
 
@@ -160,7 +156,7 @@ bool UsdSampler::doCommitData(UsdDevice* device)
         double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
 
         samplerData.InAttribute = AnariAttributeToUsdName(UsdSharedString::c_str(paramData.inAttribute), perInstance, device->getReadParams().useDisplayColorOpacity, logInfo);
-      
+
         if(paramData.imageUrl)
         {
           samplerData.ImageUrl = UsdSharedString::c_str(paramData.imageUrl);
@@ -187,7 +183,7 @@ bool UsdSampler::doCommitData(UsdDevice* device)
     }
     else
     {
-      device->reportStatus(this, ANARI_SAMPLER, ANARI_SEVERITY_ERROR, ANARI_STATUS_INVALID_ARGUMENT, 
+      device->reportStatus(this, ANARI_SAMPLER, ANARI_SEVERITY_ERROR, ANARI_STATUS_INVALID_ARGUMENT,
         "UsdSampler '%s' commit failed: missing either the 'inAttribute', or both the 'image' and 'usd::imageUrl' parameter", getName());
     }
 

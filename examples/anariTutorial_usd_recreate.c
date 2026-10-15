@@ -1,5 +1,4 @@
 // Copyright 2021 NVIDIA Corporation
-// SPDX-License-Identifier: Apache-2.0
 
 #include <errno.h>
 #include <stdint.h>
@@ -10,7 +9,6 @@
 #include <alloca.h>
 #endif
 #include "anari/anari.h"
-// stb_image
 #include "stb_image_write.h"
 
 #include "anariTutorial_usd_common.h"
@@ -21,7 +19,6 @@ int main(int argc, const char **argv)
 
   stbi_flip_vertically_on_write(1);
 
-  // image size
   int frameSize[2] = { 1024, 768 };
   int textureSize[2] = { 256, 256 };
 
@@ -29,7 +26,6 @@ int main(int argc, const char **argv)
   int numTexComponents = 3;
   textureData = generateTexture(textureSize, numTexComponents);
 
-  // camera
   float cam_pos[] = {9.0f, 13.0f, 16.0f};
   float cam_up[] = {0.f, 1.f, 0.f};
   float cam_view[] = {-1.0f, -1.5f, -1.0f};
@@ -40,7 +36,6 @@ int main(int argc, const char **argv)
     0.0f, 0.0f, 3.0f, 0.0f,
     2.0f, 3.0f, 4.0f, 1.0f };
 
-  // triangle mesh data
   float vertex[] = {-1.0f,
       -1.0f,
       3.0f,
@@ -123,7 +118,7 @@ int main(int argc, const char **argv)
       return 1;
     }
 
-    int outputBinary = 1; // binary crate output: smaller on the wire, faster client parse
+    int outputBinary = 1;
     int outputOmniverse = 0;
     int connLogVerbosity = 0;
     int outputMaterial = 1;
@@ -143,13 +138,11 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, dev, "usd::serialize.newSession", ANARI_BOOL, &createNewSession);
     anariSetParameter(dev, dev, "usd::output.material", ANARI_BOOL, &outputMaterial);
 
-    // commit device
     anariCommitParameters(dev, dev);
 
     printf("done!\n");
     printf("setting up camera...");
 
-    // create and setup camera
     ANARICamera camera = anariNewCamera(dev, "perspective");
     float aspect = frameSize[0] / (float)frameSize[1];
     anariSetParameter(dev, camera, "aspect", ANARI_FLOAT32, &aspect);
@@ -163,7 +156,6 @@ int main(int argc, const char **argv)
 
     ANARIWorld world = anariNewWorld(dev);
 
-    // create and setup mesh
     ANARIGeometry mesh = anariNewGeometry(dev, "triangle");
     anariSetParameter(dev, mesh, "name", ANARI_STRING, "tutorialMesh");
 
@@ -177,7 +169,6 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, mesh, "vertex.normal", ANARI_ARRAY, &array);
     anariRelease(dev, array);
 
-    // Set the vertex colors
     if (useVertexColors)
     {
       array = anariNewArray1D(dev, color, 0, 0, ANARI_FLOAT32_VEC4, 4);
@@ -191,10 +182,6 @@ int main(int argc, const char **argv)
     anariSetParameter(dev, mesh, "vertex.attribute0", ANARI_ARRAY, &array);
     anariRelease(dev, array);
 
-    //array = anariNewArray1D(dev, sphereSizes, 0, 0, ANARI_FLOAT32, 4);
-    //anariCommitParameters(dev, array);
-    //anariSetParameter(dev, mesh, "vertex.radius", ANARI_ARRAY, &array);
-    //anariRelease(dev, array);
 
     array = anariNewArray1D(dev, indices, 0, 0, ANARI_INT32_VEC3, 2);
     anariCommitParameters(dev, array);
@@ -205,17 +192,12 @@ int main(int argc, const char **argv)
 
     ANARIMaterial mat;
 
-    // The second iteration should not create samplers/materials and not add it to the surface,
-    // so the material prim itself will remain untouched in the pre-existing stage,
-    // while its reference will be removed from the newly committed surface prim
     if(anariPass == 0)
     {
       mat = anariNewMaterial(dev, "matte");
       ANARISampler sampler = anariNewSampler(dev, "image2D");
 
-      // Create a sampler
       anariSetParameter(dev, sampler, "name", ANARI_STRING, "tutorialSampler");
-      //anariSetParameter(dev, sampler, "usd::imageUrl", ANARI_STRING, texFile);
       array = anariNewArray2D(dev, textureData, 0, 0, ANARI_UINT8_VEC3, textureSize[0], textureSize[1]); // Make sure this matches numTexComponents
       anariSetParameter(dev, sampler, "image", ANARI_ARRAY, &array);
       anariSetParameter(dev, sampler, "inAttribute", ANARI_STRING, "attribute0");
@@ -224,7 +206,6 @@ int main(int argc, const char **argv)
       anariCommitParameters(dev, sampler);
       anariRelease(dev, array);
 
-      // Create a material
       anariSetParameter(dev, mat, "name", ANARI_STRING, "tutorialMaterial");
 
       float opacity = 1.0f;
@@ -240,7 +221,6 @@ int main(int argc, const char **argv)
       anariRelease(dev, sampler);
     }
 
-    // put the mesh into a surface
     ANARISurface surface = anariNewSurface(dev);
     anariSetParameter(dev, surface, "name", ANARI_STRING, "tutorialSurface");
     anariSetParameter(dev, surface, "geometry", ANARI_GEOMETRY, &mesh);
@@ -251,7 +231,6 @@ int main(int argc, const char **argv)
     if (anariPass == 0)
       anariRelease(dev, mat);
 
-    // put the surface into a group
     ANARIGroup group = anariNewGroup(dev);
     anariSetParameter(dev, group, "name", ANARI_STRING, "tutorialGroup");
     array = anariNewArray1D(dev, &surface, 0, 0, ANARI_SURFACE, 1);
@@ -261,14 +240,12 @@ int main(int argc, const char **argv)
     anariRelease(dev, surface);
     anariRelease(dev, array);
 
-    // put the group into an instance (give the group a world transform)
     ANARIInstance instance = anariNewInstance(dev, "transform");
     anariSetParameter(dev, instance, "name", ANARI_STRING, "tutorialInstance");
     anariSetParameter(dev, instance, "transform", ANARI_FLOAT32_MAT4, transform);
     anariSetParameter(dev, instance, "group", ANARI_GROUP, &group);
     anariRelease(dev, group);
 
-    // create and setup light for Ambient Occlusion
     ANARILight light = anariNewLight(dev, "hdri");
     anariSetParameter(dev, light, "name", ANARI_STRING, "tutorialLight");
     float lightRadiance = 1.0f;
@@ -282,7 +259,6 @@ int main(int argc, const char **argv)
 
     anariCommitParameters(dev, instance);
 
-    // put the instance in the world
     anariSetParameter(dev, world, "name", ANARI_STRING, "tutorialWorld");
     array = anariNewArray1D(dev, &instance, 0, 0, ANARI_INSTANCE, 1);
     anariCommitParameters(dev, array);
@@ -294,7 +270,6 @@ int main(int argc, const char **argv)
 
     printf("done!\n");
 
-    // print out world bounds
     float worldBounds[6];
     if (anariGetProperty(dev,
       world,
@@ -317,16 +292,13 @@ int main(int argc, const char **argv)
 
     printf("setting up renderer...");
 
-    // create renderer
     ANARIRenderer renderer =
       anariNewRenderer(dev, "hydra");
 
-    // complete setup of renderer
     float bgColor[4] = { 1.f, 1.f, 1.f, 1.f }; // white
     anariSetParameter(dev, renderer, "backgroundColor", ANARI_FLOAT32_VEC4, bgColor);
     anariCommitParameters(dev, renderer);
 
-    // create and setup frame
     ANARIFrame frame = anariNewFrame(dev);
     ANARIDataType colFormat = ANARI_UFIXED8_RGBA_SRGB;
     ANARIDataType depthFormat = ANARI_FLOAT32;
@@ -342,14 +314,12 @@ int main(int argc, const char **argv)
 
     printf("rendering frame...");
 
-    // render one frame
     anariRenderFrame(dev, frame);
     anariFrameReady(dev, frame, ANARI_WAIT);
 
     printf("done!\n");
     printf("\ncleaning up objects...");
 
-    // final cleanups
     anariRelease(dev, renderer);
     anariRelease(dev, camera);
     anariRelease(dev, frame);

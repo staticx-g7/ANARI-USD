@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeAnimPlayer.h"
 
@@ -16,12 +15,6 @@
 #include <string>
 #include <vector>
 
-// JUSYNC time-sample accumulation + replay, see UsdBridgeAnimPlayer.h.
-//
-// Commits that VTK re-issues for a time-varying single prim (all stamped
-// t=0) are accumulated here as deep-copied timeline samples keyed by payload
-// checksum, published live through the per-timestep store machinery, and
-// replayed on a wall-clock pump once ParaView stops committing.
 namespace jusync_anim
 {
 
@@ -33,9 +26,11 @@ namespace
     UsdGeometryHandle Geometry{};
     std::string Name;
     int64_t SpheresIdx = -1;
+    int Uniq = -1;
   };
 
   // One timeline frame. Owns every byte it publishes.
+
   struct Sample
   {
     UsdBridgeInstancerData Data{}; // repointed into Buffers/AttrNames
@@ -49,7 +44,8 @@ namespace
   struct Group
   {
     std::string Prefix;
-    std::vector<Part*> Members; // live VTK geometries, registration order
+    std::vector<Part*> Members; // live VTK geometries we own samples for, registration order
+    std::vector<Part*> AllMembers;
 
     std::deque<Sample> Samples; // accumulated timeline (device-owned)
     size_t Seq = 0;             // monotonic sample counter -> synthetic time
@@ -71,8 +67,6 @@ namespace
 
   thread_local bool g_inPublish = false; // sample -> normal store path
 
-  // Samples captured but not yet stored: published from Tick() so the store
-  // never runs re-entrantly inside VTK's own SetGeometryData call.
   std::vector<Group*> g_pending;
 
   std::chrono::steady_clock::time_point g_clock{};
@@ -82,10 +76,6 @@ namespace
   size_t g_maxSamples = 32;
   bool g_envRead = false;
 
-  // Minimum wall-clock time between ACCEPTED frames (0 = unlimited). VTK can
-  // commit far faster than the store/notify path can service while an animation
-  // is played/looped; frames inside this window are dropped before Capture, so
-  // a fast play loop costs no deep copy and no store/notify work.
   double g_publishDt = 0.0;
   std::chrono::steady_clock::time_point g_lastAccepted{};
 
@@ -173,10 +163,9 @@ namespace
     return h;
   }
 
-  // "<prefix>_spheres_<n>" (optionally with a VTK uniquifier suffix "_u<k>")
-  // -> split. Returns false for any other name.
-  bool ParseSpheresName(const char* name, std::string& prefix, int64_t& idx)
+  bool ParseSpheresName(const char* name, std::string& prefix, int64_t& idx, int& OutUniq)
   {
+    OutUniq = -1;
     if(!name)
       return false;
     const std::string s(name);
@@ -189,14 +178,17 @@ namespace
     size_t end = digits;
     while(end < s.size() && s[end] >= '0' && s[end] <= '9')
       ++end;
-    // tolerate trailing "_u1", "_u2", ... display-rebuild uniquifiers
     if(end < s.size() && s.compare(end, 2, "_u") == 0)
     {
       size_t u = end + 2;
       if(u >= s.size())
         return false;
+      const size_t uniqStart = u;
       while(u < s.size() && s[u] >= '0' && s[u] <= '9')
         ++u;
+      if(u == uniqStart)
+        return false;
+      OutUniq = static_cast<int>(strtol(s.c_str() + uniqStart, nullptr, 10));
       end = u;
     }
     if(end != s.size())
@@ -206,9 +198,6 @@ namespace
     return true;
   }
 
-  // Only point clouds qualify: float3 points, no per-instance transforms.
-  // Per-instance Scales (sphere radius!) and InstanceIds (VTK's sphere mapper
-  // always sends both) DO ride the copy.
   bool Streamable(const UsdBridgeInstancerData& d)
   {
     const bool scalesOk = !d.Scales || FloatComponents(d.ScalesType) > 0;
@@ -229,7 +218,6 @@ namespace
     return c ? n * c * sizeof(float) : 0;
   }
 
-  // Checksum over everything the sample will carry.
   uint64_t ChecksumOf(const UsdBridgeInstancerData& d)
   {
     uint64_t h = 0xcbf29ce484222325ULL;
@@ -251,8 +239,6 @@ namespace
     return h;
   }
 
-  // Deep-copy the commit into a device-owned Sample (arrays die with the
-  // VTK actor, the timeline must outlive it).
   void Capture(Sample& s, const UsdBridgeInstancerData& d, uint64_t cksum, double time)
   {
     const uint64_t n = d.NumPoints;
@@ -345,13 +331,17 @@ namespace
     return *g;
   }
 
-  // Re-publish one accumulated sample through the normal store path, under
-  // the first live member's prim key (clients see a single time-varying prim).
   void Publish(Group& g, Sample& s, const char* tag)
   {
-    if(g.Members.empty())
+    Part* key = nullptr;
+    for(Part* m : g.Members)
+      if(m && (!key || m->Uniq > key->Uniq))
+        key = m;
+    if(!key)
       return;
-    Part* key = g.Members.front();
+    if(key != g.Members.front())
+      fprintf(stderr, "[JusyncAnim] publish key '%s' (uniq %d) over first member '%s'\n",
+          key->Name.c_str(), key->Uniq, g.Members.front()->Name.c_str());
     fprintf(stderr, "[JusyncAnim] %s '%s' t=%.6g pts=%llu ck=%016llx\n", tag,
         g.Prefix.c_str(), s.Time, (unsigned long long)s.Data.NumPoints,
         (unsigned long long)s.Checksum);
@@ -380,8 +370,28 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
 
   std::string prefix;
   int64_t idx = -1;
-  if(!ParseSpheresName(primName, prefix, idx))
+  int uniq = -1;
+  if(!ParseSpheresName(primName, prefix, idx, uniq))
     return false; // not an instancer part - normal path
+
+  std::lock_guard<std::recursive_mutex> lk(g_mutex);
+  ReadEnv();
+
+  Part* p = FindPart(geometry.value);
+  if(!p)
+  {
+    p = new Part();
+    p->Bridge = bridge;
+    p->Geometry = geometry;
+    p->Name = primName ? primName : "";
+    p->SpheresIdx = idx;
+    p->Uniq = uniq;
+    g_parts.push_back(p);
+  }
+
+  Group& g = FindGroup(prefix);
+  if(std::find(g.AllMembers.begin(), g.AllMembers.end(), p) == g.AllMembers.end())
+    g.AllMembers.push_back(p);
 
   if(!Streamable(data))
   {
@@ -395,32 +405,11 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     return false; // exotic instancer - normal path keeps old behavior
   }
 
-  std::lock_guard<std::recursive_mutex> lk(g_mutex);
-  ReadEnv();
-
-  Part* p = FindPart(geometry.value);
-  if(!p)
-  {
-    p = new Part();
-    p->Bridge = bridge;
-    p->Geometry = geometry;
-    p->Name = primName ? primName : "";
-    p->SpheresIdx = idx;
-    g_parts.push_back(p);
-  }
-
-  Group& g = FindGroup(prefix);
   if(std::find(g.Members.begin(), g.Members.end(), p) == g.Members.end())
     g.Members.push_back(p);
 
   const uint64_t cksum = ChecksumOf(data);
 
-  // Every distinct payload is the next time step. VTK/ParaView re-commits a
-  // time-varying instancer with frames whose point count changes from step to
-  // step (and alternates LOD / full resolution), so the timeline must accept
-  // varying counts and must NEVER reset its synthetic clock: doing so stamped
-  // every step t=0, collapsing the whole series onto one clip key and thus
-  // suppressing every downstream time-step update.
   bool seen = false;
   for(const Sample& s : g.Samples)
     if(s.Checksum == cksum) { seen = true; break; }
@@ -430,9 +419,6 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
       (unsigned long long)data.NumPoints, timeStep,
       newPayload ? " <- NEW" : " <- dup");
 
-  // Publish throttle: while an animation is playing/looped VTK commits as fast
-  // as it can. Dropping frames inside the window here (before Capture) keeps the
-  // render/GUI thread off the store+notify path entirely for the skipped frames.
   if(newPayload && g_publishDt > 0.0)
   {
     const auto nowAccepted = std::chrono::steady_clock::now();
@@ -447,12 +433,6 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
 
   if(newPayload)
   {
-    // Replace-in-place: keep only the NEWEST sample and always publish it at
-    // the same (constant) time so every commit OVERWRITES the single clip/
-    // .geo key for this prim. Clients then update the existing cloud instead of
-    // accumulating one actor/file per step, and the memory store stays bounded
-    // (one key per prim). A distinct payload still changes the file hash, so a
-    // V2 notification fires and the client refreshes in place.
     g.Samples.clear();
     g.Pending.clear();
     g.Seq = 0;
@@ -469,8 +449,6 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     return true;
   }
 
-  // Duplicate payload: skip unless the scene prims were destroyed and the
-  // recreated prim still needs its data (re-seed from the ring).
   if(g.NeedReseed && !g.Samples.empty())
   {
     g.NeedReseed = false;
@@ -495,6 +473,9 @@ void OnPrimDeleted(const UsdBridgePrimCache* primCache)
         auto it = std::find(g->Members.begin(), g->Members.end(), p);
         if(it != g->Members.end())
           g->Members.erase(it);
+        auto itAll = std::find(g->AllMembers.begin(), g->AllMembers.end(), p);
+        if(itAll != g->AllMembers.end())
+          g->AllMembers.erase(itAll);
         if(g->Members.empty() && !g->Samples.empty())
         {
           g->NeedReseed = true; // prims are gone - next commit re-seeds
@@ -510,6 +491,24 @@ void OnPrimDeleted(const UsdBridgePrimCache* primCache)
   }
 }
 
+bool IsStaleVariantMember(UsdGeometryHandle geometry)
+{
+  if(g_inPublish || !DetectEnabled() || geometry.value == nullptr)
+    return false;
+
+  std::lock_guard<std::recursive_mutex> lk(g_mutex);
+
+  const Part* p = FindPart(geometry.value);
+  if(!p || p->Uniq < 0)
+    return false;
+
+  for(Group* g : g_groups)
+    for(const Part* q : g->AllMembers)
+      if(q && q != p && q->SpheresIdx == p->SpheresIdx && q->Uniq > p->Uniq)
+        return true;
+  return false;
+}
+
 void Tick()
 {
   if(!DetectEnabled())
@@ -518,15 +517,12 @@ void Tick()
   std::lock_guard<std::recursive_mutex> lk(g_mutex);
   ReadEnv();
 
-  // Drain deferred stores first: samples captured during VTK commits are
-  // published here, outside any in-flight SetGeometryData call.
   for(Group* g : g_groups)
   {
     if(g->Pending.empty())
       continue;
     if(g->Members.empty())
       continue; // no live key prim yet - keep this group queued, do not
-                // stall the other groups' pending stores
     for(size_t si : g->Pending)
       if(si < g->Samples.size())
         Publish(*g, g->Samples[si], "sample+");
@@ -535,7 +531,6 @@ void Tick()
 
   const auto now = std::chrono::steady_clock::now();
 
-  // Classify groups that stopped receiving commits.
   for(Group* g : g_groups)
   {
     if(g->Touched)
@@ -562,7 +557,6 @@ void Tick()
     }
   }
 
-  // Replay accumulated timelines, globally paced, while nothing is live.
   bool due = false;
   for(Group* g : g_groups)
     if(g->Mode == 2 && !g->Members.empty() && g->StableTicks > 0)
@@ -584,7 +578,6 @@ void Tick()
       }
   }
 
-  // Forget groups whose prims are all gone and never came back.
   for(size_t i = 0; i < g_groups.size();)
   {
     if(g_groups[i]->Members.empty() && g_groups[i]->Samples.empty() &&

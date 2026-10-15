@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeUsdWriter_h
 #define UsdBridgeUsdWriter_h
@@ -17,7 +16,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 #include <memory>
 #include <functional>
 
-//Includes detailed usd translation interface of Usd Bridge
 class UsdBridgeUsdWriter
 {
 public:
@@ -41,7 +39,7 @@ public:
 
   int FindSessionNumber();
   bool CreateDirectories();
-#ifdef CUSTOM_PBR_MDL 
+#ifdef CUSTOM_PBR_MDL
   bool CreateMdlFiles();
 #endif
   bool InitializeSession();
@@ -49,9 +47,6 @@ public:
 
   void CreateParallelEncapsulatingFile();
 
-  // Write a frame-centric entry stage next to FullScene that references only
-  // the given world, camera, and /Render/RenderContext_<frameName> prims.
-  // Selecting that file mirrors ANARI's frame->world+camera binding.
   void CreateFrameEntryStage(
     const char* frameName,
     const SdfPath& worldPath,
@@ -71,9 +66,6 @@ public:
   void CreateManifestStage(const char* name, const char* primPostfix, UsdBridgePrimCache* cacheEntry);
   void RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry);
 
-  // Removes a streamed resource from the in-memory file store under every key
-  // variant that may have been written for it (raw name, ".usd"/".usda" twins,
-  // manifest-derived name) plus the matching MemoryTracking entry.
   void RemoveStoreEntriesForFile(const std::string& relativeName);
 
   const UsdStagePair& FindOrCreatePrimStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix) const;
@@ -113,9 +105,6 @@ public:
     bool timeVarying, bool valueClip, bool clipStages, const char* clipPostFix,
     double parentTimeStep, double childTimeStep, bool instanceable,
     const RefModFuncs& refModCallbacks);
-  // Timevarying means that the existence of a reference between prim A and B can differ over time, valueClip denotes the addition of clip metadata for re-timing, 
-  // and clipStages will carve up the referenced clip asset files into one for each timestep (stages are created as necessary). clipPostFix is irrelevant if !clipStages.
-  // Returns the path to the parent's subprim which represents/holds the reference to the child's main class prim.
   SdfPath AddRef_Impl(UsdBridgePrimCache* parentCache, UsdBridgePrimCache* childCache, const char* refPathExt,
     bool timeVarying, bool valueClip, bool clipStages, const char* clipPostFix,
     double parentTimeStep, double childTimeStep, bool instanceable,
@@ -137,7 +126,7 @@ public:
   UsdShadeShader GetOrCreateAttributeReader() const;
 
 #ifdef USE_INDEX_MATERIALS
-  UsdShadeMaterial InitializeIndexVolumeMaterial_Impl(UsdStageRefPtr volumeStage, 
+  UsdShadeMaterial InitializeIndexVolumeMaterial_Impl(UsdStageRefPtr volumeStage,
     const SdfPath& volumePath, bool uniformPrim, const UsdBridgeTimeEvaluator<UsdBridgeVolumeData>* timeEval = nullptr) const;
 #endif
 
@@ -151,7 +140,7 @@ public:
 #endif
 
   void BindMaterialToGeom(const SdfPath& refGeomPath, const SdfPath& refMatPath);
-  void ConnectSamplersToMaterial(UsdStageRefPtr materialStage, const SdfPath& matPrimPath, const SdfPrimPathList& refSamplerPrimPaths, 
+  void ConnectSamplersToMaterial(UsdStageRefPtr materialStage, const SdfPath& matPrimPath, const SdfPrimPathList& refSamplerPrimPaths,
     const UsdBridgePrimCacheList& samplerCacheEntries, const UsdSamplerRefData* samplerRefDatas, size_t numSamplers, double worldTimeStep); // Disconnect happens automatically at parameter overwrite
 
   void UnbindMaterialFromGeom(const SdfPath & refGeomPath);
@@ -165,13 +154,13 @@ public:
   void UpdateMdlShader(UsdStageRefPtr timeVarStage, const SdfPath& matPrimPath, const UsdBridgeMaterialData& matData, const UsdGeomPrimvarsAPI& boundGeomPrimvars, double timeStep);
   void UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgePrimCache* cacheEntry, const UsdBridgeVolumeData& volumeData, double timeStep);
   void UpdateUsdSampler(UsdStageRefPtr timeVarStage, UsdBridgePrimCache* cacheEntry, const UsdBridgeSamplerData& samplerData, double timeStep);
-  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
     const UsdBridgeDirectionalLightData& lightData, double timeStep, bool timeVarHasChanged);
-  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
     const UsdBridgePointLightData& lightData, double timeStep, bool timeVarHasChanged);
-  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath, 
+  void UpdateUsdLight(UsdStageRefPtr timeVarStage, const SdfPath& lightPrimPath,
     const UsdBridgeDomeLightData& lightData, double timeStep, bool timeVarHasChanged);
-  void UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfPath& cameraPrimPath, 
+  void UpdateUsdCamera(UsdStageRefPtr timeVarStage, const SdfPath& cameraPrimPath,
     const UsdBridgeCameraData& cameraData, double timeStep, bool timeVarHasChanged);
   void UpdateUsdInstancerPrototypes(const SdfPath& instancerPath, const UsdBridgeInstancerRefData& geomRefData, const SdfPrimPathList& refProtoGeomPrimPaths, const char* protoShapePathRp);
   void UpdateAttributeReader(UsdStageRefPtr timeVarStage, const SdfPath& matPrimPath, MaterialDMI dataMemberId, const char* newName, const UsdGeomPrimvarsAPI& boundGeomPrimvars, double timeStep, MaterialDMI timeVarying);
@@ -188,8 +177,6 @@ public:
   bool GetSelectiveFileSaving() const { return SelectiveFileSaving; }
 
   void TrackStageMemory(const std::string& stageName, UsdStageRefPtr stage);
-  // Export the authored root layer to a string, honoring Settings.BinaryOutput
-  // (binary .usdc crate when enabled, ASCII by default; ASCII fallback on failure).
   void ExportLayerToString(const SdfLayerRefPtr& rootLayer,
                            const std::string& stageName,
                            std::string& outContent,
@@ -197,21 +184,8 @@ public:
   void RecalculateAllMemoryUsage();
   size_t GetMemoryTrackingSize() const { return MemoryTracking.size(); }
   size_t GetTotalMemoryUsage() const;
-  // Map a stage logical name to the key used in the in-memory file store
-  // (keeps the historical ".usda" suffix that client-side gates key off).
   std::string StoreKeyForStageName(const std::string& stageName) const;
 
-  // --- JUSYNC RawGeo streaming -------------------------------------------
-  // When JUSYNC_RAWGEO=1 and the bridge runs in memory-store mode, instancer
-  // geometries mirror their raw float arrays into the store under the clip
-  // key with a ".geo" extension (see JusyncRawGeoHeader in the protocol
-  // header) and the USD crate export is skipped for them — serializing a
-  // 10M-point layer per frame cost ~1s and dwarfed everything else. The
-  // empty clip stage (created by GetTimeVarStage) stays registered so scene
-  // references remain valid; its sub-kilobyte twins are ignored by the
-  // streaming client's size gate.
-  // Returns true when the payload was stored as RawGeo (caller must then
-  // skip UpdateUsdGeometry/TrackStageMemory for this geometry).
   bool TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
                       const UsdBridgeInstancerData& data, double timeStep);
   template<typename GeomDataType>
@@ -225,39 +199,31 @@ public:
   friend void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter,
     const char* resourceFolder, const char* extension);
 
-  // Settings 
   UsdBridgeSettings Settings;
   UsdBridgeConnectionSettings ConnectionSettings;
 
   UsdBridgeLogObject LogObject;
 
 protected:
-  // Connect
   std::unique_ptr<UsdBridgeConnection> Connect = nullptr;
 
-  // Volume writer
   std::shared_ptr<UsdBridgeVolumeWriterI> VolumeWriter; // shared - requires custom deleter
 
-  // Shared resource cache (ie. resources shared between UsdBridgePrimCache entries)
-  // Maps keys to a refcount and modified flag
   using SharedResourceValue = std::pair<int, bool>;
   using SharedResourceKV = std::pair<UsdBridgeResourceKey, SharedResourceValue>;
   using SharedResourceContainer = std::vector<SharedResourceKV>;
-  SharedResourceContainer SharedResourceCache; 
+  SharedResourceContainer SharedResourceCache;
 
   void AddSharedResourceRef(const UsdBridgeResourceKey& key);
   bool RemoveSharedResourceRef(const UsdBridgeResourceKey& key);
-  // Sets modified flag and returns whether the shared resource has been modified since ResetSharedResourceModified()
   bool SetSharedResourceModified(const UsdBridgeResourceKey& key);
 
 #ifdef USE_INDEX_MATERIALS
   void WriteTfPrimvars(const float* tfOpacities, const UsdBridgeVolumeData& volumeData, UsdAttribute& outAttrib, UsdTimeCode outTimeCode);
 #endif
 
-  // Token cache for attribute names
   std::vector<TfToken> AttributeTokens;
 
-  // Session specific info
   int SessionNumber = -1;
   UsdStageRefPtr SceneStage;
   UsdStageRefPtr ExternalSceneStage;
@@ -265,10 +231,10 @@ protected:
   bool SelectiveFileSaving = false;
   std::string SceneFileName;
   std::string SessionDirectory;
-  std::string MpiBaseSessionDirectory; // Session directory without rank suffix (only set when MPI active)
+  std::string MpiBaseSessionDirectory;
   std::string RootName;
   std::string RootClassName;
-#ifdef CUSTOM_PBR_MDL 
+#ifdef CUSTOM_PBR_MDL
   SdfAssetPath MdlOpaqueRelFilePath; // relative from Scene Folder
   SdfAssetPath MdlTranslucentRelFilePath; // relative from Scene Folder
 #endif
@@ -284,12 +250,12 @@ protected:
     std::string filename;     // Actual filename in memory store (preserves extension)
     size_t estimatedBytes;
     UsdStageRefPtr stage;     // Keep reference to stage for recalculation
-    uint64_t lastExportedHash = 0; // content hash of the last StoreFile (skip identical re-stores)
+    uint64_t lastExportedHash = 0;
   };
   std::vector<StageMemoryInfo> MemoryTracking;
 };
 
-void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter, 
+void RemoveResourceFiles(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter,
   const char* resourceFolder, const char* fileExtension);
 void ResourceCollectVolume(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);
 void ResourceCollectSampler(UsdBridgePrimCache* cache, UsdBridgeUsdWriter& usdWriter);

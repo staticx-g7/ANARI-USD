@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdGroup.h"
 #include "UsdAnari.h"
@@ -69,7 +68,7 @@ bool UsdGroup::doCommitData(UsdDevice* device)
 
   if (paramChanged || isNew)
   {
-    doCommitRefs(device); // Perform immediate commit of refs - no params from children required
+    doCommitRefs(device);
 
     paramChanged = false;
   }

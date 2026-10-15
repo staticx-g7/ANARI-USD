@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -34,9 +33,7 @@ struct UsdLightData
   float intensity = -1.0f;
   float power = -1.0f;
   float radiance = -1.0f;
-  // ANARI directional light parameter, in radians. Default 0 = perfectly parallel.
   float angularDiameter = 0.0f;
-  // ANARI point light parameter, sphere radius. Default 0 = true point source.
   float radius = 0.0f;
 };
 
@@ -51,7 +48,6 @@ class UsdLight : public UsdBridgedBaseObject<UsdLight, UsdLightData, UsdLightHan
 
     void remove(UsdDevice* device) override;
 
-    // Lights are not instanceable.
     bool isInstanceable() const { return false; }
 
     static constexpr ComponentPair componentParamNames[] = {

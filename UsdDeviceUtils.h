@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -33,19 +32,19 @@ struct OptionalList
     list->emplace_back(value);
   }
 
-  const ValueType* data() 
-  { 
-    if(list) 
+  const ValueType* data()
+  {
+    if(list)
       return list->data();
     return nullptr;
   }
 
   size_t size()
   {
-    if(list) 
+    if(list)
       return list->size();
     return 0;
   }
 
-  std::unique_ptr<ContainerType> list; 
+  std::unique_ptr<ContainerType> list;
 };

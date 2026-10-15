@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -15,7 +14,6 @@ struct UsdSurfaceData
   UsdSharedString* name = nullptr;
   UsdSharedString* usdName = nullptr;
 
-  // No timevarying data: geometry and material reference always set over all timesteps
 
   UsdGeometry* geometry = nullptr;
   UsdMaterial* material = nullptr;
@@ -44,7 +42,5 @@ class UsdSurface : public UsdBridgedBaseObject<UsdSurface, UsdSurfaceData, UsdSu
     void onParamRefChanged(UsdBaseObject* paramObject, bool incRef, bool onWriteParams) override;
     void observe(UsdBaseObject* caller, UsdDevice* device) override;
 
-    // When geometry notifies surface, the bound parameters have to be updated.
-    // The parameters are not time-varying, so they can be represented by a universal reference.
     bool updateBoundParameters = false;
 };

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdSurface.h"
 #include "UsdAnari.h"
@@ -30,8 +29,6 @@ UsdSurface::UsdSurface(const char* name, UsdDevice* device)
 UsdSurface::~UsdSurface()
 {
 #ifdef OBJECT_LIFETIME_EQUALS_USD_LIFETIME
-  // Given that the object is destroyed, none of its references to other objects
-  // has to be updated anymore.
   if(cachedBridge)
     cachedBridge->DeleteSurface(usdHandle);
 #endif
@@ -50,13 +47,7 @@ bool UsdSurface::isInstanceable() const
 
 bool UsdSurface::deferCommit(UsdDevice* device)
 {
-  // Given that all handles/data are used in doCommitRefs, which is always executed deferred, we don't need to check for initialization
 
-  //const UsdSurfaceData& paramData = getReadParams();
-  //if(UsdObjectNotInitialized<GeometryUsdType>(paramData.geometry) || UsdObjectNotInitialized<MaterialUsdType>(paramData.material))
-  //{
-  //  return true;
-  //}
   return false;
 }
 
@@ -64,7 +55,7 @@ bool UsdSurface::doCommitData(UsdDevice* device)
 {
   UsdBridge* usdBridge = device->getUsdBridge();
   const UsdSurfaceData& paramData = getReadParams();
-    
+
   bool isNew = false;
   if (!usdHandle.value)
     isNew = usdBridge->CreateSurface(getName(), usdHandle);
@@ -74,10 +65,10 @@ bool UsdSurface::doCommitData(UsdDevice* device)
     paramChanged = false;
     updateBoundParameters = true;
 
-    return true; // In this case a doCommitRefs is required, with data (timesteps, handles) from children
+    return true;
   }
 
-  return updateBoundParameters; // Update the bound parameters after they have been committed on geometry/material
+  return updateBoundParameters;
 }
 
 void UsdSurface::doCommitRefs(UsdDevice* device)
@@ -90,7 +81,6 @@ void UsdSurface::doCommitRefs(UsdDevice* device)
   bool hasGeometry = paramData.geometry;
   bool hasMaterial = device->getReadParams().outputMaterial && paramData.material;
 
-  // Make sure the references are updated on the Bridge side.
   if (hasGeometry)
   {
     const UsdGeometryData& geomParamData = paramData.geometry->getReadParams();
@@ -101,7 +91,6 @@ void UsdSurface::doCommitRefs(UsdDevice* device)
       double matObjTimeStep = paramData.material->getReadParams().timeStep;
       bool isInstanced = paramData.geometry->isInstanced();
 
-      // This function needs to be called after the geometry-material mapping is known to the bridge.
       std::function<void()> updateBoundParamsFunc;
       if (updateBoundParameters)
       {
@@ -111,9 +100,9 @@ void UsdSurface::doCommitRefs(UsdDevice* device)
         updateBoundParameters = false;
       }
 
-      usdBridge->SetGeometryMaterialRef(usdHandle, 
-        paramData.geometry->getUsdHandle(), 
-        paramData.material->getUsdHandle(), 
+      usdBridge->SetGeometryMaterialRef(usdHandle,
+        paramData.geometry->getUsdHandle(),
+        paramData.material->getUsdHandle(),
         worldTimeStep,
         selectRefTime(paramData.geometryRefTimeStep, geomObjTimeStep, worldTimeStep),
         selectRefTime(paramData.materialRefTimeStep, matObjTimeStep, worldTimeStep),

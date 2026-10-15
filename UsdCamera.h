@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -18,13 +17,12 @@ struct UsdCameraData
   UsdSharedString* usdName = nullptr;
 
   int timeVarying = 0xFFFFFFFF; // TimeVarying bits
-  
+
   UsdFloat3 position = {0.0f, 0.0f, 0.0f};
   UsdFloat3 direction = {0.0f, 0.0f, -1.0f};
   UsdFloat3 up = {0.0f, 1.0f, 0.0f};
   UsdFloatBox2 imageRegion = {0.0f, 0.0f, 1.0f, 1.0f};
 
-  // perspective/orthographic
   float aspect = 1.0f;
   float near = 0.01f;
   float far = 1000.0f;

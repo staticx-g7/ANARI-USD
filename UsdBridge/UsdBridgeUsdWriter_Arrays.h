@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #ifndef UsdBridgeUsdWriterArrays_h
 #define UsdBridgeUsdWriterArrays_h
@@ -166,7 +165,7 @@ namespace UsdBridgeArrays
     for (int i = 0; i < destSpan.size(); ++i)
     {
       destArray[i] = DestType(
-        DestScalarType(typedSrcData[i*4+3]), // note that the real component comes first in the quat's constructor of USD, whereas the source data is assumed to be QUAT_IJKW (real component last)
+        DestScalarType(typedSrcData[i*4+3]),
         DestScalarType(typedSrcData[i*4]),
         DestScalarType(typedSrcData[i*4+1]),
         DestScalarType(typedSrcData[i*4+2]));
@@ -210,7 +209,6 @@ namespace UsdBridgeArrays
     constexpr double normFactor = needsNormalization ?
         1.0 / static_cast<double>(std::numeric_limits<SourceComponentType>::max()) : 1.0;
     size_t i = 0;
-    // No memcopies, as input is not guaranteed to be of float type
     if(numComponents == 1)
       for (auto& destElt : destSpan)
       { destElt = GfVec4f(typedInput[i]*normFactor, 0.0f, 0.0f, 1.0f); ++i; }
@@ -240,7 +238,6 @@ namespace UsdBridgeArrays
     const unsigned char* typedInput = reinterpret_cast<const unsigned char*>(data);
     float normFactor = 1.0f / 255.0f;
     const float* srgbTable = ubutils::SrgbToLinearTable();
-    // No memcopies, as input is not guaranteed to be of float type
     size_t i = 0;
     if(numComponents == 1)
       for (auto& destElt : destSpan)
@@ -364,7 +361,6 @@ namespace UsdBridgeArrays
   #define WRITE_SPAN_MACRO_EXPAND_SRGB_SPLIT(NumComponents) \
     WriteToSpanExpandSRGBToColorSplit<NumComponents>(arrayData, rgbSpan, alphaSpan)
 
-  // Assigns color data array to GfVec4f span
   void WriteToSpanColor(const UsdBridgeLogObject& logObj, UsdBridgeSpanI<GfVec4f>& destSpan,
     const void* arrayData, size_t arrayNumElements, UsdBridgeType arrayType)
   {
@@ -459,7 +455,6 @@ namespace UsdBridgeArrays
 {
   struct AttribSpanInit
   {
-    // Standard 4-argument constructor, template only required for conditional compilation of the next constructor
     template<typename U = SdfValueTypeName>
     AttribSpanInit(size_t numElements,
       ::PXR_NS::SdfValueTypeName attribValueType,
@@ -472,7 +467,6 @@ namespace UsdBridgeArrays
     {
     }
 
-    // Only compile when we are in a PXR_NS namespace for easier construction.
     template<typename U = SdfValueTypeName,
       std::enable_if_t<std::is_same_v<::PXR_NS::SdfValueTypeName, U>, bool> = true>
     AttribSpanInit(size_t numElements,
@@ -563,7 +557,6 @@ namespace UsdBridgeArrays
       VtArray<EltType>* AttribArray;
   };
 
-    // Make sure types correspond to AssignArrayToAttribute()
   SdfValueTypeName GetAttribArrayType(UsdBridgeType eltType)
   {
     assert(eltType != UsdBridgeType::UNDEFINED);
@@ -572,7 +565,7 @@ namespace UsdBridgeArrays
 
     switch (eltType)
     {
-      case UsdBridgeType::UCHAR: 
+      case UsdBridgeType::UCHAR:
       case UsdBridgeType::CHAR: { result = SdfValueTypeNames->UCharArray; break;}
       case UsdBridgeType::USHORT: { result = SdfValueTypeNames->UIntArray; break; }
       case UsdBridgeType::SHORT: { result = SdfValueTypeNames->IntArray; break; }
@@ -620,18 +613,15 @@ namespace UsdBridgeArrays
     return result;
   }
 
-  // Creates the span using AttributeCType (the type to write to), since at this point both the span and proper type are known.
   template<typename SpanInitType, template <typename T> class SpanI, typename AttributeCType, UsdBridgeType ArrayEltBridgeType>
   UsdBridgeSpanI<AttributeCType>* WriteSpanToAttrib(const UsdBridgeLogObject& logObj, SpanInitType& destSpanInit, const void* arrayData, size_t arrayNumElements)
   {
-    // Also uses a bunch of type traits to figure out whether to copy/convert/expand
-    constexpr UsdBridgeType AttributeEltType = UsdBridgeTypeTraits::UsdBaseToBridgeType<AttributeCType>::Type; 
+    constexpr UsdBridgeType AttributeEltType = UsdBridgeTypeTraits::UsdBaseToBridgeType<AttributeCType>::Type;
     constexpr int attributeNumComponents = UsdBridgeTypeTraits::NumComponents<AttributeEltType>::Value;
     constexpr int arrayNumComponents = UsdBridgeTypeTraits::NumComponents<ArrayEltBridgeType>::Value;
     using AttributeScalarCType = typename UsdBridgeTypeTraits::ScalarType<AttributeEltType>::Type;
     using ArrayScalarCType = typename UsdBridgeTypeTraits::ScalarType<ArrayEltBridgeType>::Type;
 
-    // Actual span creation with the dest type AttributeCType
     SpanI<AttributeCType>& destSpan = GetStaticSpan<SpanInitType, SpanI, AttributeCType>(destSpanInit);
     size_t destSpanSize = destSpan.size();
 
@@ -668,7 +658,6 @@ namespace UsdBridgeArrays
           return nullptr;
         }
 
-        // Check if assign is desired
         if(destSpanInit.GetAutoAssignToAttrib())
           destSpan.AssignToAttrib();
       }
@@ -683,7 +672,7 @@ namespace UsdBridgeArrays
 
   template<typename SpanInitType, template <typename T> class SpanI,
     typename AttributeCType, UsdBridgeType ArrayEltBridgeType, typename ReturnEltType>
-  void WriteSpanToAttrib_Return(const UsdBridgeLogObject& logObj, 
+  void WriteSpanToAttrib_Return(const UsdBridgeLogObject& logObj,
     SpanInitType& destSpanInit, const void* arrayData, size_t arrayNumElements, UsdBridgeSpanI<ReturnEltType>*& resultSpan)
   {
     UsdBridgeSpanI<AttributeCType>* writeSpan = WriteSpanToAttrib<SpanInitType, SpanI, AttributeCType, ArrayEltBridgeType>
@@ -693,7 +682,7 @@ namespace UsdBridgeArrays
       resultSpan = writeSpan;
     else if constexpr(!std::is_same<ReturnEltType, UsdBridgeNoneType>::value)
     {
-      UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::ERR, 
+      UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::ERR,
         "Implementation error: Assumed element type of requested attribute span does not equal type of attribute itself. No span will be returned.")
     }
   }
@@ -707,7 +696,7 @@ namespace UsdBridgeArrays
     }
 
   template<typename AttributeCType, typename SpanInitType, template <typename T> class SpanI, typename ReturnEltType>
-  UsdBridgeSpanI<ReturnEltType>* AssignArrayToTypedAttribute(const UsdBridgeLogObject& logObj, 
+  UsdBridgeSpanI<ReturnEltType>* AssignArrayToTypedAttribute(const UsdBridgeLogObject& logObj,
     SpanInitType& destSpanInit, const void* arrayData, UsdBridgeType arrayDataType, size_t arrayNumElements)
   {
     UsdBridgeSpanI<ReturnEltType>* resultSpan = nullptr;
@@ -773,7 +762,6 @@ namespace UsdBridgeArrays
   #define MAP_VALUETYPE_TO_BASETYPE(SdfVTN, AttribCType)\
     ValueTypeToAssignArrayMap.emplace(::PXR_NS::SdfVTN.GetType(), AssignArrayToTypedAttribute<AttribCType, SpanInitType, SpanI, ReturnEltType>);
 
-  // The assign array map essentially determines for any runtime attribute sdfvaluetype, which span element type should be employed (completing the span type)
   template<typename SpanInitType, template <typename T> class SpanI, typename ReturnEltType>
   class AssignArrayMapType
   {
@@ -783,7 +771,6 @@ namespace UsdBridgeArrays
 
       AssignArrayMapType()
       {
-        // See: https://docs.omniverse.nvidia.com/usd/latest/technical_reference/usd-types.html
         MAP_VALUETYPE_TO_BASETYPE(SdfValueTypeNames->BoolArray, bool)
         MAP_VALUETYPE_TO_BASETYPE(SdfValueTypeNames->UCharArray, uint8_t)
         MAP_VALUETYPE_TO_BASETYPE(SdfValueTypeNames->IntArray, int32_t)
@@ -833,12 +820,11 @@ namespace UsdBridgeArrays
   };
 
   template<typename SpanInitType = AttribSpanInit, template <typename T> class SpanI = AttribSpan, typename ReturnEltType = UsdBridgeNoneType>
-  UsdBridgeSpanI<ReturnEltType>* AssignArrayToAttribute(const UsdBridgeLogObject& logObj, const void* arrayData, UsdBridgeType arrayDataType, size_t arrayNumElements, 
+  UsdBridgeSpanI<ReturnEltType>* AssignArrayToAttribute(const UsdBridgeLogObject& logObj, const void* arrayData, UsdBridgeType arrayDataType, size_t arrayNumElements,
     SpanInitType& destSpanInit)
   {
     static AssignArrayMapType<SpanInitType, SpanI, ReturnEltType> assignArrayMap;
 
-    // Find the array assignment specialization for the runtime attribute value type, and execute it if available
     auto attribValueType = destSpanInit.GetAttribValueType();
     auto assignArrayEntry = assignArrayMap.ValueTypeToAssignArrayMap.find(attribValueType.GetType());
     if(assignArrayEntry != assignArrayMap.ValueTypeToAssignArrayMap.end())
@@ -846,12 +832,11 @@ namespace UsdBridgeArrays
       auto assignArrayFunc = assignArrayEntry->second;
       auto resultSpan = assignArrayFunc(logObj, destSpanInit, arrayData, arrayDataType, arrayNumElements);
 
-      // If the caller expects a span and none is returned, raise an error message
       if constexpr(!std::is_same<ReturnEltType, UsdBridgeNoneType>::value)
       {
         if(!resultSpan)
         {
-          UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::ERR, 
+          UsdBridgeLogMacro(logObj, UsdBridgeLogLevel::ERR,
             "Update of UsdAttribute '" << destSpanInit.GetAttribName() << "' with an array did not return writeable memory after update; " <<
             "data array and attribute types cannot be converted or are not supported, or the span and attribute types do not match - see previous errors");
         }

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -27,10 +26,6 @@ struct UsdDataLayout
 
 struct UsdDataArrayParams
 {
-  // Even though we are not dealing with a usd-backed object, the data array can still have an identifying name.
-  // The pointer can then be used as id for resources (plus defining their filenames) such as textures,
-  // so they can be shared and still removed during garbage collection (after an UsdAnari object has already been destroyed).
-  // The persistence reason is why these strings have to be added to the string list of the device on construction.
   UsdSharedString* name = nullptr;
   UsdSharedString* usdName = nullptr;
 };
@@ -99,17 +94,14 @@ class UsdDataArray : public UsdParameterizedBaseObject<UsdDataArray, UsdDataArra
       int64_t byteStride3);
     bool CheckFormatting(UsdDevice* device);
 
-    // Ref manipulation on arrays of anariobjects
     void incRef(ANARIObject* anariObjects, uint64_t numAnariObjects);
     void decRef(ANARIObject* anariObjects, uint64_t numAnariObjects);
 
-    // Private memory management
     void allocPrivateData();
     void freePrivateData(bool mappedCopy = false);
     void freePublicData(const void* appMemory);
     void publicToPrivateData();
 
-    // Mapped memory management
     void CreateMappedObjectCopy();
     void TransferAndRemoveMappedObjectCopy();
 

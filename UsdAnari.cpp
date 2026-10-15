@@ -183,7 +183,7 @@ UsdBridgeType AnariToUsdBridgeType_Flattened(ANARIDataType anariType)
   case ANARI_INT64_VEC2: return UsdBridgeType::LONG;
   case ANARI_INT64_VEC3: return UsdBridgeType::LONG;
   case ANARI_INT64_VEC4: return UsdBridgeType::LONG;
-  
+
   case ANARI_FLOAT32: return UsdBridgeType::FLOAT;
   case ANARI_FLOAT32_VEC2: return UsdBridgeType::FLOAT;
   case ANARI_FLOAT32_VEC3: return UsdBridgeType::FLOAT;
@@ -323,10 +323,6 @@ const char* AnariAttributeToUsdName(const char* param, bool perInstance, bool us
   {
     return "displayColor";
   }
-  //else if(strEquals(param, "opacity") && useDisplayColorOpacity)
-  //{
-  //  return "displayOpacity";
-  //}
   return param; // The generic case just returns the param itself
 }
 
@@ -345,7 +341,7 @@ std::pair<bool, const char*> GetGeomDependentAttributeName(const char* anariAttr
 
   bool hasPositionAttrib = strEquals(anariAttrib, "objectPosition");
   usdAttribName = AnariAttributeToUsdName(anariAttrib, perInstance, useDisplayColorOpacity, logInfo);
-  
+
   bool hasGenericAttrib = strcmp(anariAttrib, genericAttribPrefix) > 0;
   if(hasGenericAttrib)
   {
@@ -354,14 +350,14 @@ std::pair<bool, const char*> GetGeomDependentAttributeName(const char* anariAttr
     try
     {
       int attribIdx = std::stoi(genericAttribIndex);
-      
+
       validUsdAttribName = attribIdx < numAttribNames && attribNames[attribIdx];
       if(validUsdAttribName)
         usdAttribName = attribNames[attribIdx]->c_str();
     }
     catch (...)
     {}
-    
+
     hasGenericAttrib = validUsdAttribName; // Only set if it was a valid genericAttrib string
   }
 

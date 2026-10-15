@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -19,8 +18,6 @@ class UsdDevice;
 class UsdBridge;
 class UsdBaseObject;
 
-// When deriving from UsdParameterizedObject<T>, define a a struct T::Data and
-// a static void T::registerParams() that registers any member of T::Data using REGISTER_PARAMETER_MACRO()
 template<typename T, typename D>
 class UsdParameterizedObject
 {
@@ -53,7 +50,6 @@ public:
 
   void* getParam(const char* name, ANARIDataType& returnType)
   {
-    // Check if name registered
     typename ParamContainer::iterator it = registeredParams->find(name);
     if (it != registeredParams->end())
     {
@@ -76,7 +72,7 @@ protected:
 
   bool isRefCounted(ANARIDataType type) const { return anari::isObject(type) || type == ANARI_STRING; }
 
-  void safeRefInc(void* paramPtr, ANARIDataType paramType, bool onWriteParams) // Pointer to the parameter address which holds a helium::RefCounted*
+  void safeRefInc(void* paramPtr, ANARIDataType paramType, bool onWriteParams)
   {
     helium::RefCounted** refCountedPP = ptrToRefCountedPtr(paramPtr);
     if (*refCountedPP)
@@ -88,7 +84,7 @@ protected:
     }
   }
 
-  void safeRefDec(void* paramPtr, ANARIDataType paramType, bool onWriteParams) // Pointer to the parameter address which holds a helium::RefCounted*
+  void safeRefDec(void* paramPtr, ANARIDataType paramType, bool onWriteParams)
   {
     helium::RefCounted** refCountedPP = ptrToRefCountedPtr(paramPtr);
     if (*refCountedPP)
@@ -134,7 +130,6 @@ protected:
     returnType = paramType(returnAddress, typeInfo);
   }
 
-  // Convenience function for usd-compatible parameters
   void formatUsdName(UsdSharedString* nameStr)
   {
     char* name = const_cast<char*>(UsdSharedString::c_str(nameStr));
@@ -164,8 +159,6 @@ public:
 
   ~UsdParameterizedObject()
   {
-    // Manually decrease the references on all objects in the read and writeparam datasets
-    // (since the pointers are relinquished)
     auto it = registeredParams->begin();
     while (it != registeredParams->end())
     {
@@ -180,7 +173,6 @@ public:
       getParamTypeAndAddress(paramDataSets[paramWriteIdx], typeInfo,
         writeParamType, writeParamAddress);
 
-      // Works even if two parameters point to the same paramdata address, as the content at that address (object pointers) are set to null
       if(isRefCounted(readParamType))
         safeRefDec(readParamAddress, readParamType, false);
       if(isRefCounted(writeParamType))
@@ -209,17 +201,14 @@ protected:
     }
     else if(anari::isArray(srcType))
     {
-      // Flatten the source type in case of array
       srcType = ANARI_ARRAY;
     }
 
-    // Check if name registered
     typename ParamContainer::iterator it = registeredParams->find(name);
     if (it != registeredParams->end())
     {
       const ParamTypeInfo& typeInfo = it->second;
 
-      // Check if type matches
       if (typeInfo.types.typeMatches(srcType))
       {
         ANARIDataType destType;
@@ -230,14 +219,11 @@ protected:
         const void* srcAddress = rawSrc; //temporary src
         size_t numBytes = anari::sizeOf(srcType); // Size is determined purely by source data
 
-        bool contentUpdate = srcType != destType; // Always do a content update if types differ (in case of multitype params)
+        bool contentUpdate = srcType != destType;
 
-        // Update data for all the different types
         UsdSharedString* sharedStr = nullptr;
         if (srcType == ANARI_STRING)
         {
-          // Wrap strings to make them refcounted,
-          // from that point they are considered normal RefCounteds.
           UsdSharedString* destStr = reinterpret_cast<UsdSharedString*>(*ptrToRefCountedPtr(destAddress));
           const char* srcCstr = reinterpret_cast<const char*>(srcAddress);
 
@@ -268,20 +254,20 @@ protected:
         }
 
         // If a string object has been created, decrease its public refcount (1 at creation)
+
         if (sharedStr)
         {
           assert(sharedStr->useCount() == 2); // Single public and internal reference
           sharedStr->refDec(helium::RefType::PUBLIC);
         }
 
-        // Update the type for multitype params (so far only data has been updated)
         if(contentUpdate)
           setMultiParamType(destAddress, typeInfo, srcType);
 
-        if(!strEquals(name, "usd::time")) // Allow for re-use of object as reference at different timestep, without triggering a full re-commit of the referenced object
+        if(!strEquals(name, "usd::time"))
         {
 #ifdef TIME_BASED_CACHING
-          paramChanged = true; //For time-varying parameters, comparisons between content of potentially different timesteps is meaningless
+          paramChanged = true;
 #else
           paramChanged = paramChanged || contentUpdate;
 #endif
@@ -297,21 +283,17 @@ protected:
   {
     size_t paramSize = typeInfo.size;
 
-    // Copy to existing write param location
     ANARIDataType destType;
     void* destAddress = nullptr;
     getParamTypeAndAddress(paramDataSets[paramWriteIdx], typeInfo,
       destType, destAddress);
 
-    // Create temporary default-constructed parameter set and find source param address ((multi-)type is of no concern)
     D defaultParamData;
     void* srcAddress = paramAddress(defaultParamData, typeInfo);
 
-    // Make sure to dec existing ptr, as it will be relinquished
     if(isRefCounted(destType))
       safeRefDec(destAddress, destType, true);
 
-    // Just replace contents of the whole parameter structure, single or multiparam
     std::memcpy(destAddress, srcAddress, paramSize);
   }
 
@@ -343,8 +325,6 @@ protected:
 
   void transferWriteToReadParams()
   {
-    // Make sure object references are removed for
-    // the overwritten readparams, and increased for the source writeparams
     auto it = registeredParams->begin();
     while (it != registeredParams->end())
     {
@@ -359,18 +339,13 @@ protected:
       getParamTypeAndAddress(paramDataSets[paramReadIdx], typeInfo,
         destType, destAddress);
 
-      // SrcAddress and destAddress are not the same, but they may specifically contain the same object pointers.
-      // Branch out on that situation (may also be disabled, which results in a superfluous inc/dec)
       if(std::memcmp(destAddress, srcAddress, typeInfo.size))
       {
-        // First inc, then dec (in case branch is taken out and the pointed to object is the same)
         if (isRefCounted(srcType))
           safeRefInc(srcAddress, srcType, false); // count as increase of readparams ref due to subsequent copy
         if (isRefCounted(destType))
           safeRefDec(destAddress, destType, false);
 
-        // Perform assignment immediately; there may be multiple parameters with the same object target,
-        // which will be branched out at the compare the second time around
         std::memcpy(destAddress, srcAddress, typeInfo.size);
       }
 
@@ -418,7 +393,6 @@ protected:
     )); \
   }
 
-// Static assert explainer: gets the element type of the array via the decltype of *std::begin(), which in turn accepts an array
 #define REGISTER_PARAMETER_ARRAY_MACRO(ParamName, ParamNameSuffix, ParamType, ParamData, NumEntries) \
   { \
     using element_type_t = std::remove_reference_t<decltype(*std::begin(std::declval<decltype(DataType::ParamData)&>()))>; \

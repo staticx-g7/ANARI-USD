@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdSpatialField.h"
 #include "UsdAnari.h"
@@ -36,10 +35,8 @@ UsdSpatialField::~UsdSpatialField()
 
 void UsdSpatialField::commit(UsdDevice* device)
 {
-  // Notify observers (such as volume) that the spatial field has changed.
   notify(this, device);
 
-  // Continue with the normal commit, ie. adding to the commit list or immediate execution of doCommitData
   BridgedBaseObjectType::commit(device);
 }
 
@@ -50,8 +47,6 @@ void UsdSpatialField::remove(UsdDevice* device)
 
 bool UsdSpatialField::deferCommit(UsdDevice* device)
 {
-  // Always defer until flushing of commit list, to give parent volumes the possibility to detect which of its child fields have been committed,
-  // such that those volumes with committed children are also automatically committed.
   return !device->isFlushingCommitList();
 }
 
@@ -68,7 +63,6 @@ bool UsdSpatialField::doCommitData(UsdDevice* device)
   if(!usdHandle.value)
     isNew = usdBridge->CreateSpatialField(debugName, usdHandle);
 
-  // Only perform type checks, actual data gets uploaded during UsdVolume::commit()
   const UsdDataArray* fieldDataArray = paramData.data;
   if (!fieldDataArray)
   {
@@ -100,7 +94,6 @@ bool UsdSpatialField::doCommitData(UsdDevice* device)
     return false;
   }
 
-  // Make sure that parameters are set a first time
   paramChanged = paramChanged || isNew;
 
   return false;

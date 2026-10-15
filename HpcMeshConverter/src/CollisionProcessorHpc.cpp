@@ -7,8 +7,6 @@
 #include <thread>
 #include <chrono>
 
-// Simple implementation for demonstration purposes
-// In a real implementation, this would connect to HPC cluster
 
 CollisionProcessorHpc::CollisionProcessorHpc() {
     MIDDLEWARE_LOG_INFO("CollisionProcessorHpc created");
@@ -18,7 +16,6 @@ CollisionProcessorHpc::~CollisionProcessorHpc() {
     MIDDLEWARE_LOG_INFO("CollisionProcessorHpc destroyed");
 }
 
-// These are just stub implementations for the build to work
 bool CollisionProcessorHpc::generateCollision(const std::vector<float>& vertices,
                                             const std::vector<uint32_t>& indices,
                                             anari_usd_middleware::ECollisionComplexity complexity,
@@ -76,31 +73,23 @@ std::string CollisionProcessorHpc::getComplexityRecommendation(anari_usd_middlew
 }
 
 void CollisionProcessorHpc::setSimplificationRatio(float ratio) {
-    // Implementation would be here
 }
 
 void CollisionProcessorHpc::setConvexHullPrecision(float precision) {
-    // Implementation would be here
 }
 
 void CollisionProcessorHpc::setMaxConvexHulls(int maxHulls) {
-    // Implementation would be here
 }
 
 void CollisionProcessorHpc::setMaxProcessingTime(float seconds) {
-    // Implementation would be here
 }
 
 void CollisionProcessorHpc::setQualityVsPerformance(float balance) {
-    // Implementation would be here
 }
 
 CollisionProcessorHpc::ProcessingStats CollisionProcessorHpc::getProcessingStats() const {
-    // Return a default-constructed stats object
-    // Note: In real implementation, this would return actual statistics
     return ProcessingStats{};
 }
 
 void CollisionProcessorHpc::resetProcessingStats() {
-    // Implementation would be here
 }

@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdInstance.h"
 #include "UsdAnari.h"
@@ -66,7 +65,7 @@ bool UsdInstance::doCommitData(UsdDevice* device)
 
   if (paramChanged || isNew)
   {
-    doCommitRefs(device); // Perform immediate commit of refs - no params from children required
+    doCommitRefs(device);
 
     paramChanged = false;
   }

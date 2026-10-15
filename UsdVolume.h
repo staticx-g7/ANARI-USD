@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -23,7 +22,7 @@ struct UsdVolumeData
   UsdSharedString* name = nullptr;
   UsdSharedString* usdName = nullptr;
 
-  int timeVarying = 0xFFFFFFFF; // Bitmask indicating which attributes are time-varying. (field reference always set over all timesteps)
+  int timeVarying = 0xFFFFFFFF;
 
   bool isInstanceable = false;
 
@@ -32,7 +31,6 @@ struct UsdVolumeData
 
   bool preClassified = false;
 
-  //TF params
   const UsdDataArray* color = nullptr;
   const UsdDataArray* opacity = nullptr;
   UsdFloatBox1 valueRange = { 0.0f, 1.0f };

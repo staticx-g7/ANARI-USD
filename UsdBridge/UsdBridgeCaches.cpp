@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "usd.h"
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -54,7 +53,6 @@ bool UsdBridgePrimCache::SetChildInvisibleAtTime(const UsdBridgePrimCache* child
   auto timeIt = std::find(visibleTimes.begin(), visibleTimes.end(), timeCode);
   if(timeIt != visibleTimes.end())
   {
-    // Remove the time at visibleTimeIdx
     size_t visibleTimeIdx = timeIt - visibleTimes.begin();
     visibleTimes[visibleTimeIdx] = visibleTimes.back();
     visibleTimes.pop_back();
@@ -89,8 +87,6 @@ void UsdBridgePrimCache::AddChild(UsdBridgePrimCache* child)
 void UsdBridgePrimCache::RemoveChild(UsdBridgePrimCache* child)
 {
   auto it = std::find(this->Children.begin(), this->Children.end(), child);
-  // Allow for find to fail; in the case where the bridge is recreated and destroyed,
-  // a child prim exists which doesn't have a ref in the cache.
   if(it != this->Children.end())
   {
 #ifdef TIME_BASED_CACHING
@@ -145,7 +141,6 @@ UsdBridgePrimCacheManager::ConstPrimCacheIterator UsdBridgePrimCacheManager::Cre
   SdfPath nameSuffix(name);
   SdfPath primPath(fullPath);
 
-  // Create new cache entry
   std::unique_ptr<UsdBridgePrimCache> cacheEntry = std::make_unique<UsdBridgePrimCache>(primPath, nameSuffix, collectFunc);
   return UsdPrimCaches.emplace(name, std::move(cacheEntry)).first;
 }
@@ -170,31 +165,19 @@ void UsdBridgePrimCacheManager::RemoveChild(UsdBridgePrimCache* parent, UsdBridg
   parent->RemoveChild(child);
 }
 
-void UsdBridgePrimCacheManager::RemovePrimCache(ConstPrimCacheIterator it, UsdBridgeLogObject& LogObject) 
-{ 
+void UsdBridgePrimCacheManager::RemovePrimCache(ConstPrimCacheIterator it, UsdBridgeLogObject& LogObject)
+{
   if(it->second->RefCount > 0)
   {
     UsdBridgeLogMacro(LogObject, UsdBridgeLogLevel::WARNING, "Primcache removed for object named: " << it->first << ", but refs still exist");
   }
-  UsdPrimCaches.erase(it); 
+  UsdPrimCaches.erase(it);
 }
 
 void UsdBridgePrimCacheManager::RemoveUnreferencedPrimCaches(AtRemoveFunc atRemove)
 {
-  // First recursively remove all the child references for unreferenced prims
   // Can only be performed at garbage collect.
-  // If this is done during RemoveChild, an unreferenced parent cannot subsequently be revived with an AddChild.
-  //
-  // NOTE: teardown happens in the SAME pass the cache became unreferenced.
-  // Producers (VTK) commit orphaning work during a render and only render once
-  // per interaction event (e.g. hiding an actor); a deferred/strike-based rule
-  // would keep the hidden actor's clip on the wire until an unrelated next
-  // render. The hazards this protects against are covered differently:
-  //  - caches orphaned by scene churn are genuinely replaced (a *new* cache is
-  //    created for the re-synced object), and
-  //  - double cascade deletes via shared children are made idempotent by the
-  //    IsGcDeleted marker, stale ANARI handles are tolerated by
-  //    FindAndDeletePrim, and all store key twins (.usd/.usda) are purged.
+
   PrimCacheContainer::iterator it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {
@@ -205,8 +188,6 @@ void UsdBridgePrimCacheManager::RemoveUnreferencedPrimCaches(AtRemoveFunc atRemo
     ++it;
   }
 
-  // Now delete all prims whose teardown ran (tree removal marks the entry and
-  // all cascaded children via atRemove).
   it = UsdPrimCaches.begin();
   while (it != UsdPrimCaches.end())
   {

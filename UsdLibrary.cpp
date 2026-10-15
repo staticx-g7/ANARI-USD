@@ -1,5 +1,4 @@
 // Copyright 2023 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdDevice.h"
 #include "anari/backend/LibraryImpl.h"
@@ -21,7 +20,6 @@ struct UsdLibrary : public anari::LibraryImpl {
   const char **getDeviceExtensions(const char *deviceType) override;
 };
 
-// Definitions ////////////////////////////////////////////////////////////////
 
 UsdLibrary::UsdLibrary(void *lib, ANARIStatusCallback defaultStatusCB,
                        const void *statusCBPtr)
@@ -38,7 +36,6 @@ const char **UsdLibrary::getDeviceExtensions(const char * /*deviceType*/) {
 } // namespace usd
 } // namespace anari
 
-// Define library entrypoint //////////////////////////////////////////////////
 
 extern "C" USDDevice_INTERFACE
 ANARI_DEFINE_LIBRARY_ENTRYPOINT(usd, handle, scb, scbPtr) {

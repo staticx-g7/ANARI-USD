@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #pragma once
 
@@ -10,19 +9,13 @@
 #endif
 
 #define OMNIVERSE_CREATE_WORKAROUNDS
-//#define CUSTOM_PBR_MDL
 #define USE_INDEX_MATERIALS
 
 #ifdef USE_USDRT
-// UsdRt cannot use composition elements like sublayers,
-// changes don't propagate, so external stages just replace the existing scenestage
 #define REPLACE_SCENE_BY_EXTERNAL_STAGE
 #endif
 
-// To enable output that usdview can digest (just a single float)
-//#define USDBRIDGE_VOL_FLOAT1_OUTPUT
 
-// TIME_CLIP_STAGES implies VALUE_CLIP_RETIMING (only a few object types supporting timing actually output one stage per valueclip timestep)
 #if defined(TIME_CLIP_STAGES) && !defined(VALUE_CLIP_RETIMING)
 #define VALUE_CLIP_RETIMING
 #endif

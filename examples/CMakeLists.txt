@@ -43,6 +43,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE anari::anari ${PLATFORM_LIBS})
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 set_example_debugger(${PROJECT_NAME})
 
+project(anariMeshAndPointsUsd)
+add_executable(${PROJECT_NAME} anariMeshAndPointsUsd.c)
+target_link_libraries(${PROJECT_NAME} PRIVATE anari::anari ${PLATFORM_LIBS})
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+set_example_debugger(${PROJECT_NAME})
+
 project(anariTutorialUsdVolume)
 add_executable(${PROJECT_NAME} anariTutorial_usd_volume.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE anari::anari stb_image ${PLATFORM_LIBS})

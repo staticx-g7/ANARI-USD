@@ -1,5 +1,4 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeUsdWriter.h"
 
@@ -20,7 +19,7 @@ namespace
 
     UsdVolOpenVDBAsset& attribCreatePrim = volAsset;
     UsdPrim attribRemovePrim = volAsset.GetPrim();
-    
+
     CREATE_REMOVE_TIMEVARYING_ATTRIB_QUALIFIED(DMI::DATA, CreateFilePathAttr, UsdBridgeTokens->filePath);
   }
 
@@ -42,7 +41,7 @@ namespace
     InitializeUsdVolumeAssetTimeVar(volAsset, timeEval);
 
     return volume.GetPrim();
-  } 
+  }
 
   void UpdateUsdVolumeAttributes(UsdVolVolume& uniformVolume, UsdVolVolume& timeVarVolume, UsdVolOpenVDBAsset& uniformField, UsdVolOpenVDBAsset& timeVarField,
     const UsdBridgeVolumeData& volumeData, double timeStep, const std::string& relVolPath)
@@ -52,7 +51,6 @@ namespace
 
     SdfAssetPath volAsset(relVolPath);
 
-    // Set extents in usd
     float minX = volumeData.Origin[0];
     float minY = volumeData.Origin[1];
     float minZ = volumeData.Origin[2];
@@ -71,20 +69,18 @@ namespace
 
     bool dataTimeVarying = timeEval.IsTimeVarying(DMI::DATA);
 
-    // Clear timevarying attributes if necessary
     ClearUsdAttributes(uniformFileAttr, timeVarFileAttr, dataTimeVarying);
     ClearUsdAttributes(uniformExtentAttr, timeVarExtentAttr, dataTimeVarying);
 
-    // Set the attributes
     SET_TIMEVARYING_ATTRIB(dataTimeVarying, timeVarFileAttr, uniformFileAttr, volAsset);
     SET_TIMEVARYING_ATTRIB(dataTimeVarying, timeVarExtentAttr, uniformExtentAttr, extentArray);
   }
 }
 
 UsdPrim UsdBridgeUsdWriter::InitializeUsdVolume(UsdStageRefPtr volumeStage, const SdfPath & volumePath, bool uniformPrim) const
-{ 
+{
   UsdPrim volumePrim = InitializeUsdVolume_Impl(volumeStage, volumePath, uniformPrim);
-  
+
 #ifdef USE_INDEX_MATERIALS
   UsdShadeMaterial matPrim = InitializeIndexVolumeMaterial_Impl(volumeStage, volumePath, uniformPrim);
   UsdShadeMaterialBindingAPI(volumePrim).Bind(matPrim);
@@ -101,7 +97,7 @@ void UsdBridgeUsdWriter::UpdateUsdVolumeManifest(const UsdBridgePrimCache* cache
   UsdStageRefPtr volumeStage = cacheEntry->ManifestStage.second;
   TimeEvaluator<UsdBridgeVolumeData> timeEval(volumeData);
 
-  InitializeUsdVolume_Impl(volumeStage, volumePath, 
+  InitializeUsdVolume_Impl(volumeStage, volumePath,
     false, &timeEval);
 
 #ifdef USE_INDEX_MATERIALS
@@ -118,8 +114,7 @@ void UsdBridgeUsdWriter::UpdateUsdVolumeManifest(const UsdBridgePrimCache* cache
 void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgePrimCache* cacheEntry, const UsdBridgeVolumeData& volumeData, double timeStep)
 {
   const SdfPath& volPrimPath = cacheEntry->PrimPath;
-  
-  // Get the volume and ovdb field prims
+
   UsdVolVolume uniformVolume = UsdVolVolume::Get(SceneStage, volPrimPath);
   assert(uniformVolume);
   UsdVolVolume timeVarVolume = UsdVolVolume::Get(timeVarStage, volPrimPath);
@@ -132,7 +127,6 @@ void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgeP
   UsdVolOpenVDBAsset timeVarField = UsdVolOpenVDBAsset::Get(timeVarStage, ovdbFieldPath);
   assert(timeVarField);
 
-  // Set the file path reference in usd
   const std::string& relVolPath = GetResourceFileName(constring::volFolder, cacheEntry->Name.GetString(), timeStep, constring::vdbExtension);
 
   UpdateUsdVolumeAttributes(uniformVolume, timeVarVolume, uniformField, timeVarField, volumeData, timeStep, relVolPath);
@@ -141,18 +135,14 @@ void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgeP
   UpdateIndexVolumeMaterial(SceneStage, timeVarStage, volPrimPath, volumeData, timeStep);
 #endif
 
-  // Output stream path (relative from connection working dir)
   std::string wdRelVolPath(SessionDirectory + relVolPath);
 
-  // Write VDB data to stream
   VolumeWriter->ToVDB(volumeData);
 
-  // Flush stream out to storage
   const char* volumeStreamData; size_t volumeStreamDataSize;
   VolumeWriter->GetSerializedVolumeData(volumeStreamData, volumeStreamDataSize);
   Connect->WriteFile(volumeStreamData, volumeStreamDataSize, wdRelVolPath.c_str(), true);
 
-  // Also store VDB in memory when not saving to disk
   if(!this->EnableSaving && g_rankMemoryStore)
   {
     g_rankMemoryStore->StoreFile(
@@ -163,7 +153,6 @@ void UsdBridgeUsdWriter::UpdateUsdVolume(UsdStageRefPtr timeVarStage, UsdBridgeP
     );
   }
 
-  // Record file write for timestep
   cacheEntry->AddResourceKey(UsdBridgeResourceKey(nullptr, timeStep));
 }
 

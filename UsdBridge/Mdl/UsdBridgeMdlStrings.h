@@ -1,9 +1,8 @@
 // Copyright 2020 The Khronos Group
-// SPDX-License-Identifier: Apache-2.0
 
 #include "UsdBridgeMacros.h"
 
-#ifdef CUSTOM_PBR_MDL 
+#ifdef CUSTOM_PBR_MDL
 
 static const char Mdl_PBRBase_string[] = R"matstrdelim(
 /*****************************************************************************
@@ -271,7 +270,7 @@ export material OmniPBR(
     anno::description("Wrapping mode along u axis of diffuse_texture, see get_wrap_mode"),
     anno::in_group("Texture")
   ]],
-  
+
   uniform int diffuse_wrapmode_v = 2
   [[
     anno::display_name("Diffuse Wrapping Mode V"),
@@ -288,7 +287,7 @@ export material OmniPBR(
 ]]
 
  = let{
-  
+
   // -------------------- Texcoord --------------------
   int uv_space_index = 0;
   base::texture_coordinate_info uvw = base::coordinate_source(
@@ -298,7 +297,7 @@ export material OmniPBR(
   base::texture_coordinate_info  transformed_uvw =  uvw;
 
   // -------------------- Base texture --------------------
-  
+
   base::texture_return base_lookup = base::file_texture(
               texture: diffuse_texture,
               color_offset: color(albedo_add),
@@ -315,11 +314,11 @@ export material OmniPBR(
                   uvw: transformed_uvw,
                   wrap_u: get_wrap_mode(diffuse_wrapmode_u),
                   wrap_v: get_wrap_mode(diffuse_wrapmode_v),
-                  clip: false).mono 
+                  clip: false).mono
                 : 1.0;
 
   // -------------------- Rougness/Reflection --------------------
-  
+
   base::texture_return roughness_lookup = base::file_texture(
               texture: reflection_roughness_texture,
               mono_source: base::mono_average,
@@ -332,9 +331,9 @@ export material OmniPBR(
   float reflection_roughness_1 =  math::lerp(reflection_roughness_constant, roughness_selection, reflection_roughness_texture_influence);
 
   color desaturated_base = math::lerp(base_lookup.tint, color(base_lookup.mono), albedo_desaturation);
-  
+
   // -------------------- Metallic --------------------
-  
+
   base::texture_return metallic_lookup = base::file_texture(
             texture: metallic_texture,
             color_offset: color(0.0, 0.0, 0.0),
@@ -349,9 +348,9 @@ export material OmniPBR(
 
   // blend between the constant metallic value and the map lookup
   float metallic =  math::lerp(metallic_constant, metallic_selection, metallic_texture_influence);
-  
+
   // -------------------- Emissive --------------------
-  
+
   color emissive_mask = tex::texture_isvalid(emissive_mask_texture) ?
                           base::file_texture(
                             texture: emissive_mask_texture,
@@ -359,11 +358,11 @@ export material OmniPBR(
                             color_scale: color(1.0, 1.0, 1.0),
                             mono_source: base::mono_average,
                             uvw: transformed_uvw,
-                            clip: false).tint 
+                            clip: false).tint
                           : color(1.0);
 
   // -------------------- Normal --------------------
-  
+
   float3 the_normal =  tex::texture_isvalid(normalmap_texture) ?
               base::tangent_space_normal_texture(
               texture:        normalmap_texture,
@@ -377,20 +376,20 @@ export material OmniPBR(
 
   // -------------------- Opacity --------------------
 
-  float final_opacity = enable_opacity_texture ? 
+  float final_opacity = enable_opacity_texture ?
                           base::file_texture(
                             texture:   opacity_texture,
                             mono_source: base::mono_average,
-                            uvw:     transformed_uvw ).mono 
+                            uvw:     transformed_uvw ).mono
                           : (opacity_constant > 0 ? opacity_constant*alpha : alpha);
-  
+
   // -------------------- Establish base color --------------------
-  
+
   float4 vcData = vertex_color_from_coordinate(vertexcolor_coordinate_index);
 
-  color diffuse_color =  tex::texture_isvalid(diffuse_texture) ? desaturated_base : 
+  color diffuse_color =  tex::texture_isvalid(diffuse_texture) ? desaturated_base :
     ((vertexcolor_coordinate_index >= 0 && vertexcolor_coordinate_index < state::texture_space_max()) ?  color(vcData.x, vcData.y, vcData.z) : diffuse_color_constant);
-  
+
   color tinted_diffuse_color = multiply_colors(diffuse_color, diffuse_tint, 1.0).tint;
 
   color final_base_color = tinted_diffuse_color;
@@ -429,8 +428,8 @@ static const char Mdl_PBRBase_string_opaque[] = R"matstrdelim(
     weight: metallic,
     layer:  directional_factor_bsdf,
     base: custom_curve_layer_bsdf );
-    
-    
+
+
 } in material(
     surface: material_surface(
       scattering: final_bsdf,
@@ -456,7 +455,7 @@ static const char Mdl_PBRBase_string_translucent[] = R"matstrdelim(
 
   bsdf directional_factor_bsdf = df::directional_factor(
     normal_tint:  final_base_color,
-    grazing_tint: final_base_color,    
+    grazing_tint: final_base_color,
     exponent: 3.0f,
     base: ggx_smith_bsdf );
 
@@ -467,7 +466,7 @@ static const char Mdl_PBRBase_string_translucent[] = R"matstrdelim(
 
 } in material(
     thin_walled: true,
-    ior: color(ior_constant), 
+    ior: color(ior_constant),
     surface: material_surface(
       scattering: final_bsdf,
       emission:  material_emission (
