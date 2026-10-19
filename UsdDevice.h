@@ -8,6 +8,7 @@
 
 #include <vector>
 #include <memory>
+#include <limits>
 
 #ifdef ANARI_USD_ENABLE_MPI
 #include <thread>
@@ -219,6 +220,12 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
 
     void addToResourceStringList(UsdSharedString* sharedString);
 
+    // Geometry commits can happen before renderFrame. Record the effective
+    // ANARI usd::time for the current frame so notifications can carry the
+    // simulation time instead of the (usually zero) device-level usd::time.
+    void RecordFrameGeometryTime(double t);
+    double ConsumeFrameGeometryTime();
+
 #ifdef CHECK_MEMLEAKS
     void logObjAllocation(const UsdBaseObject* ptr);
     void logObjDeallocation(const UsdBaseObject* ptr);
@@ -306,6 +313,12 @@ class UsdDevice : public anari::DeviceImpl, public UsdParameterizedBaseObject<Us
     bool autoFlushOnGeometryCommit = false;
     bool hasPendingFlush_ = false; // reserved for future use
     std::chrono::steady_clock::time_point lastFlushTime_;
+    // Last ANARI usd::time value. Notifications carry it (seconds * 1000) so
+    // clients can label samples with the same time ParaView displays instead
+    // of a wall-clock or synthetic counter.
+    double lastTimeStep_ = 0.0;
+    // Highest geometry usd::time seen since the previous renderFrame.
+    double frameGeometryTime_ = std::numeric_limits<double>::quiet_NaN();
     void FlushSceneAndNotify();
 
   #ifdef ANARI_USD_ENABLE_MPI

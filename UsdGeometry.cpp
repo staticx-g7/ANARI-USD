@@ -1194,9 +1194,11 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
 
   double worldTimeStep = device->getReadParams().timeStep;
+  double geometryTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
   double dataTimeStep = std::isnan(recommitTimeOverride)
-      ? selectObjTime(paramData.timeStep, worldTimeStep)
+      ? geometryTimeStep
       : recommitTimeOverride;
+  device->RecordFrameGeometryTime(geometryTimeStep);
   usdBridge->SetGeometryData(usdHandle, meshData, dataTimeStep);
 }
 
@@ -1334,6 +1336,7 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
   double worldTimeStep = device->getReadParams().timeStep;
   double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
+  device->RecordFrameGeometryTime(dataTimeStep);
   usdBridge->SetGeometryData(usdHandle, instancerData, dataTimeStep);
 
   if(isNew && geomType != GEOM_GLYPH && !instancerData.UseUsdGeomPoints)
@@ -1380,6 +1383,7 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
   double worldTimeStep = device->getReadParams().timeStep;
   double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
+  device->RecordFrameGeometryTime(dataTimeStep);
   usdBridge->SetGeometryData(usdHandle, curveData, dataTimeStep);
 }
 
@@ -1472,6 +1476,7 @@ void UsdGeometry::doCommitRefs(UsdDevice* device)
     size_t numHandles = 1;
 
     double protoTimestep = selectRefTime(paramData.shapeGeometryRefTimeStep, geomObjTimeStep, worldTimeStep);
+    device->RecordFrameGeometryTime(protoTimestep);
 
     usdBridge->SetPrototypeRefs(usdHandle,
       &protoGeomHandle,

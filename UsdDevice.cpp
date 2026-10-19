@@ -26,6 +26,8 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <set>
 #include <memory>
@@ -43,6 +45,34 @@
 #endif
 
 static char deviceName[] = "usd";
+
+extern "C" double JusyncGetHookedViewTime();
+
+namespace {
+// Optional external time source written by the ParaView ViewTime hook. The
+// VTK ANARI mapper currently publishes usd::time on each geometry, not on the
+// device, and the mapper's DATA_TIME_STEP lookup misses in some ParaView
+// builds. This file lets the sender label samples with the time ParaView
+// actually displays without changing the constant geometry clip key used for
+// morphing.
+double ReadExternalViewTime()
+{
+  const double hooked = JusyncGetHookedViewTime();
+  if (std::isfinite(hooked))
+    return hooked;
+
+  const char* path = getenv("JUSYNC_TIME_FILE");
+  if (!path || !path[0])
+    return std::numeric_limits<double>::quiet_NaN();
+  FILE* f = fopen(path, "r");
+  if (!f)
+    return std::numeric_limits<double>::quiet_NaN();
+  double t = 0.0;
+  const bool ok = (fscanf(f, "%lf", &t) == 1) && std::isfinite(t);
+  fclose(f);
+  return ok ? t : std::numeric_limits<double>::quiet_NaN();
+}
+} // namespace
 
 class UsdDeviceInternals
 {
@@ -852,6 +882,22 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   UsdGeometry::RecommitAllMeshes(this);
 
   const UsdDeviceData& paramData = getReadParams();
+  const double externalTime = ReadExternalViewTime();
+  if (std::isfinite(externalTime))
+  {
+    // ParaView's ViewTime is the authoritative simulation time for labels.
+    lastTimeStep_ = externalTime;
+    frameGeometryTime_ = std::numeric_limits<double>::quiet_NaN();
+  }
+  else if (std::isfinite(frameGeometryTime_))
+  {
+    lastTimeStep_ = frameGeometryTime_;
+    frameGeometryTime_ = std::numeric_limits<double>::quiet_NaN();
+  }
+  else
+  {
+    lastTimeStep_ = paramData.timeStep;
+  }
   internals->bridge->UpdateBeginEndTime(paramData.timeStep);
 
   internals->bridge->ResetResourceUpdateState(); // Reset the modified flags for committed shared resources
@@ -892,8 +938,11 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   const bool bAnnounceFiles = (notifViaWorker || notifViaBroker) && frame;
   // Declared outside the branch: rank 0 announces the commit after the barrier,
   // which sits outside that branch too.
-  const uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
+  // Pack the ANARI animation time (seconds) as milliseconds. Clients use this
+  // as the sample label so Unreal shows the same "Time: 0.7" as ParaView,
+  // instead of a wall-clock or synthetic counter.
+  const uint64_t timestamp = static_cast<uint64_t>(
+      (lastTimeStep_ > 0.0 ? lastTimeStep_ : 0.0) * 1000.0 + 0.5);
   if (bAnnounceFiles) {
     auto sendFileV2 = [&](const std::string& name, uint64_t size,
                           const uint64_t* h, const uint64_t* oldh, bool hasOld) {
@@ -1657,6 +1706,24 @@ void UsdDevice::NotifyFrameReady(double timestep)
 #endif
 
 
+void UsdDevice::RecordFrameGeometryTime(double t)
+{
+  if (!std::isfinite(t))
+    return;
+  if (!std::isfinite(frameGeometryTime_) || t > frameGeometryTime_)
+    frameGeometryTime_ = t;
+}
+
+double UsdDevice::ConsumeFrameGeometryTime()
+{
+  if (std::isfinite(frameGeometryTime_))
+  {
+    lastTimeStep_ = frameGeometryTime_;
+    frameGeometryTime_ = std::numeric_limits<double>::quiet_NaN();
+  }
+  return lastTimeStep_;
+}
+
 void UsdDevice::FlushSceneAndNotify()
 {
   if (!isInitialized()) return;
@@ -1670,6 +1737,12 @@ void UsdDevice::FlushSceneAndNotify()
     return;
   }
   lastFlushTime_ = now;
+
+  const double externalTime = ReadExternalViewTime();
+  if (std::isfinite(externalTime))
+    lastTimeStep_ = externalTime;
+  else
+    ConsumeFrameGeometryTime();
 
   if (!commitList.empty()) {
     reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
@@ -1689,8 +1762,8 @@ void UsdDevice::FlushSceneAndNotify()
 
 #ifdef ANARI_USD_ENABLE_MPI
   if (zmqWorker_ && zmqWorker_->IsConnected()) {
-    uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    uint64_t timestamp = static_cast<uint64_t>(
+        (lastTimeStep_ > 0.0 ? lastTimeStep_ : 0.0) * 1000.0 + 0.5);
 
     if (g_rankMemoryStore) {
       auto allFiles = g_rankMemoryStore->ListFiles();

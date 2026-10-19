@@ -137,6 +137,7 @@ set(USDModule_SOURCES
   UsdLight.cpp
   UsdCamera.cpp
   UsdDevice_queries.cpp
+  JusyncViewTimeHook.cpp
   UsdBridgeZmqBroker.cpp)
 
 set(USDModule_HEADERS
@@ -199,7 +200,7 @@ endif()
 
 target_link_libraries(anari_library_usd
 	PUBLIC anari::anari
-	PRIVATE anari::helium UsdBridge
+	PRIVATE anari::helium UsdBridge ${CMAKE_DL_LIBS}
 )
 
 option(USD_DEVICE_MPI_ENABLED "Enable MPI support for parallel USD output (KHR_DATA_PARALLEL_MPI)" OFF)
