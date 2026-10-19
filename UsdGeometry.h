@@ -111,6 +111,11 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
 
     void remove(UsdDevice* device) override;
 
+    // Re-commit every live triangle/quad geometry once. Called once per
+    // rendered frame by UsdDevice::renderFrame so the USD mesh clips follow
+    // in-place vertex array updates made by the app without a re-commit.
+    static void RecommitAllMeshes(UsdDevice* device);
+
     void filterSetParam(const char *name,
       ANARIDataType type,
       const void *mem,
@@ -176,6 +181,10 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
     template<typename UsdGeomType>
     bool commitTemplate(UsdDevice* device);
 
+    // Re-push the current vertex attribute arrays to USD at a constant time
+    // (0) so the written clip file keeps its key while the geometry morphs.
+    void recommitMesh(UsdDevice* device);
+
     void commitPrototypes(UsdBridge* usdBridge);
 
     template<typename GeomDataType>
@@ -190,6 +199,10 @@ class UsdGeometry : public UsdBridgedBaseObject<UsdGeometry, UsdGeometryData, Us
 
     GeomType geomType = GEOM_UNKNOWN;
     bool protoShapeChanged = false;
+
+    // Non-NaN while RecommitAllMeshes drives an update: forces the USD time
+    // step so the clip key stays constant across morph frames.
+    double recommitTimeOverride = std::numeric_limits<double>::quiet_NaN();
 
     bool hasNewAttribName = false;
 

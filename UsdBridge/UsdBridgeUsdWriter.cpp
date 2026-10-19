@@ -665,47 +665,140 @@ struct RawGeoIdleState
   bool burstDone = false;
 };
 std::map<std::string, RawGeoIdleState> g_rawGeoIdleStates;
+
+// Progressive refinement (milestone-2 #3): complementary lattice subsets
+// still pending per (geoKey, timeStep). Keyed by time as well so a looping
+// animation resumes refining each timestep exactly where the previous pass
+// left off; a fresh time starts the full subset set.
+struct RawGeoRefineQueue
+{
+  std::map<double, std::vector<uint64_t>> byTime;
+};
+std::map<std::string, RawGeoRefineQueue> g_rawGeoRefineQueues;
+
+// RawGeo sidecars are retired a little later than their USD clip. A rebuilt
+// "_u<k>" variant inherits the current sample and is republished one frame
+// after the previous variant is deleted; purging the old .geo immediately left
+// a one-frame window with no cloud file, and the client dropped/recreated the
+// actor instead of morphing it. A short grace period also lets an in-flight
+// download finish. Entries are cancelled if the same key is stored again.
+std::map<std::string, double> g_deferredGeoPurges;
 } // namespace
 
-void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
+void UsdBridgeUsdWriter::FlushDeferredGeoPurges()
 {
-  if(relativeName.empty())
-    return;
+  const double now = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
 
-  auto endsWith = [](const std::string& s, const char* suf) {
-    size_t n = strlen(suf);
-    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
-  };
+  for(auto it = g_deferredGeoPurges.begin(); it != g_deferredGeoPurges.end();)
+  {
+    if(now < it->second)
+    {
+      ++it;
+      continue;
+    }
 
-  std::vector<std::string> keys;
-  keys.push_back(relativeName);
-  if(endsWith(relativeName, ".usd"))
-  {
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
-  }
-  else if(endsWith(relativeName, ".usda"))
-  {
-    keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".usd");
-  }
-  else if(endsWith(relativeName, ".geo"))
-  {
-    // Removing the RawGeo entry must not orphan the USD twins either.
+    const std::string key = it->first;
+    it = g_deferredGeoPurges.erase(it);
 
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usd");
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
-  }
-  else if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
-          !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
-    keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
-
-  for(const std::string& key : keys)
-  {
     if(g_rankMemoryStore && g_rankMemoryStore->RemoveFile(key))
     {
       UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
         "[Purge] removed stale file from memory store: " << key);
     }
     g_rawGeoIdleStates.erase(key);
+    g_rawGeoRefineQueues.erase(key);
+    for(auto mt = MemoryTracking.begin(); mt != MemoryTracking.end(); ++mt)
+    {
+      if(mt->filename == key)
+      {
+        MemoryTracking.erase(mt);
+        break;
+      }
+    }
+  }
+}
+
+void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
+{
+  if(relativeName.empty())
+    return;
+
+  FlushDeferredGeoPurges();
+
+  auto endsWith = [](const std::string& s, const char* suf) {
+    size_t n = strlen(suf);
+    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+  };
+
+  // A clip and its RawGeo sidecar share one base name ("<base>.usda" and
+  // "<base>.geo", plus "<base>_s<k>.geo" refinement subsets). Deleting the
+  // clip used to purge only the USD twins, so the .geo files stayed in the
+  // memory store and every later client startup spawned them as extra point
+  // clouds that no live part ever updated again. Always sweep the whole
+  // family, no matter which member triggered the delete.
+  std::vector<std::string> keys;
+  auto addGeoSidecars = [&](const std::string& base)
+  {
+    keys.push_back(base + ".geo");
+
+    const std::string subPrefix = base + "_s";
+    if(g_rankMemoryStore)
+    {
+      for(const std::string& f : g_rankMemoryStore->ListFiles())
+      {
+        if(f.size() > subPrefix.size() + 4 && f.compare(0, subPrefix.size(), subPrefix) == 0 &&
+           endsWith(f, ".geo"))
+          keys.push_back(f);
+      }
+    }
+  };
+
+  keys.push_back(relativeName);
+  if(endsWith(relativeName, ".usd"))
+  {
+    const std::string base = relativeName.substr(0, relativeName.size() - 4);
+    keys.push_back(base + ".usda");
+    addGeoSidecars(base);
+  }
+  else if(endsWith(relativeName, ".usda"))
+  {
+    const std::string base = relativeName.substr(0, relativeName.size() - 5);
+    keys.push_back(base + ".usd");
+    addGeoSidecars(base);
+  }
+  else if(endsWith(relativeName, ".geo"))
+  {
+    // Removing the RawGeo entry must not orphan the USD twins either.
+    const std::string base = relativeName.substr(0, relativeName.size() - 4);
+    keys.push_back(base + ".usd");
+    keys.push_back(base + ".usda");
+
+    // ...nor the progressive-refinement subsets ("<base>_s<k>.geo").
+    addGeoSidecars(base);
+  }
+  else if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
+          !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
+    keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
+
+  const double purgeAt = std::chrono::duration<double>(
+      std::chrono::steady_clock::now().time_since_epoch()).count() + 1.0;
+
+  for(const std::string& key : keys)
+  {
+    if(endsWith(key, ".geo"))
+    {
+      g_deferredGeoPurges[key] = purgeAt;
+      continue;
+    }
+
+    if(g_rankMemoryStore && g_rankMemoryStore->RemoveFile(key))
+    {
+      UsdBridgeLogMacro(this->LogObject, UsdBridgeLogLevel::STATUS,
+        "[Purge] removed stale file from memory store: " << key);
+    }
+    g_rawGeoIdleStates.erase(key);
+    g_rawGeoRefineQueues.erase(key);
     for(auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
     {
       if(it->filename == key)
@@ -1849,6 +1942,8 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(!RawGeoEnabled() || !g_rankMemoryStore || !cacheEntry)
     return false;
 
+  FlushDeferredGeoPurges();
+
   if(!data.Points || data.NumPoints == 0 || RawGeoFloatComponents(data.PointsType) != 3)
     return false;
 
@@ -1875,6 +1970,39 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   static const bool strideLogged = [](){
     if(stride > 1)
       fprintf(stderr, "[UsdBridge] RawGeo stride = %llu\n", (unsigned long long)stride);
+    return true;
+  }();
+
+  // Progressive refinement (milestone-2 #3): with the coarse stride-S base
+  // going out per commit, complementary subsets ("_s<k>.geo", one per commit
+  // by default) trickle behind it so clients keep the coarse view live and
+  // converge on full density instead of it being dropped on the floor.
+  static const bool refineEnable = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_REFINE");
+    return v && v[0] == '1';
+  }();
+  static const uint64_t refinePerCommit = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_REFINE_PER_COMMIT");
+    uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 1;
+    if(n < 1) n = 1;
+    if(n > 16) n = 16;
+    return n;
+  }();
+  const bool refineActive = refineEnable && stride > 1;
+
+  // Scenes at or below this estimated full-res size finish refinement inside
+  // the commit that produced them (see the store ordering at the tail).
+  static const uint64_t kInlineRefineBytes = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_REFINE_INLINE_MB");
+    uint64_t mb = (v && v[0]) ? strtoull(v, nullptr, 10) : 8;
+    return mb * 1024ull * 1024ull;
+  }();
+  static const bool refineBanner = [](){
+    if(refineEnable && stride <= 1)
+      fprintf(stderr, "[UsdBridge] JUSYNC_RAWGEO_REFINE=1 but stride is 1: nothing to refine\n");
+    if(refineEnable && stride > 1)
+      fprintf(stderr, "[UsdBridge] RawGeo progressive refinement ON: stride %llu, %llu subset(s)/commit\n",
+          (unsigned long long)stride, (unsigned long long)refinePerCommit);
     return true;
   }();
 
@@ -1905,13 +2033,21 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   }
 
   const size_t descBytes = numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
-  auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeader &outHdr)
+  // Packs one lattice subset: the source points with indices
+  // offsetK, offsetK+effStride, offsetK+2*effStride, ... With refinement ON
+  // every payload (the stride-S coarse base included) is version 2 and
+  // self-describes its place in the lattice; with refinement OFF payloads stay
+  // version 1 and byte-identical to the historical wire format.
+  auto packRawGeo = [&](uint64_t effStride, uint64_t offsetK,
+                        anari_usd_protocol::JusyncRawGeoHeader &outHdr)
   {
-    const uint64_t n = (effStride == 1) ? nSrc : ((nSrc + effStride - 1) / effStride);
+    const uint64_t n = (effStride == 1 && offsetK == 0)
+        ? nSrc
+        : (nSrc > offsetK ? (nSrc - offsetK + effStride - 1) / effStride : 0);
 
     memset(&outHdr, 0, sizeof(outHdr));
     outHdr.magic = anari_usd_protocol::JUSYNC_RAWGEO_MAGIC;
-    outHdr.version = anari_usd_protocol::JUSYNC_RAWGEO_VERSION;
+    outHdr.version = refineActive ? anari_usd_protocol::JUSYNC_RAWGEO_VERSION : 1;
     strncpy(outHdr.prim_name, cacheEntry->Name.GetString().c_str(),
         sizeof(outHdr.prim_name) - 1);
     outHdr.num_points = n;
@@ -1920,6 +2056,12 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     outHdr.color_components = colorComponents;
     outHdr.num_attributes = numAttrs;
     outHdr.attr_uniform_count = static_cast<uint32_t>(n);
+    if(refineActive)
+    {
+      outHdr.subset_index = offsetK;
+      outHdr.subset_count = effStride;
+      outHdr.full_num_points = nSrc;
+    }
 
     const uint64_t posBytes = n * 3 * sizeof(float);
     const uint64_t colBytes = colorComponents ? n * colorComponents * sizeof(float) : 0;
@@ -1928,17 +2070,38 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       attrBytes += n * attrDescs[a].components * sizeof(float);
     outHdr.payload_bytes = posBytes + colBytes + attrBytes;
 
+    const size_t hdrBytes =
+        anari_usd_protocol::JusyncRawGeoHeader::header_bytes(outHdr.version);
     std::vector<uint8_t> b;
-    b.resize(sizeof(outHdr) + descBytes + outHdr.payload_bytes);
+    b.resize(hdrBytes + descBytes + outHdr.payload_bytes);
     uint8_t* d = b.data();
-    memcpy(d, &outHdr, sizeof(outHdr));
-    d += sizeof(outHdr);
+    if(outHdr.version == 1)
+    {
+      anari_usd_protocol::JusyncRawGeoHeaderV1 v1;
+      memset(&v1, 0, sizeof(v1));
+      v1.magic = outHdr.magic;
+      v1.version = 1;
+      memcpy(v1.prim_name, outHdr.prim_name, sizeof(v1.prim_name));
+      v1.num_points = outHdr.num_points;
+      v1.time = outHdr.time;
+      v1.position_components = outHdr.position_components;
+      v1.color_components = outHdr.color_components;
+      v1.num_attributes = outHdr.num_attributes;
+      v1.attr_uniform_count = outHdr.attr_uniform_count;
+      v1.payload_bytes = outHdr.payload_bytes;
+      memcpy(d, &v1, sizeof(v1));
+    }
+    else
+    {
+      memcpy(d, &outHdr, sizeof(outHdr));
+    }
+    d += hdrBytes;
     if(numAttrs)
     {
       memcpy(d, attrDescs, descBytes);
       d += descBytes;
     }
-    if(effStride == 1)
+    if(effStride == 1 && offsetK == 0)
     {
       memcpy(d, data.Points, posBytes);
     }
@@ -1946,12 +2109,12 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       const float* src = static_cast<const float*>(data.Points);
       for(uint64_t i = 0; i < n; ++i)
-        memcpy(d + i * 3 * sizeof(float), src + (i * effStride) * 3, 3 * sizeof(float));
+        memcpy(d + i * 3 * sizeof(float), src + (offsetK + i * effStride) * 3, 3 * sizeof(float));
     }
     d += posBytes;
     if(colBytes)
     {
-      if(effStride == 1)
+      if(effStride == 1 && offsetK == 0)
       {
         memcpy(d, data.Colors, colBytes);
       }
@@ -1960,7 +2123,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
         const float* src = static_cast<const float*>(data.Colors);
         const uint64_t cc = colorComponents;
         for(uint64_t i = 0; i < n; ++i)
-          memcpy(d + i * cc * sizeof(float), src + (i * effStride) * cc, cc * sizeof(float));
+          memcpy(d + i * cc * sizeof(float), src + (offsetK + i * effStride) * cc, cc * sizeof(float));
       }
       d += colBytes;
     }
@@ -1969,14 +2132,14 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       const uint64_t comps = attrDescs[a].components;
       const uint64_t bytes = n * comps * sizeof(float);
       const float* attrData = static_cast<const float*>(data.Attributes[attrSrcIdx[a]].Data);
-      if(effStride == 1)
+      if(effStride == 1 && offsetK == 0)
       {
         memcpy(d, attrData, bytes);
       }
       else
       {
         for(uint64_t i = 0; i < n; ++i)
-          memcpy(d + i * comps * sizeof(float), attrData + (i * effStride) * comps, comps * sizeof(float));
+          memcpy(d + i * comps * sizeof(float), attrData + (offsetK + i * effStride) * comps, comps * sizeof(float));
       }
       d += bytes;
     }
@@ -1984,7 +2147,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   };
 
   anari_usd_protocol::JusyncRawGeoHeader hdr;
-  std::vector<uint8_t> buf = packRawGeo(stride, hdr);
+  std::vector<uint8_t> buf = packRawGeo(stride, 0, hdr);
 
   static const uint64_t kMaxRawGeoPayload = 1536ull * 1024 * 1024;
   if(hdr.payload_bytes > kMaxRawGeoPayload)
@@ -1997,6 +2160,60 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     return false;
   }
 
+  // Serialized header width (v1 = 112, v2 = 136); everything after it shifts.
+  const size_t hdrSize =
+      anari_usd_protocol::JusyncRawGeoHeader::header_bytes(hdr.version);
+
+  // Drains up to maxSubsets pending refinement subsets for (geoKey, timeStep),
+  // creating the queue on first sight of a new time. Ordering is k-ascending,
+  // so the client always sees the LAST subset (completing its merge) arrive
+  // last within a drain.
+  auto drainRefine = [&](uint64_t maxSubsets) -> uint64_t
+  {
+    RawGeoRefineQueue &q = g_rawGeoRefineQueues[geoKey];
+    auto qIt = q.byTime.find(timeStep);
+    if(qIt == q.byTime.end())
+    {
+      // Bound the window for long time-varying streams (older times refilled
+      // from scratch should their turn come around again).
+      while(q.byTime.size() >= 64)
+        q.byTime.erase(q.byTime.begin());
+      std::vector<uint64_t> pending;
+      pending.reserve(static_cast<size_t>(stride - 1));
+      for(uint64_t k = 1; k < stride; ++k)
+        pending.push_back(k);
+      qIt = q.byTime.emplace(timeStep, std::move(pending)).first;
+    }
+
+    const std::string baseKey = geoKey.substr(0, geoKey.size() - 4);
+    uint64_t stored = 0;
+    for(; stored < maxSubsets && !qIt->second.empty(); ++stored)
+    {
+      const uint64_t k = qIt->second.front();
+      qIt->second.erase(qIt->second.begin());
+
+      anari_usd_protocol::JusyncRawGeoHeader shdr;
+      std::vector<uint8_t> sbuf = packRawGeo(stride, k, shdr);
+      if(shdr.num_points == 0 || shdr.payload_bytes > kMaxRawGeoPayload)
+        continue;
+
+      const std::string subKey = baseKey + "_s" + std::to_string(k) + ".geo";
+      g_deferredGeoPurges.erase(subKey);
+      GetDiffCapture().CapturePreStore(subKey);
+      g_rankMemoryStore->StoreFile(subKey, sbuf.data(), sbuf.size(), "application/x-jusync-geo");
+
+      static std::atomic<uint64_t> refineCount{0};
+      const uint64_t c = refineCount.fetch_add(1);
+      if(c < 24 || (c & 31) == 0)
+        fprintf(stderr, "[UsdBridge] RawGeo refine subset %llu/%llu t=%.6f -> '%s' (%.2f MB)\n",
+            (unsigned long long)k, (unsigned long long)stride, timeStep,
+            subKey.c_str(), sbuf.size() / (1024.0 * 1024.0));
+    }
+    if(qIt->second.empty())
+      q.byTime.erase(qIt);
+    return stored;
+  };
+
   static const uint64_t idleFrames = [](){
     const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
     uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
@@ -2005,7 +2222,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(idleFrames > 0)
   {
     RawGeoIdleState &st = g_rawGeoIdleStates[geoKey];
-    const uint8_t* payload = buf.data() + sizeof(hdr) + descBytes;
+    const uint8_t* payload = buf.data() + hdrSize + descBytes;
     const bool identical = st.baseline.size() == hdr.payload_bytes
         && memcmp(payload, st.baseline.data(), hdr.payload_bytes) == 0;
     st.baseline.assign(payload, payload + hdr.payload_bytes);
@@ -2016,11 +2233,19 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       if(!st.burstDone && stride > 1)
       {
-        const uint64_t perPoint = hdr.payload_bytes / hdr.num_points;
         st.burstDone = true;
+        if(refineActive)
+        {
+          // Idle flush: hand the client every still-pending subset for this
+          // key+time at once (chunked) instead of the old single full-res
+          // burst spike. The store already holds base + delivered subsets.
+          drainRefine(stride);
+          return true;
+        }
+        const uint64_t perPoint = hdr.payload_bytes / hdr.num_points;
         if(nSrc * perPoint <= kMaxRawGeoPayload)
         {
-          buf = packRawGeo(1, hdr);
+          buf = packRawGeo(1, 0, hdr);
           fprintf(stderr, "[UsdBridge] RawGeo idle burst: full-res %llu points (%.1f MB) for '%s'\n",
               (unsigned long long)hdr.num_points, buf.size() / (1024.0 * 1024.0), geoKey.c_str());
         }
@@ -2044,7 +2269,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       const uint64_t n = hdr.num_points;
       const uint64_t posBytes = n * 3 * sizeof(float);
-      const uint8_t* pos = buf.data() + sizeof(hdr) + descBytes;
+      const uint8_t* pos = buf.data() + hdrSize + descBytes;
       const uint8_t* col = pos + posBytes;
       char path[512];
       snprintf(path, sizeof(path), "%s/cloud_%08llu.ply", snapDir, (unsigned long long)f);
@@ -2071,7 +2296,26 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     }
   }
 
+  // Ordering matters for progressive refinement. Small scenes (the common
+  // interactive case) finish refinement inside this commit: store the
+  // complementary subsets FIRST and the subset-0 base LAST, so the client's
+  // merge completes exactly when the base lands and it emits ONE full cloud.
+  // Storing base-first would emit a coarse cloud on every commit and make the
+  // client's anti-pop blend restart from sparse geometry each frame.
+  const uint64_t perPoint = hdr.num_points ? (hdr.payload_bytes / hdr.num_points) : 0;
+  const uint64_t fullBytes = nSrc * perPoint;
+  const bool bInlineRefine = refineActive && fullBytes <= kInlineRefineBytes;
+  if(bInlineRefine)
+    drainRefine(stride);
+
+  g_deferredGeoPurges.erase(geoKey);
   GetDiffCapture().CapturePreStore(geoKey);
   g_rankMemoryStore->StoreFile(geoKey, buf.data(), buf.size(), "application/x-jusync-geo");
+
+  // Large clouds keep the paced path: base first (instant coarse view), then
+  // subset(s) per commit. Their apps keep committing, so the pace works.
+  if(refineActive && !bInlineRefine)
+    drainRefine(refinePerCommit);
+
   return true;
 }

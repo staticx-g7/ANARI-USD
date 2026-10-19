@@ -8,7 +8,32 @@
 #include "UsdBridgeMemoryStore.h"
 #include "anari/frontend/type_utility.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <mutex>
+#include <vector>
+
+// Registry of live triangle/quad geometries. VTK's ANARI mapper updates the
+// vertex array memory in place and does not re-commit the geometry when the
+// point positions change, so the USD clips it produces are one frame stale
+// (the ParaView render is fine because it reads the array live). Re-committing
+// every mesh once per rendered frame re-reads the current array memory and lets
+// the writer emit a fresh clip whenever the content hash changed.
+namespace
+{
+  std::mutex g_meshGeomMutex;
+  std::vector<UsdGeometry*> g_meshGeoms;
+
+  bool meshRefreshEnabled()
+  {
+    static const bool enabled = []() {
+      const char* v = getenv("JUSYNC_MESH_REFRESH");
+      return !(v && v[0] == '0');
+    }();
+    return enabled;
+  }
+}
 
 DEFINE_PARAMETER_MAP(UsdGeometry,
   REGISTER_PARAMETER_MACRO("name", ANARI_STRING, name)
@@ -681,14 +706,61 @@ UsdGeometry::UsdGeometry(const char* name, const char* type, UsdDevice* device)
 
   if(createTempArrays)
     tempArrays = std::make_unique<UsdGeometryTempArrays>(attributeArray);
+
+  if(geomType == GEOM_TRIANGLE || geomType == GEOM_QUAD)
+  {
+    std::lock_guard<std::mutex> lk(g_meshGeomMutex);
+    g_meshGeoms.push_back(this);
+  }
 }
 
 UsdGeometry::~UsdGeometry()
 {
+  {
+    std::lock_guard<std::mutex> lk(g_meshGeomMutex);
+    g_meshGeoms.erase(std::remove(g_meshGeoms.begin(), g_meshGeoms.end(), this),
+        g_meshGeoms.end());
+  }
+
 #ifdef OBJECT_LIFETIME_EQUALS_USD_LIFETIME
   if(cachedBridge)
     cachedBridge->DeleteGeometry(usdHandle);
 #endif
+}
+
+void UsdGeometry::RecommitAllMeshes(UsdDevice* device)
+{
+  if(!device || !meshRefreshEnabled())
+    return;
+
+  std::lock_guard<std::mutex> lk(g_meshGeomMutex);
+  for(UsdGeometry* geom : g_meshGeoms)
+  {
+    if(geom && geom->usdHandle.value)
+      geom->recommitMesh(device);
+  }
+}
+
+void UsdGeometry::recommitMesh(UsdDevice* device)
+{
+  if(geomType != GEOM_TRIANGLE && geomType != GEOM_QUAD)
+    return;
+
+  UsdBridge* usdBridge = device->getUsdBridge();
+  const UsdGeometryData& paramData = getReadParams();
+  if(!usdBridge || !paramData.vertexPositions)
+    return;
+
+  UsdBridgeMeshData meshData;
+  syncAttributeArrays();
+  initializeGeomData(meshData);
+  copyAttributeArraysToData(meshData);
+
+  // Constant key: the RawGeo/anim path publishes at t=0, and the client watches
+  // the clip belonging to that key while the mesh morphs.
+  recommitTimeOverride = 0.0;
+  updateGeomData(device, usdBridge, meshData, false);
+  recommitTimeOverride = std::numeric_limits<double>::quiet_NaN();
 }
 
 void UsdGeometry::remove(UsdDevice* device)
@@ -1122,7 +1194,9 @@ void UsdGeometry::updateGeomData(UsdDevice* device, UsdBridge* usdBridge, UsdBri
 
 
   double worldTimeStep = device->getReadParams().timeStep;
-  double dataTimeStep = selectObjTime(paramData.timeStep, worldTimeStep);
+  double dataTimeStep = std::isnan(recommitTimeOverride)
+      ? selectObjTime(paramData.timeStep, worldTimeStep)
+      : recommitTimeOverride;
   usdBridge->SetGeometryData(usdHandle, meshData, dataTimeStep);
 }
 

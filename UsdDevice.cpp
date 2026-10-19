@@ -845,6 +845,12 @@ void UsdDevice::renderFrame(ANARIFrame frame)
   flushCommitList();
 
   transferWriteToReadParams();
+
+  // VTK's ANARI mapper may update the vertex array in place without calling
+  // anariCommit on the geometry. Re-commit meshes here so the USD writer sees
+  // the current positions every frame (no-op when nothing changed).
+  UsdGeometry::RecommitAllMeshes(this);
+
   const UsdDeviceData& paramData = getReadParams();
   internals->bridge->UpdateBeginEndTime(paramData.timeStep);
 

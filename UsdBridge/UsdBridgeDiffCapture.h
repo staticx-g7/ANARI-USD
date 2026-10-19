@@ -14,9 +14,13 @@ struct DiffFileEntry {
     uint64_t oldHash128[2];
     size_t oldSize;
     double oldTimestamp;
+    // True only when the pre-store snapshot found an existing entry. First-time
+    // files are still captured (so they are announced), but carry no old hash
+    // and no old payload for the client's diff.
+    bool hasOldEntry;
 
     DiffFileEntry()
-        : oldSize(0), oldTimestamp(0)
+        : oldSize(0), oldTimestamp(0), hasOldEntry(false)
     {
         oldHash128[0] = 0;
         oldHash128[1] = 0;

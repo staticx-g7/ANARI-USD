@@ -67,6 +67,7 @@ public:
   void RemoveManifestAndClipStages(const UsdBridgePrimCache* cacheEntry);
 
   void RemoveStoreEntriesForFile(const std::string& relativeName);
+  void FlushDeferredGeoPurges();
 
   const UsdStagePair& FindOrCreatePrimStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix) const;
   const UsdStagePair& FindOrCreateClipStage(UsdBridgePrimCache* cacheEntry, const char* namePostfix, double timeStep, bool& exists) const;

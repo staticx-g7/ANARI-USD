@@ -378,6 +378,7 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   ReadEnv();
 
   Part* p = FindPart(geometry.value);
+  const bool bNewPart = (p == nullptr);
   if(!p)
   {
     p = new Part();
@@ -447,6 +448,17 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     g.NeedReseed = false;
     g.Pending.push_back(0); // published from Tick(), not here
     return true;
+  }
+
+  if(bNewPart && !newPayload && !g.Samples.empty())
+  {
+    // A rebuilt "_u<k>" prim (same payload, new actor index) inherits the
+    // already-published sample. Republish it under its own name so its RawGeo
+    // sidecar exists before the previous variant's sidecar is purged. Without
+    // this, replacing "_0" with "_u1" left the group with no .geo at all and
+    // the client kept the old cloud on screen forever.
+    g.Touched = true;
+    g.Pending.push_back(g.Samples.size() - 1);
   }
 
   if(g.NeedReseed && !g.Samples.empty())
