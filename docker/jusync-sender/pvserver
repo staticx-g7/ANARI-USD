@@ -1,0 +1,10 @@
+#!/bin/sh
+# pvserver from the self-built ParaView 6.1 tree (bind-mounted build-out
+# preferred, image-baked /opt/pv61 fallback). See the `paraview` wrapper.
+if [ -x /opt/sender/pv/bin/pvserver ]; then
+    PVROOT=/opt/sender/pv
+else
+    PVROOT=/opt/pv61
+fi
+export LD_LIBRARY_PATH="$PVROOT/lib:${LD_LIBRARY_PATH:-}"
+exec "$PVROOT/bin/pvserver" "$@"

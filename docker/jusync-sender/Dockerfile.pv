@@ -16,5 +16,11 @@ RUN sed -i -e 's/^localhost=no$/localhost=yes/' \
 
 ENV JUSYNC_VNC_RESOLUTION=1600x900
 
+# Older jusync-sender bases bake the bigCloud sender's RawGeo tuning into ENV,
+# and a baked value beats ${VAR:-default} in every interactive launcher (a
+# 10560-point dataset streamed as 2640). Drop it: empty = device default, which
+# is full density. run-sender.sh sets the stride for senders that need it.
+ENV JUSYNC_RAWGEO_STRIDE=
+
 # Keep the container alive with the desktop up; ParaView/sender run on demand.
 CMD ["sleep", "infinity"]

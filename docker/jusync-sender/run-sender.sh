@@ -13,6 +13,7 @@
 #   JUSYNC_SENDER_BIN     sender executable (overridden by $1)
 #   JUSYNC_LOOP=1         re-run forever (continuous clip updates like a sim)
 #   JUSYNC_LOOP_DELAY=2   seconds between loop iterations
+#   JUSYNC_RAWGEO_STRIDE  RawGeo point subsampling for this sender (default 32)
 #   ANARI_USD_SERIALIZE_LOCATION  where disk-mode assets go (default /work)
 set -e
 
@@ -28,6 +29,11 @@ export OMPI_COMM_WORLD_SIZE=1
 export ANARI_USD_SERIALIZE_LOCATION="${ANARI_USD_SERIALIZE_LOCATION:-/work}"
 mkdir -p "$ANARI_USD_SERIALIZE_LOCATION"
 cd "$ANARI_USD_SERIALIZE_LOCATION"
+
+# RawGeo decimation belongs here, beside the multi-million-point clouds it was
+# tuned for. In image ENV it also lands on interactive ParaView sessions, whose
+# launchers then cannot override it (a baked value always beats ${VAR:-default}).
+export JUSYNC_RAWGEO_STRIDE="${JUSYNC_RAWGEO_STRIDE:-32}"
 
 echo "[run-sender] broker tcp://0.0.0.0:5556 (JUSYNC client) / 5555 (ranks)"
 echo "[run-sender] starting: $BIN $*"

@@ -1,0 +1,42 @@
+# Permanent fix layer for the pv-anari-usd interactive desktop image, built from
+# a commit of a working container so the ld.so registration that the usd device
+# needs survives `docker rm`:
+#
+#   docker commit pv-anari-usd staticxg7/pv-anari-usd:6.8-fixbase
+#   docker build -f docker/jusync-sender/Dockerfile.pv68 `
+#                -t staticxg7/pv-anari-usd:6.8 .          # context = repo root
+#
+# Committing the container rather than layering on the published image is on
+# purpose: the ld.so registration was made inside the running container, so a
+# build from 6.7 would silently drop it and ParaView would go back to
+# "Could not load environment library". The RUN below repeats the registration so
+# this layer also stands on its own over an unmodified base.
+ARG BASE=staticxg7/pv-anari-usd:6.8-fixbase
+FROM ${BASE}
+
+# ld.so has to resolve the usd library's NEEDED libusd_* deps without
+# LD_LIBRARY_PATH: X session startup strips LD_* from the desktop.
+RUN printf '/opt/usd/lib\n' > /etc/ld.so.conf.d/zz-anari-usd.conf \
+ && mkdir -p /usr/local/lib/anari \
+ && ln -sf /usr/local/lib/libanari_library_usd.so /usr/local/lib/anari/ \
+ && ldconfig
+
+# A committed container carries the X lock and socket of the session it was
+# committed from; Xtigervnc refuses to start on those (entrypoint.sh also clears
+# them, this keeps the image itself clean).
+RUN rm -f /tmp/.X*-lock /tmp/.X11-unix/X*
+
+# Install at both paths /usr/local/bin/paraview tests for, so the mount-first
+# branch cannot resurrect an older launcher.
+COPY docker/jusync-sender/start-paraview-anari.sh /opt/pv61/start-paraview-anari.sh
+COPY docker/jusync-sender/start-paraview-anari.sh /opt/sender/start-paraview-anari.sh
+RUN chmod +x /opt/pv61/start-paraview-anari.sh /opt/sender/start-paraview-anari.sh
+
+# The sender base image bakes JUSYNC_RAWGEO_STRIDE=4 for 10M-point clouds, and a
+# baked ENV beats ${VAR:-default} in every launcher. Clear it: empty means the
+# device default, full density. Senders that need decimation set the stride in
+# run-sender.sh.
+ENV JUSYNC_RAWGEO_STRIDE= \
+    JUSYNC_RAWGEO_SNAPSHOT_DIR=/work/snaps
+
+CMD ["sleep", "infinity"]

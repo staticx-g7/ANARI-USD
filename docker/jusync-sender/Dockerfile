@@ -96,6 +96,13 @@ RUN cmake -S anari-usd -B build/device -G Ninja \
 # --------------------------------------------------------------------------
 FROM ${BASE_IMAGE} AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
+# Qt6 runtime for the SELF-BUILT ParaView 6.1 (bind-mounted at /opt/sender/pv,
+# or baked to /opt/pv61 by Dockerfile.pvbake). apt's `paraview` used to be
+# installed here and is deliberately gone: /usr/bin/paraview 5.11.2 shadowed the
+# 6.1 build on PATH. libqt6svg6 supplies the SVG icon engine
+# (iconengines/libqsvgicon.so) that ParaView 6 requires, otherwise every toolbar
+# icon comes back a null pixmap; qt6-qpa-plugins supplies the xcb platform
+# plugin for the VNC desktop.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libtbb12 zlib1g libzmq5 python3 \
       libopenmpi3 openmpi-bin \
@@ -103,21 +110,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xterm fluxbox \
       tigervnc-standalone-server tigervnc-common \
       novnc websockify \
-      paraview \
       less vim-tiny \
+      libqt6core6t64 libqt6gui6t64 libqt6widgets6t64 libqt6network6t64 \
+      libqt6opengl6t64 libqt6openglwidgets6t64 libqt6help6 libqt6core5compat6 \
+      libqt6svg6 qt6-qpa-plugins libxcb-cursor0 \
     && rm -rf /var/lib/apt/lists/*
 
 # USD device + ANARI SDK + usdcat/usdview tools live under these prefixes.
 COPY --from=builder /opt/usd/  /opt/usd/
 COPY --from=builder /usr/local/ /usr/local/
-RUN ldconfig
+# ld.so must resolve the usd library's NEEDED deps (libusd_*) with no
+# LD_LIBRARY_PATH: X session startup strips LD_* from the VNC desktop, so
+# ParaView launched from it otherwise gets NULL from anariLoadLibrary and
+# vtkAnariDevice reports "Could not load environment library" even though
+# ANARI_LIBRARY is set. Also give ANARI_LIBRARY_PATH's first entry a real dir.
+RUN printf '/opt/usd/lib\n' > /etc/ld.so.conf.d/zz-anari-usd.conf \
+ && mkdir -p /usr/local/lib/anari \
+ && ln -sf /usr/local/lib/libanari_library_usd.so /usr/local/lib/anari/ \
+ && ldconfig
 
 COPY docker/jusync-sender/entrypoint.sh   /usr/local/bin/entrypoint.sh
 COPY docker/jusync-sender/run-sender.sh   /usr/local/bin/run-sender.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sender.sh
+# paraview/pvserver put the self-built 6.1 on PATH (mount-first, /opt/pv61
+# fallback); jusync-start.sh resolves the sender binary + snapshot dir so the
+# image also starts cleanly with no build-out mount.
+COPY docker/jusync-sender/paraview        /usr/local/bin/paraview
+COPY docker/jusync-sender/pvserver        /usr/local/bin/pvserver
+COPY docker/jusync-sender/jusync-start.sh /usr/local/bin/jusync-start.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-sender.sh \
+             /usr/local/bin/paraview /usr/local/bin/pvserver \
+             /usr/local/bin/jusync-start.sh
 
+# ANARI_LIBRARY belongs in the image, not a launcher: every ANARI consumer
+# (sender, ParaView from the desktop, pvserver) needs it and none should have
+# to export it. The usd library itself is found through ld.so, not
+# LD_LIBRARY_PATH, because X session startup strips LD_* from the desktop.
 ENV DISPLAY=:1 \
     LD_LIBRARY_PATH=/opt/usd/lib:/usr/local/lib \
+    ANARI_LIBRARY=usd \
     ANARI_MODULE_PATH=/usr/local/lib/anari:/usr/local/lib \
     ANARI_LIBRARY_PATH=/usr/local/lib/anari:/usr/local/lib \
     JUSYNC_VNC_RESOLUTION=1600x900x24 \
@@ -127,4 +157,7 @@ ENV DISPLAY=:1 \
 EXPOSE 5556 5555 5901 6080
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["/usr/local/bin/run-sender.sh"]
+# jusync-start.sh picks the sender binary (bind-mounted build-out first, the
+# image's own /usr/local/bin/anariBigCloudUsd second) before exec'ing
+# run-sender.sh, so the image starts on machines without the mount.
+CMD ["/usr/local/bin/jusync-start.sh"]

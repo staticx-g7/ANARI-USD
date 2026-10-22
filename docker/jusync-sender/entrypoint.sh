@@ -8,6 +8,11 @@ NOVNC_PORT=6080
 
 mkdir -p /root/.vnc /work /tmp/.X11-unix
 
+# Clear stale X11 runtime state. An image committed from a RUNNING container
+# bakes /tmp/.X1-lock and /tmp/.X11-unix/X1 into it, and tigervnc then refuses
+# to start with ":1 is taken because of /tmp/.X1-lock" on every fresh container.
+rm -f /tmp/.X*-lock /tmp/.X11-unix/X*
+
 # VNC password (override with JUSYNC_VNC_PASSWORD).
 # NOTE: Ubuntu 24.04's tigervnc packages no longer ship vncpasswd; fall back
 # to unauthenticated VNC on this throwaway Xvnc. run.ps1 / docker-compose bind
@@ -48,7 +53,12 @@ if [ "${JUSYNC_NOVNC:-1}" = "1" ]; then
     websockify --web=/usr/share/novnc/ ${NOVNC_PORT} localhost:${VNC_PORT} >/tmp/websockify.log 2>&1 &
 fi
 
-if [ "$VNC_SEC" = vncauth ]; then
+# Only claim the desktop is up when the X socket actually exists. This echo ran
+# unconditionally before, so a failed VNC start still logged "desktop :1 -> VNC
+# 5901" and a headless container looked healthy.
+if [ ! -e "/tmp/.X11-unix/X${VNC_DISP#:}" ]; then
+    echo "[entrypoint] WARNING: no X socket for ${VNC_DISP} - desktop unavailable" >&2
+elif [ "$VNC_SEC" = vncauth ]; then
     echo "[entrypoint] desktop ${VNC_DISP} -> VNC ${VNC_PORT}, noVNC http://localhost:${NOVNC_PORT}/vnc.html (password: ${JUSYNC_VNC_PASSWORD:-jusync})"
 else
     echo "[entrypoint] desktop ${VNC_DISP} -> VNC ${VNC_PORT} (no auth), noVNC http://localhost:${NOVNC_PORT}/vnc.html"
