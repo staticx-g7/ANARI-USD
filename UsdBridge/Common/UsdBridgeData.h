@@ -483,6 +483,10 @@ struct UsdBridgeInstancerData
   float getUniformScale() const { return Scale.Data[0]; }
 
   bool UseUsdGeomPoints = true; // Shape is sphere and geomPoints is desired
+  // RawGeo v2 only carries positions/colors/attributes, not the instancer
+  // prototype. Set this for sphere point clouds; cylinders/cones/glyphs must
+  // keep their USD surface prototypes instead.
+  bool IsPointCloud = false;
 
   uint64_t NumPoints = 0;
   const void* Points = nullptr;
@@ -508,6 +512,12 @@ struct UsdBridgeInstancerData
   uint64_t NumInvisibleIds = 0;
   UsdBridgeType InvisibleIdsType = UsdBridgeType::UNDEFINED;
 };
+
+inline bool UsdBridgeCanStreamPointCloud(const UsdBridgeInstancerData& data)
+{
+  return data.IsPointCloud && data.Points && data.NumPoints > 0 &&
+      data.PointsType == UsdBridgeType::FLOAT3;
+}
 
 struct UsdBridgeInstancerRefData
 {

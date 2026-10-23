@@ -841,6 +841,9 @@ void UsdGeometry::initializeGeomData(UsdBridgeInstancerData& geomData)
   setAttributeTimeVarying<UsdBridgeInstancerData>(geomData.TimeVarying);
 
   geomData.UseUsdGeomPoints = geomType == GEOM_SPHERE && paramData.UseUsdGeomPoints;
+  // Only sphere geometry is a point cloud. Cylinders, cones, and glyphs are
+  // surface instancers and must not be flattened by the RawGeo point writer.
+  geomData.IsPointCloud = geomType == GEOM_SPHERE;
 }
 
 void UsdGeometry::initializeGeomData(UsdBridgeCurveData& geomData)

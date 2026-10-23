@@ -1901,7 +1901,10 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(!RawGeoEnabled() || !g_rankMemoryStore || !cacheEntry)
     return false;
 
-  if(!data.Points || data.NumPoints == 0 || RawGeoFloatComponents(data.PointsType) != 3)
+  // RawGeo v2 has no topology or prototype shape. Only sphere point clouds
+  // may use it; surface instancers fall through to the USD point-instancer
+  // writer so cylinders/cones/glyphs keep their geometry.
+  if(!UsdBridgeCanStreamPointCloud(data))
     return false;
 
   std::string geoKey;
