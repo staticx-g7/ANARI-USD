@@ -188,6 +188,8 @@ public:
 
   bool TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
                       const UsdBridgeInstancerData& data, double timeStep);
+  bool TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
+                      const UsdBridgeCurveData& data, double timeStep);
   template<typename GeomDataType>
   bool TryStoreRawGeo(UsdBridgePrimCache*, const GeomDataType&, double) { return false; }
   static bool RawGeoEnabled();

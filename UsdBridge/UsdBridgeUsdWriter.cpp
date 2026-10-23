@@ -9,6 +9,7 @@
 #include "UsdBridgeMemoryStore.h"
 #include "UsdBridgeDiffCapture.h"
 #include "../AnariUsdProtocol.h" // JusyncRawGeoHeader wire format (shared with the JUSYNC client)
+#include "RawGeoCurvePack.h"     // RawGeo v3 curve subset packer
 #include "Common/UsdBridgeParallelController.h"
 
 #include <cstring>
@@ -665,6 +666,13 @@ struct RawGeoIdleState
   bool burstDone = false;
 };
 std::map<std::string, RawGeoIdleState> g_rawGeoIdleStates;
+
+struct RawGeoCurveIdleState
+{
+  uint64_t hash = 0;
+  uint64_t same = 0;
+};
+std::map<std::string, RawGeoCurveIdleState> g_rawGeoCurveIdleStates;
 } // namespace
 
 void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeName)
@@ -706,6 +714,7 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
         "[Purge] removed stale file from memory store: " << key);
     }
     g_rawGeoIdleStates.erase(key);
+    g_rawGeoCurveIdleStates.erase(key);
     for(auto it = MemoryTracking.begin(); it != MemoryTracking.end(); ++it)
     {
       if(it->filename == key)
@@ -1815,6 +1824,8 @@ void UsdBridgeUsdWriter::RecalculateAllMemoryUsage()
 
 namespace
 {
+  constexpr uint64_t kMaxRawGeoPayloadBytes = 1536ull * 1024 * 1024;
+
   uint32_t RawGeoFloatComponents(UsdBridgeType type)
   {
     switch(type)
@@ -1831,6 +1842,59 @@ namespace
   {
     size_t n = strlen(suf);
     return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+  }
+
+  // Shared between the point (v2) and curve (v3) writers: turn the clip-stage
+  // name for this timestep into the store key, without the USD extension.
+  bool RawGeoGeoKey(UsdBridgePrimCache* cacheEntry, double timeStep, std::string& outGeoKey)
+  {
+    if(!cacheEntry)
+      return false;
+
+    auto clipIt = cacheEntry->ClipStages.find(timeStep);
+    if(clipIt == cacheEntry->ClipStages.end())
+      return false;
+
+    outGeoKey = clipIt->second.first;
+    if(RawGeoEndsWith(outGeoKey, ".usda"))
+      outGeoKey.resize(outGeoKey.size() - 5);
+    else if(RawGeoEndsWith(outGeoKey, ".usd"))
+      outGeoKey.resize(outGeoKey.size() - 4);
+    outGeoKey += ".geo";
+    return true;
+  }
+
+  bool RawGeoCurveEnabled()
+  {
+    static const bool enabled = [](){
+      const char* v = getenv("JUSYNC_RAWGEO_CURVES");
+      return v && v[0] == '1';
+    }();
+    return enabled;
+  }
+
+  uint64_t RawGeoCurveSubsets()
+  {
+    static const uint64_t subsets = [](){
+      const char* v = getenv("JUSYNC_RAWGEO_CURVE_SUBSETS");
+      uint64_t s = (v && v[0]) ? strtoull(v, nullptr, 10) : 4;
+      if(s < 1) s = 1;
+      if(s > 8) s = 8;
+      return s;
+    }();
+    return subsets;
+  }
+
+  uint64_t RawGeoHash(const void* data, size_t bytes, uint64_t seed)
+  {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint64_t h = seed;
+    for(size_t i = 0; i < bytes; ++i)
+    {
+      h ^= static_cast<uint64_t>(p[i]);
+      h *= 1099511628211ull;
+    }
+    return h;
   }
 }
 
@@ -1852,16 +1916,9 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(!data.Points || data.NumPoints == 0 || RawGeoFloatComponents(data.PointsType) != 3)
     return false;
 
-  auto clipIt = cacheEntry->ClipStages.find(timeStep);
-  if(clipIt == cacheEntry->ClipStages.end())
+  std::string geoKey;
+  if(!RawGeoGeoKey(cacheEntry, timeStep, geoKey))
     return false;
-
-  std::string geoKey = clipIt->second.first;
-  if(RawGeoEndsWith(geoKey, ".usda"))
-    geoKey.resize(geoKey.size() - 5);
-  else if(RawGeoEndsWith(geoKey, ".usd"))
-    geoKey.resize(geoKey.size() - 4);
-  geoKey += ".geo";
 
   const uint64_t nSrc = data.NumPoints;
 
@@ -1905,13 +1962,13 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   }
 
   const size_t descBytes = numAttrs * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
-  auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeader &outHdr)
+  auto packRawGeo = [&](uint64_t effStride, anari_usd_protocol::JusyncRawGeoHeaderV2 &outHdr)
   {
     const uint64_t n = (effStride == 1) ? nSrc : ((nSrc + effStride - 1) / effStride);
 
     memset(&outHdr, 0, sizeof(outHdr));
     outHdr.magic = anari_usd_protocol::JUSYNC_RAWGEO_MAGIC;
-    outHdr.version = anari_usd_protocol::JUSYNC_RAWGEO_VERSION;
+    outHdr.version = 2; // point clouds stay on the v2 wire format; v3 is curves only
     strncpy(outHdr.prim_name, cacheEntry->Name.GetString().c_str(),
         sizeof(outHdr.prim_name) - 1);
     outHdr.num_points = n;
@@ -1920,6 +1977,10 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     outHdr.color_components = colorComponents;
     outHdr.num_attributes = numAttrs;
     outHdr.attr_uniform_count = static_cast<uint32_t>(n);
+    // v2 requires a well-formed lattice even when the point path emits one frame.
+    outHdr.subset_index = 0;
+    outHdr.subset_count = 1;
+    outHdr.full_num_points = n;
 
     const uint64_t posBytes = n * 3 * sizeof(float);
     const uint64_t colBytes = colorComponents ? n * colorComponents * sizeof(float) : 0;
@@ -1983,11 +2044,10 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     return b;
   };
 
-  anari_usd_protocol::JusyncRawGeoHeader hdr;
+  anari_usd_protocol::JusyncRawGeoHeaderV2 hdr;
   std::vector<uint8_t> buf = packRawGeo(stride, hdr);
 
-  static const uint64_t kMaxRawGeoPayload = 1536ull * 1024 * 1024;
-  if(hdr.payload_bytes > kMaxRawGeoPayload)
+  if(hdr.payload_bytes > kMaxRawGeoPayloadBytes)
   {
     static const bool cappedLogged = [](){
       fprintf(stderr, "[UsdBridge] RawGeo payload exceeds cap, falling back to USD path\n");
@@ -2018,7 +2078,7 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       {
         const uint64_t perPoint = hdr.payload_bytes / hdr.num_points;
         st.burstDone = true;
-        if(nSrc * perPoint <= kMaxRawGeoPayload)
+        if(nSrc * perPoint <= kMaxRawGeoPayloadBytes)
         {
           buf = packRawGeo(1, hdr);
           fprintf(stderr, "[UsdBridge] RawGeo idle burst: full-res %llu points (%.1f MB) for '%s'\n",
@@ -2073,5 +2133,220 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
 
   GetDiffCapture().CapturePreStore(geoKey);
   g_rankMemoryStore->StoreFile(geoKey, buf.data(), buf.size(), "application/x-jusync-geo");
+  return true;
+}
+
+bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
+    const UsdBridgeCurveData& data, double timeStep)
+{
+  if(!RawGeoEnabled() || !RawGeoCurveEnabled() || !g_rankMemoryStore || !cacheEntry)
+    return false;
+
+  if(!data.Points || data.NumPoints == 0 ||
+     RawGeoFloatComponents(data.PointsType) != 3 ||
+     !data.CurveLengths || data.NumCurveLengths == 0)
+    return false;
+
+  std::string baseKey;
+  if(!RawGeoGeoKey(cacheEntry, timeStep, baseKey))
+    return false;
+
+  const uint64_t numCurves = data.NumCurveLengths;
+
+  std::vector<int32_t> lengths(numCurves);
+  std::vector<uint64_t> offsets(numCurves + 1, 0);
+  uint64_t summedPoints = 0;
+  for(uint64_t c = 0; c < numCurves; ++c)
+  {
+    const int len = data.CurveLengths[c];
+    if(len < 2)
+    {
+      static const bool logged = [](){
+        fprintf(stderr, "[UsdBridge] RawGeo curves rejected: curve shorter than 2 nodes\n");
+        return true;
+      }();
+      (void)logged;
+      return false;
+    }
+    lengths[c] = static_cast<int32_t>(len);
+    summedPoints += static_cast<uint64_t>(len);
+    offsets[c + 1] = summedPoints;
+  }
+  if(summedPoints != data.NumPoints)
+  {
+    static const bool logged = [](){
+      fprintf(stderr, "[UsdBridge] RawGeo curves rejected: CurveLengths sum does not match NumPoints\n");
+      return true;
+    }();
+    (void)logged;
+    return false;
+  }
+
+  const uint32_t rawColorComponents = (data.Colors && !data.PerPrimColors)
+    ? RawGeoFloatComponents(data.ColorsType) : 0;
+  const uint32_t colorComponents =
+    (rawColorComponents == 3 || rawColorComponents == 4) ? rawColorComponents : 0;
+
+  // Widths are per point only. A uniform scale is left to the client's
+  // jusync.Curve.DefaultRadius rather than expanded into a per-point array.
+  const bool hasWidths = data.Scales && data.ScalesType == UsdBridgeType::FLOAT;
+
+  struct CurveAttrSrc
+  {
+    const char* Name = nullptr;
+    uint32_t Components = 0;
+    const void* Data = nullptr;
+  };
+  std::vector<CurveAttrSrc> attrs;
+  if(data.Attributes)
+  {
+    for(uint32_t a = 0; a < data.NumAttributes && attrs.size() < 16; ++a)
+    {
+      const UsdBridgeAttribute& src = data.Attributes[a];
+      if(!src.Data || src.PerPrimData || !src.Name)
+        continue;
+      const uint32_t comps = RawGeoFloatComponents(src.DataType);
+      if(comps == 0 || comps > 4)
+        continue;
+      attrs.push_back(CurveAttrSrc{src.Name, comps, src.Data});
+    }
+  }
+
+  const uint64_t subsetCount = RawGeoCurveSubsets();
+  const std::string primName = cacheEntry->Name.GetString();
+
+  // Build every subset before storing any: the cap must be able to reject the
+  // whole frame without leaving a partial set of files behind.
+  std::vector<std::vector<uint8_t>> payloads(subsetCount);
+
+  for(uint64_t k = 0; k < subsetCount; ++k)
+  {
+    std::vector<int32_t> selectedLengths;
+    uint64_t selectedPoints = 0;
+    for(uint64_t c = k; c < numCurves; c += subsetCount)
+    {
+      selectedLengths.push_back(lengths[c]);
+      selectedPoints += static_cast<uint64_t>(lengths[c]);
+    }
+
+    std::vector<float> selPoints(static_cast<size_t>(selectedPoints) * 3);
+    std::vector<float> selColors(static_cast<size_t>(selectedPoints) * colorComponents);
+    std::vector<float> selWidths(hasWidths ? static_cast<size_t>(selectedPoints) : 0);
+    std::vector<std::vector<float>> selAttrs(attrs.size());
+    for(size_t a = 0; a < attrs.size(); ++a)
+      selAttrs[a].resize(static_cast<size_t>(selectedPoints) * attrs[a].Components);
+
+    uint64_t out = 0;
+    for(uint64_t c = k; c < numCurves; c += subsetCount)
+    {
+      const uint64_t start = offsets[c];
+      const uint64_t len = static_cast<uint64_t>(lengths[c]);
+
+      memcpy(selPoints.data() + out * 3,
+          static_cast<const float*>(data.Points) + start * 3,
+          static_cast<size_t>(len) * 3 * sizeof(float));
+
+      if(colorComponents)
+        memcpy(selColors.data() + out * colorComponents,
+            static_cast<const float*>(data.Colors) + start * colorComponents,
+            static_cast<size_t>(len) * colorComponents * sizeof(float));
+
+      if(hasWidths)
+        memcpy(selWidths.data() + out,
+            static_cast<const float*>(data.Scales) + start,
+            static_cast<size_t>(len) * sizeof(float));
+
+      for(size_t a = 0; a < attrs.size(); ++a)
+        memcpy(selAttrs[a].data() + out * attrs[a].Components,
+            static_cast<const float*>(attrs[a].Data) + start * attrs[a].Components,
+            static_cast<size_t>(len) * attrs[a].Components * sizeof(float));
+
+      out += len;
+    }
+
+    std::vector<jusync_rawgeo::CurveAttribute> attrInputs(attrs.size());
+    for(size_t a = 0; a < attrs.size(); ++a)
+    {
+      attrInputs[a].Name = attrs[a].Name;
+      attrInputs[a].Components = attrs[a].Components;
+      attrInputs[a].Data = selAttrs[a].empty() ? nullptr : selAttrs[a].data();
+    }
+
+    jusync_rawgeo::CurvePackInput in{};
+    in.PrimName = primName.c_str();
+    in.Time = timeStep;
+    in.Points = selectedPoints ? selPoints.data() : nullptr;
+    in.NumPoints = selectedPoints;
+    in.Colors = (selectedPoints && colorComponents) ? selColors.data() : nullptr;
+    in.ColorComponents = colorComponents;
+    in.Widths = (selectedPoints && hasWidths) ? selWidths.data() : nullptr;
+    in.CurveLengths = selectedLengths.empty() ? nullptr : selectedLengths.data();
+    in.NumCurves = selectedLengths.size();
+    in.Attributes = attrInputs.empty() ? nullptr : attrInputs.data();
+    in.NumAttributes = static_cast<uint32_t>(attrInputs.size());
+    in.SubsetIndex = k;
+    in.SubsetCount = subsetCount;
+    in.FullCurveCount = numCurves;
+    in.FullNumPoints = data.NumPoints;
+
+    if(!jusync_rawgeo::PackCurvePayload(in, payloads[k]))
+    {
+      static const bool logged = [](){
+        fprintf(stderr, "[UsdBridge] RawGeo curve payload rejected, falling back to USD path\n");
+        return true;
+      }();
+      (void)logged;
+      return false;
+    }
+  }
+
+  const size_t descBytes = attrs.size() * sizeof(anari_usd_protocol::JusyncRawGeoAttrDesc);
+  for(size_t k = 0; k < payloads.size(); ++k)
+  {
+    if(payloads[k].size() >
+       sizeof(anari_usd_protocol::JusyncRawGeoHeader) + descBytes + kMaxRawGeoPayloadBytes)
+    {
+      static const bool logged = [](){
+        fprintf(stderr, "[UsdBridge] RawGeo curve payload exceeds cap, falling back to USD path\n");
+        return true;
+      }();
+      (void)logged;
+      return false;
+    }
+  }
+
+  static const uint64_t idleFrames = [](){
+    const char* v = getenv("JUSYNC_RAWGEO_IDLE_FRAMES");
+    uint64_t n = (v && v[0]) ? strtoull(v, nullptr, 10) : 6;
+    return n > 1000000 ? 1000000 : n;
+  }();
+  if(idleFrames > 0)
+  {
+    uint64_t h = 1469598103934665603ull;
+    h = RawGeoHash(&data.NumPoints, sizeof(data.NumPoints), h);
+    h = RawGeoHash(data.CurveLengths, static_cast<size_t>(numCurves) * sizeof(int), h);
+    h = RawGeoHash(data.Points, static_cast<size_t>(data.NumPoints) * 3 * sizeof(float), h);
+    if(colorComponents)
+      h = RawGeoHash(data.Colors,
+          static_cast<size_t>(data.NumPoints) * colorComponents * sizeof(float), h);
+    if(hasWidths)
+      h = RawGeoHash(data.Scales,
+          static_cast<size_t>(data.NumPoints) * sizeof(float), h);
+
+    RawGeoCurveIdleState& st = g_rawGeoCurveIdleStates[baseKey];
+    st.same = (st.hash == h) ? st.same + 1 : 0;
+    st.hash = h;
+    if(st.same >= idleFrames)
+      return true; // identical frame: leave the previous subset files in place
+  }
+
+  for(uint64_t k = 0; k < subsetCount; ++k)
+  {
+    const std::string key = jusync_rawgeo::AddSubsetSuffix(baseKey, k, subsetCount);
+    GetDiffCapture().CapturePreStore(key);
+    g_rankMemoryStore->StoreFile(key, payloads[k].data(), payloads[k].size(),
+        "application/x-jusync-geo");
+  }
+
   return true;
 }
