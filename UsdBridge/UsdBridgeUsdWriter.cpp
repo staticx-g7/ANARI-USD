@@ -10,6 +10,7 @@
 #include "UsdBridgeDiffCapture.h"
 #include "../AnariUsdProtocol.h" // JusyncRawGeoHeader wire format (shared with the JUSYNC client)
 #include "RawGeoCurvePack.h"     // RawGeo v3 curve subset packer
+#include "RawGeoParticleId.h"    // stable point-cloud IDs as exact float chunks
 #include "Common/UsdBridgeParallelController.h"
 
 #include <cstring>
@@ -1930,9 +1931,11 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
   if(colorComponents != 3 && colorComponents != 4)
     colorComponents = 0;
 
+  constexpr uint32_t kSyntheticAttr = 0xFFFFFFFFu;
   anari_usd_protocol::JusyncRawGeoAttrDesc attrDescs[16];
   uint32_t attrSrcIdx[16];
   uint32_t numAttrs = 0;
+  bool hasParticleIdAttribute = false;
   if(data.Attributes)
   {
     for(uint32_t a = 0; a < data.NumAttributes && numAttrs < 16; ++a)
@@ -1943,11 +1946,33 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
       const uint32_t comps = RawGeoFloatComponents(src.DataType);
       if(comps == 0)
         continue;
+      if(src.Name && strcmp(src.Name, "particle_id") == 0)
+        hasParticleIdAttribute = true;
       memset(&attrDescs[numAttrs], 0, sizeof(attrDescs[numAttrs]));
       if(src.Name)
         strncpy(attrDescs[numAttrs].name, src.Name, sizeof(attrDescs[numAttrs].name) - 1);
       attrDescs[numAttrs].components = comps;
       attrSrcIdx[numAttrs] = a;
+      ++numAttrs;
+    }
+  }
+
+  // Point streams carry a stable particle ID even though the existing
+  // instancer path does not expose one as a generic attribute. The wire stays
+  // v2: the ID is exact 16-bit chunks in floats, counted against the existing
+  // 16-attribute and payload limits. Build it once at full resolution so the
+  // idle full-density burst reuses the same data.
+  std::vector<float> syntheticIds;
+  if(!hasParticleIdAttribute && data.InstanceIds && numAttrs < 16)
+  {
+    const auto idEncoding = anari_usd_rawgeo::GetParticleIdEncoding(data.InstanceIdsType);
+    if(idEncoding.Components != 0 &&
+       anari_usd_rawgeo::PackParticleIds(data.InstanceIds, data.InstanceIdsType, nSrc, 1, syntheticIds))
+    {
+      memset(&attrDescs[numAttrs], 0, sizeof(attrDescs[numAttrs]));
+      strncpy(attrDescs[numAttrs].name, "particle_id", sizeof(attrDescs[numAttrs].name) - 1);
+      attrDescs[numAttrs].components = idEncoding.Components;
+      attrSrcIdx[numAttrs] = kSyntheticAttr;
       ++numAttrs;
     }
   }
@@ -2020,7 +2045,9 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     {
       const uint64_t comps = attrDescs[a].components;
       const uint64_t bytes = n * comps * sizeof(float);
-      const float* attrData = static_cast<const float*>(data.Attributes[attrSrcIdx[a]].Data);
+      const float* attrData = (attrSrcIdx[a] == kSyntheticAttr)
+          ? syntheticIds.data()
+          : static_cast<const float*>(data.Attributes[attrSrcIdx[a]].Data);
       if(effStride == 1)
       {
         memcpy(d, attrData, bytes);
