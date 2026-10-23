@@ -48,7 +48,8 @@ inline bool PackCurvePayload(const CurvePackInput& In, std::vector<uint8_t>& Out
 
     Out.clear();
 
-    if (In.PrimName == nullptr || In.SubsetCount == 0 || In.SubsetIndex >= In.SubsetCount)
+    if (In.PrimName == nullptr || In.SubsetCount == 0 || In.SubsetIndex >= In.SubsetCount ||
+        In.SubsetCount > 8)
     {
         return false;
     }
@@ -62,6 +63,18 @@ inline bool PackCurvePayload(const CurvePackInput& In, std::vector<uint8_t>& Out
     }
 
     const uint64_t FullCurves = In.FullCurveCount != 0 ? In.FullCurveCount : In.NumCurves;
+    // The writer always supplies the full count for a subset. Defaulting it to
+    // one subset's count would stamp a different C on each file.
+    if (In.SubsetCount > 1 && In.FullCurveCount == 0)
+    {
+        return false;
+    }
+    // Match the client's allocation ceiling so an oversized frame falls back to
+    // the USD path instead of being stored and rejected after download.
+    if (FullCurves > 4194304ull)
+    {
+        return false;
+    }
     if (In.NumCurves > FullCurves)
     {
         return false;

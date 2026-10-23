@@ -180,6 +180,43 @@ int main()
         MakeFixture(F, { 3, 4 }, 0, 2, 3, 0);
         CHECK(Rejects(F), "S>1 requires a full-frame point total");
     }
+    {
+        Fixture F;
+        MakeFixture(F, { 3 }, 0, 2, 0, 9);
+        CHECK(Rejects(F), "S>1 requires an explicit full curve count");
+    }
+    {
+        Fixture F;
+        MakeFixture(F, { 3, 4 }, 0, 2, 3, 5);
+        CHECK(Rejects(F), "full point total cannot be smaller than the subset");
+    }
+    {
+        Fixture F;
+        MakeFixture(F, { 3, 4 }, 0, 2, 4, 7);
+        CHECK(Rejects(F), "full curve count cannot exceed half the full points");
+    }
+    {
+        Fixture F;
+        MakeFixture(F, { 3, 4 }, 0, 1, 2, 0);
+        std::vector<uint8_t> Out;
+        proto::JusyncRawGeoHeader Header{};
+        CHECK(Pack(F, Out, Header), "S=1 derives full points from the payload");
+        CHECK(Header.full_num_points == 7, "S=1 full point default");
+    }
+    {
+        Fixture F;
+        MakeFixture(F, {}, 0, 1, 0, 0);
+        std::vector<uint8_t> Out;
+        proto::JusyncRawGeoHeader Header{};
+        CHECK(Pack(F, Out, Header), "empty S=1 frame packs");
+        CHECK(Header.valid(Out.data(), Out.size()), "empty S=1 frame valid");
+        CHECK(Header.full_num_points == 0, "empty S=1 frame has no points");
+    }
+    {
+        Fixture F;
+        MakeFixture(F, { 3 }, 0, 9, 9, 27);
+        CHECK(Rejects(F), "more than eight subsets are rejected");
+    }
 
     for (uint64_t Subset = 1; Subset < 4; ++Subset)
     {
