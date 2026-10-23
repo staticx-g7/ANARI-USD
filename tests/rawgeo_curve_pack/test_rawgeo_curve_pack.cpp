@@ -26,7 +26,8 @@ struct Fixture
 };
 
 void MakeFixture(Fixture& F, const std::vector<int32_t>& Lengths,
-                 uint64_t SubsetIndex, uint64_t SubsetCount, uint64_t FullCurveCount)
+                 uint64_t SubsetIndex, uint64_t SubsetCount, uint64_t FullCurveCount,
+                 uint64_t FullNumPoints = 0)
 {
     F.Lengths = Lengths;
 
@@ -63,7 +64,7 @@ void MakeFixture(Fixture& F, const std::vector<int32_t>& Lengths,
     F.Input.SubsetIndex = SubsetIndex;
     F.Input.SubsetCount = SubsetCount;
     F.Input.FullCurveCount = FullCurveCount;
-    F.Input.FullNumPoints = 0;
+    F.Input.FullNumPoints = FullNumPoints;
 }
 
 bool Pack(const Fixture& F, std::vector<uint8_t>& Out, proto::JusyncRawGeoHeader& Header)
@@ -149,7 +150,7 @@ int main()
 
     {
         Fixture F0;
-        MakeFixture(F0, { 3, 4 }, 0, 2, 3);
+        MakeFixture(F0, { 3, 4 }, 0, 2, 3, 9);
         std::vector<uint8_t> Out0;
         proto::JusyncRawGeoHeader Header0{};
         CHECK(Pack(F0, Out0, Header0), "S=2 subset 0 packs");
@@ -157,12 +158,13 @@ int main()
         CHECK(Header0.num_points == 7, "S=2 subset 0 points");
         CHECK(Header0.curve_count == 2, "S=2 subset 0 curves");
         CHECK(Header0.full_curve_count == 3, "S=2 subset 0 full curves");
+        CHECK(Header0.full_num_points == 9, "S=2 subset 0 full points");
         const std::vector<uint32_t> Counts0 = ReadCounts(Header0, Out0);
         CHECK(Counts0.size() == 2 && Counts0[0] == 3 && Counts0[1] == 4,
             "S=2 subset 0 ordinals 0,2");
 
         Fixture F1;
-        MakeFixture(F1, { 2 }, 1, 2, 3);
+        MakeFixture(F1, { 2 }, 1, 2, 3, 9);
         std::vector<uint8_t> Out1;
         proto::JusyncRawGeoHeader Header1{};
         CHECK(Pack(F1, Out1, Header1), "S=2 subset 1 packs");
@@ -173,10 +175,16 @@ int main()
         CHECK(Counts1.size() == 1 && Counts1[0] == 2, "S=2 subset 1 ordinal 1");
     }
 
+    {
+        Fixture F;
+        MakeFixture(F, { 3, 4 }, 0, 2, 3, 0);
+        CHECK(Rejects(F), "S>1 requires a full-frame point total");
+    }
+
     for (uint64_t Subset = 1; Subset < 4; ++Subset)
     {
         Fixture F;
-        MakeFixture(F, {}, Subset, 4, 1);
+        MakeFixture(F, {}, Subset, 4, 1, 2);
         std::vector<uint8_t> Out;
         proto::JusyncRawGeoHeader Header{};
         CHECK(Pack(F, Out, Header), "S=4 empty subset %llu packs",
@@ -185,6 +193,19 @@ int main()
             static_cast<unsigned long long>(Subset));
         CHECK(Header.num_points == 0 && Header.curve_count == 0 && Header.payload_bytes == 0,
             "S=4 empty subset %llu is header-only", static_cast<unsigned long long>(Subset));
+    }
+    {
+        Fixture F;
+        MakeFixture(F, {}, 1, 4, 1, 2);
+        const float DummyWidth = 0.0f;
+        F.Input.Widths = &DummyWidth; // writer's empty-subset dummy
+        std::vector<uint8_t> Out;
+        proto::JusyncRawGeoHeader Header{};
+        CHECK(Pack(F, Out, Header), "empty subset with frame widths packs");
+        CHECK(Header.valid(Out.data(), Out.size()), "empty subset with frame widths valid");
+        CHECK(Header.width_components == 1, "empty subset advertises widths");
+        CHECK(Header.payload_bytes == 0, "empty width section has no bytes");
+        CHECK(Header.full_num_points == 2, "empty subset keeps full point total");
     }
 
     {
@@ -236,7 +257,7 @@ int main()
         {
             const std::vector<int32_t> Lengths(static_cast<size_t>(Expected[Subset]), 2);
             Fixture F;
-            MakeFixture(F, Lengths, Subset, 4, 10);
+            MakeFixture(F, Lengths, Subset, 4, 10, 20);
             std::vector<uint8_t> Out;
             proto::JusyncRawGeoHeader Header{};
             CHECK(Pack(F, Out, Header), "C=10 S=4 subset %llu packs",
@@ -247,6 +268,7 @@ int main()
                 "C=10 S=4 subset %llu curve count %u",
                 static_cast<unsigned long long>(Subset), Header.curve_count);
             CHECK(Header.full_curve_count == 10, "C=10 S=4 full curve count");
+            CHECK(Header.full_num_points == 20, "C=10 S=4 full point total");
             CHECK(Header.num_points == static_cast<uint64_t>(Expected[Subset] * 2),
                 "C=10 S=4 subset %llu point count",
                 static_cast<unsigned long long>(Subset));
@@ -254,7 +276,7 @@ int main()
     }
     {
         Fixture F;
-        MakeFixture(F, std::vector<int32_t>(4, 2), 0, 4, 10);
+        MakeFixture(F, std::vector<int32_t>(4, 2), 0, 4, 10, 20);
         CHECK(Rejects(F), "C=10 S=4 wrong subset count rejected");
     }
 
@@ -324,10 +346,30 @@ int main()
         const std::vector<std::string> Keys =
             jusync_rawgeo::StoreKeysForFile(Base + "_s3.geo");
         CHECK(HasKey(Keys, Base + ".geo"), "subset input adds the base geometry");
+        CHECK(HasKey(Keys, Base + ".usd"), "subset input adds the base USD twin");
+        CHECK(HasKey(Keys, Base + ".usda"), "subset input adds the base USDA twin");
         CHECK(HasKey(Keys, Base + "_s0.geo"), "subset input adds sibling zero");
         CHECK(HasKey(Keys, Base + "_s3.geo"), "subset input keeps itself");
         CHECK(!HasKey(Keys, Base + "_s3_s3.geo"), "subset input is not double-suffixed");
         CHECK(Keys.size() == 11, "subset input deduplicates (%zu)", Keys.size());
+    }
+    {
+        const std::string Base = "clips/Wave_Geom__0.000000";
+        const std::vector<std::string> Usd = jusync_rawgeo::StoreKeysForFile(Base + ".usd");
+        const std::vector<std::string> Geo = jusync_rawgeo::StoreKeysForFile(Base + ".geo");
+        CHECK(HasKey(Usd, Base + ".usda") && HasKey(Usd, Base + ".geo"),
+            "USD input adds its twin and base geometry");
+        CHECK(Usd.size() == 11, "USD input deduplicates (%zu)", Usd.size());
+        CHECK(HasKey(Geo, Base + ".usd") && HasKey(Geo, Base + ".usda"),
+            "base geometry input adds both stage twins");
+        CHECK(Geo.size() == 11, "base geometry input deduplicates (%zu)", Geo.size());
+    }
+    {
+        const std::vector<std::string> Keys =
+            jusync_rawgeo::StoreKeysForFile("clips/foo_s2.geo");
+        CHECK(!HasKey(Keys, "clips/foo.geo"),
+            "a name without the __time marker is not treated as a subset");
+        CHECK(HasKey(Keys, "clips/foo_s2.geo"), "plain suffixed name keeps itself");
     }
     {
         const std::vector<std::string> Keys =

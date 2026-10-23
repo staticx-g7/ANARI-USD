@@ -39,7 +39,7 @@ struct CurvePackInput
     uint64_t SubsetIndex = 0;
     uint64_t SubsetCount = 1;
     uint64_t FullCurveCount = 0;            // 0 => NumCurves
-    uint64_t FullNumPoints = 0;             // 0 => NumPoints (client budget hint)
+    uint64_t FullNumPoints = 0;             // 0 => NumPoints only when SubsetCount == 1
 };
 
 inline bool PackCurvePayload(const CurvePackInput& In, std::vector<uint8_t>& Out)
@@ -102,6 +102,20 @@ inline bool PackCurvePayload(const CurvePackInput& In, std::vector<uint8_t>& Out
     {
         return false;
     }
+
+    // For a subset, the full-frame point total is the client's merge/budget
+    // hint. It cannot be derived from one subset, and a subset total would make
+    // the client's `full_curve_count <= full_num_points / 2` guard reject a
+    // legitimate padded frame.
+    const uint64_t FullPoints = In.FullNumPoints != 0 ? In.FullNumPoints : SumPoints;
+    if (In.SubsetCount > 1 && In.FullNumPoints == 0)
+    {
+        return false;
+    }
+    if (FullPoints < SumPoints || FullCurves > FullPoints / 2)
+    {
+        return false;
+    }
     if (SumPoints > 0 && In.Points == nullptr)
     {
         return false;
@@ -150,7 +164,7 @@ inline bool PackCurvePayload(const CurvePackInput& In, std::vector<uint8_t>& Out
     Header.payload_bytes = PayloadBytes;
     Header.subset_index = In.SubsetIndex;
     Header.subset_count = In.SubsetCount;
-    Header.full_num_points = In.FullNumPoints != 0 ? In.FullNumPoints : SumPoints;
+    Header.full_num_points = FullPoints;
     Header.topology = JUSYNC_RAWGEO_TOPOLOGY_LINEAR_CURVES;
     Header.curve_count = static_cast<uint32_t>(In.NumCurves);
     Header.full_curve_count = FullCurves;
@@ -227,7 +241,8 @@ inline std::string AddSubsetSuffix(const std::string& GeoKey, uint64_t K, uint64
 // stage twins plus up to eight curve subsets (`_s0.geo` ... `_s7.geo`), and a
 // prim removal must invalidate all of them or the broker keeps advertising a
 // retired element. Inputs that already carry a subset suffix are normalized
-// first, so removing any one piece purges the whole family.
+// first, so removing any one piece purges the whole family. Only clip-like
+// names with the "__<time>" marker expand to subsets.
 inline std::vector<std::string> StoreKeysForFile(const std::string& RelativeName)
 {
     std::vector<std::string> Keys;
@@ -273,7 +288,14 @@ inline std::vector<std::string> StoreKeysForFile(const std::string& RelativeName
     }
 
     auto StripSubset = [](const std::string& Value) {
-        const size_t Pos = Value.rfind("_s");
+        // Only strip a writer-generated clip subset: "__<time>_s<digits>".
+        // A plain actuator name such as "foo_s2" must not be shortened.
+        const size_t TimeSep = Value.rfind("__");
+        if (TimeSep == std::string::npos)
+        {
+            return Value;
+        }
+        const size_t Pos = Value.find("_s", TimeSep + 2);
         if (Pos == std::string::npos || Pos + 2 >= Value.size())
         {
             return Value;
@@ -290,24 +312,17 @@ inline std::vector<std::string> StoreKeysForFile(const std::string& RelativeName
 
     const std::string SubsetBase = StripSubset(Base);
 
-    if (EndsWith(RelativeName, ".usd"))
-    {
-        Add(Base + ".usda");
-    }
-    else if (EndsWith(RelativeName, ".usda"))
-    {
-        Add(Base + ".usd");
-    }
-    else
-    {
-        Add(Base + ".usd");
-        Add(Base + ".usda");
-    }
-
+    // Always include the base stage twins. For an already-suffixed input this
+    // adds the unsuffixed twins (not phantom "_s<k>.usd" files).
+    Add(SubsetBase + ".usd");
+    Add(SubsetBase + ".usda");
     Add(SubsetBase + ".geo");
-    for (uint64_t K = 0; K < 8; ++K)
+    if (Base.find("__") != std::string::npos)
     {
-        Add(SubsetBase + "_s" + std::to_string(K) + ".geo");
+        for (uint64_t K = 0; K < 8; ++K)
+        {
+            Add(SubsetBase + "_s" + std::to_string(K) + ".geo");
+        }
     }
     return Keys;
 }
