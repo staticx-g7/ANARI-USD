@@ -25,10 +25,10 @@ struct Fixture
     jusync_rawgeo::CurvePackInput Input;
 };
 
-void MakeFixture(Fixture& F, std::initializer_list<int32_t> Lengths,
+void MakeFixture(Fixture& F, const std::vector<int32_t>& Lengths,
                  uint64_t SubsetIndex, uint64_t SubsetCount, uint64_t FullCurveCount)
 {
-    F.Lengths.assign(Lengths.begin(), Lengths.end());
+    F.Lengths = Lengths;
 
     int32_t Total = 0;
     for (const int32_t Length : F.Lengths)
@@ -83,16 +83,37 @@ bool Pack(const Fixture& F, std::vector<uint8_t>& Out, proto::JusyncRawGeoHeader
 std::vector<uint32_t> ReadCounts(const proto::JusyncRawGeoHeader& Header,
                                  const std::vector<uint8_t>& Out)
 {
-    size_t Offset = sizeof(Header)
+    uint32_t AttrComponents = 0;
+    const auto* Descs = reinterpret_cast<const proto::JusyncRawGeoAttrDesc*>(
+        Out.data() + sizeof(Header));
+    for (uint32_t a = 0; a < Header.num_attributes; ++a)
+    {
+        AttrComponents += Descs[a].components;
+    }
+
+    const size_t Offset = sizeof(Header)
         + Header.num_attributes * sizeof(proto::JusyncRawGeoAttrDesc)
         + Header.num_points * 3 * sizeof(float)
-        + Header.num_points * Header.color_components * sizeof(float);
+        + Header.num_points * Header.color_components * sizeof(float)
+        + Header.num_points * AttrComponents * sizeof(float);
     std::vector<uint32_t> Counts(Header.curve_count);
     if (Header.curve_count > 0)
     {
         std::memcpy(Counts.data(), Out.data() + Offset, Header.curve_count * sizeof(uint32_t));
     }
     return Counts;
+}
+
+bool HasKey(const std::vector<std::string>& Keys, const std::string& Key)
+{
+    for (const std::string& Candidate : Keys)
+    {
+        if (Candidate == Key)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Rejects(Fixture& F)
@@ -207,6 +228,113 @@ int main()
 
     CHECK(jusync_rawgeo::AddSubsetSuffix("a.geo", 3, 4) == "a_s3.geo", "subset suffix inserted");
     CHECK(jusync_rawgeo::AddSubsetSuffix("a.geo", 0, 1) == "a.geo", "S=1 keeps the name");
+
+    // C=10, S=4: ordinals 0+4+8, 1+5+9, 2+6, 3+7 -> 3,3,2,2.
+    {
+        const int32_t Expected[4] = { 3, 3, 2, 2 };
+        for (uint64_t Subset = 0; Subset < 4; ++Subset)
+        {
+            const std::vector<int32_t> Lengths(static_cast<size_t>(Expected[Subset]), 2);
+            Fixture F;
+            MakeFixture(F, Lengths, Subset, 4, 10);
+            std::vector<uint8_t> Out;
+            proto::JusyncRawGeoHeader Header{};
+            CHECK(Pack(F, Out, Header), "C=10 S=4 subset %llu packs",
+                static_cast<unsigned long long>(Subset));
+            CHECK(Header.valid(Out.data(), Out.size()), "C=10 S=4 subset %llu valid",
+                static_cast<unsigned long long>(Subset));
+            CHECK(Header.curve_count == static_cast<uint32_t>(Expected[Subset]),
+                "C=10 S=4 subset %llu curve count %u",
+                static_cast<unsigned long long>(Subset), Header.curve_count);
+            CHECK(Header.full_curve_count == 10, "C=10 S=4 full curve count");
+            CHECK(Header.num_points == static_cast<uint64_t>(Expected[Subset] * 2),
+                "C=10 S=4 subset %llu point count",
+                static_cast<unsigned long long>(Subset));
+        }
+    }
+    {
+        Fixture F;
+        MakeFixture(F, std::vector<int32_t>(4, 2), 0, 4, 10);
+        CHECK(Rejects(F), "C=10 S=4 wrong subset count rejected");
+    }
+
+    // Two attributes must round-trip after colors and before curve lengths.
+    {
+        Fixture F;
+        MakeFixture(F, { 3, 2, 4 }, 0, 1, 3);
+        std::vector<float> Temperature(9 * 2);
+        std::vector<float> Pressure(9 * 3);
+        for (size_t i = 0; i < Temperature.size(); ++i)
+        {
+            Temperature[i] = static_cast<float>(i) + 0.25f;
+        }
+        for (size_t i = 0; i < Pressure.size(); ++i)
+        {
+            Pressure[i] = static_cast<float>(i) + 0.5f;
+        }
+        jusync_rawgeo::CurveAttribute Attrs[2] = {
+            { "temperature", 2, Temperature.data() },
+            { "pressure", 3, Pressure.data() },
+        };
+        F.Input.Attributes = Attrs;
+        F.Input.NumAttributes = 2;
+
+        std::vector<uint8_t> Out;
+        proto::JusyncRawGeoHeader Header{};
+        CHECK(Pack(F, Out, Header), "attributes pack");
+        CHECK(Header.valid(Out.data(), Out.size()), "attributes valid");
+        CHECK(Header.num_attributes == 2, "two attribute descriptors");
+        CHECK(Header.payload_bytes ==
+            9 * 12 + 9 * 3 * 4 + 9 * 2 * 4 + 9 * 3 * 4 + 3 * 4 + 9 * 4,
+            "attribute payload bytes");
+
+        const size_t AttrOffset = sizeof(Header)
+            + 2 * sizeof(proto::JusyncRawGeoAttrDesc)
+            + 9 * 3 * sizeof(float)
+            + 9 * 3 * sizeof(float);
+        CHECK(std::memcmp(Out.data() + AttrOffset, Temperature.data(),
+            Temperature.size() * sizeof(float)) == 0, "temperature round-trip");
+        CHECK(std::memcmp(Out.data() + AttrOffset + Temperature.size() * sizeof(float),
+            Pressure.data(), Pressure.size() * sizeof(float)) == 0, "pressure round-trip");
+
+        const std::vector<uint32_t> Counts = ReadCounts(Header, Out);
+        CHECK(Counts.size() == 3 && Counts[0] == 3 && Counts[1] == 2 && Counts[2] == 4,
+            "curve lengths follow attributes");
+    }
+
+    // Removing a retired clip must invalidate every subset alias the curve
+    // writer may have produced for that base key.
+    {
+        const std::string Base = "clips/Wave_Geom__0.000000";
+        const std::vector<std::string> Keys =
+            jusync_rawgeo::StoreKeysForFile(Base + ".usda");
+        CHECK(HasKey(Keys, Base + ".usda"), "store keys keep the input");
+        CHECK(HasKey(Keys, Base + ".usd"), "store keys add the USD twin");
+        CHECK(HasKey(Keys, Base + ".geo"), "store keys add the base geometry");
+        for (uint64_t Subset = 0; Subset < 8; ++Subset)
+        {
+            CHECK(HasKey(Keys, Base + "_s" + std::to_string(Subset) + ".geo"),
+                "store keys add subset %llu",
+                static_cast<unsigned long long>(Subset));
+        }
+        CHECK(Keys.size() == 11, "store keys deduplicate (%zu)", Keys.size());
+    }
+    {
+        const std::string Base = "clips/Wave_Geom__0.000000";
+        const std::vector<std::string> Keys =
+            jusync_rawgeo::StoreKeysForFile(Base + "_s3.geo");
+        CHECK(HasKey(Keys, Base + ".geo"), "subset input adds the base geometry");
+        CHECK(HasKey(Keys, Base + "_s0.geo"), "subset input adds sibling zero");
+        CHECK(HasKey(Keys, Base + "_s3.geo"), "subset input keeps itself");
+        CHECK(!HasKey(Keys, Base + "_s3_s3.geo"), "subset input is not double-suffixed");
+        CHECK(Keys.size() == 11, "subset input deduplicates (%zu)", Keys.size());
+    }
+    {
+        const std::vector<std::string> Keys =
+            jusync_rawgeo::StoreKeysForFile("images/frame.png");
+        CHECK(Keys.size() == 1 && Keys[0] == "images/frame.png",
+            "non-stage files keep one store key");
+    }
 
     if (g_fails)
     {

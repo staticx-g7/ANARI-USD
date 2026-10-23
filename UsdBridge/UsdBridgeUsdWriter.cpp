@@ -680,31 +680,19 @@ void UsdBridgeUsdWriter::RemoveStoreEntriesForFile(const std::string& relativeNa
   if(relativeName.empty())
     return;
 
-  auto endsWith = [](const std::string& s, const char* suf) {
-    size_t n = strlen(suf);
-    return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
-  };
-
-  std::vector<std::string> keys;
-  keys.push_back(relativeName);
-  if(endsWith(relativeName, ".usd"))
+  // The curve writer stores `_s0.geo` ... `_s7.geo` siblings next to the base
+  // `.geo`; a prim removal has to invalidate the whole family.
+  std::vector<std::string> keys = jusync_rawgeo::StoreKeysForFile(relativeName);
+  if(keys.size() == 1)
   {
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
+    auto endsWith = [](const std::string& s, const char* suf) {
+      size_t n = strlen(suf);
+      return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+    };
+    if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
+       !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
+      keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
   }
-  else if(endsWith(relativeName, ".usda"))
-  {
-    keys.push_back(relativeName.substr(0, relativeName.size() - 5) + ".usd");
-  }
-  else if(endsWith(relativeName, ".geo"))
-  {
-    // Removing the RawGeo entry must not orphan the USD twins either.
-
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usd");
-    keys.push_back(relativeName.substr(0, relativeName.size() - 4) + ".usda");
-  }
-  else if(!endsWith(relativeName, ".png") && !endsWith(relativeName, ".exr") &&
-          !endsWith(relativeName, ".tif") && !endsWith(relativeName, ".vdb"))
-    keys.push_back(StoreKeyForStageName(relativeName)); // e.g. manifest names
 
   for(const std::string& key : keys)
   {
@@ -2279,7 +2267,11 @@ bool UsdBridgeUsdWriter::TryStoreRawGeo(UsdBridgePrimCache* cacheEntry,
     in.NumPoints = selectedPoints;
     in.Colors = (selectedPoints && colorComponents) ? selColors.data() : nullptr;
     in.ColorComponents = colorComponents;
-    in.Widths = (selectedPoints && hasWidths) ? selWidths.data() : nullptr;
+    // An empty subset still advertises the frame's width component so the
+    // client's merge flags do not depend on which subset happens to arrive
+    // first. The pointer is never dereferenced when NumPoints is zero.
+    static const float EmptyWidth = 0.0f;
+    in.Widths = hasWidths ? (selectedPoints ? selWidths.data() : &EmptyWidth) : nullptr;
     in.CurveLengths = selectedLengths.empty() ? nullptr : selectedLengths.data();
     in.NumCurves = selectedLengths.size();
     in.Attributes = attrInputs.empty() ? nullptr : attrInputs.data();

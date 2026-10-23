@@ -222,4 +222,93 @@ inline std::string AddSubsetSuffix(const std::string& GeoKey, uint64_t K, uint64
     }
     return GeoKey.substr(0, Dot) + Suffix + GeoKey.substr(Dot);
 }
+
+// Every memory-store key that can belong to one clip file. The writer stores
+// stage twins plus up to eight curve subsets (`_s0.geo` ... `_s7.geo`), and a
+// prim removal must invalidate all of them or the broker keeps advertising a
+// retired element. Inputs that already carry a subset suffix are normalized
+// first, so removing any one piece purges the whole family.
+inline std::vector<std::string> StoreKeysForFile(const std::string& RelativeName)
+{
+    std::vector<std::string> Keys;
+    auto Add = [&Keys](const std::string& Key) {
+        for (const std::string& Existing : Keys)
+        {
+            if (Existing == Key)
+            {
+                return;
+            }
+        }
+        Keys.push_back(Key);
+    };
+
+    Add(RelativeName);
+
+    auto EndsWith = [](const std::string& Value, const char* Suffix) {
+        const size_t N = std::strlen(Suffix);
+        return Value.size() >= N && Value.compare(Value.size() - N, N, Suffix) == 0;
+    };
+
+    std::string Base;
+    bool bStageFile = false;
+    if (EndsWith(RelativeName, ".usd"))
+    {
+        Base = RelativeName.substr(0, RelativeName.size() - 4);
+        bStageFile = true;
+    }
+    else if (EndsWith(RelativeName, ".usda"))
+    {
+        Base = RelativeName.substr(0, RelativeName.size() - 5);
+        bStageFile = true;
+    }
+    else if (EndsWith(RelativeName, ".geo"))
+    {
+        Base = RelativeName.substr(0, RelativeName.size() - 4);
+        bStageFile = true;
+    }
+
+    if (!bStageFile)
+    {
+        return Keys;
+    }
+
+    auto StripSubset = [](const std::string& Value) {
+        const size_t Pos = Value.rfind("_s");
+        if (Pos == std::string::npos || Pos + 2 >= Value.size())
+        {
+            return Value;
+        }
+        for (size_t i = Pos + 2; i < Value.size(); ++i)
+        {
+            if (Value[i] < '0' || Value[i] > '9')
+            {
+                return Value;
+            }
+        }
+        return Value.substr(0, Pos);
+    };
+
+    const std::string SubsetBase = StripSubset(Base);
+
+    if (EndsWith(RelativeName, ".usd"))
+    {
+        Add(Base + ".usda");
+    }
+    else if (EndsWith(RelativeName, ".usda"))
+    {
+        Add(Base + ".usd");
+    }
+    else
+    {
+        Add(Base + ".usd");
+        Add(Base + ".usda");
+    }
+
+    Add(SubsetBase + ".geo");
+    for (uint64_t K = 0; K < 8; ++K)
+    {
+        Add(SubsetBase + "_s" + std::to_string(K) + ".geo");
+    }
+    return Keys;
+}
 } // namespace jusync_rawgeo
