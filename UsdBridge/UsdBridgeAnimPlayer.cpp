@@ -39,7 +39,8 @@ namespace
     std::vector<UsdBridgeAttribute> Attrs;
     std::vector<std::string> Names;
     uint64_t Checksum = 0;
-    double Time = 0.0;
+    double Time = -1.0; // <0: not known yet, waiting for the renderer's usd::time
+    int WaitTicks = 0;  // Tick() calls spent waiting for that time
   };
 
   struct Group
@@ -84,6 +85,14 @@ namespace
   std::chrono::steady_clock::time_point g_lastAccepted{};
   size_t g_timeCap = 512; // checksum->time history entries per group
 
+  // Dataset time reported by the renderer as usd::time on the frame (or on the
+  // device). When present it is the authoritative time: sample times no longer
+  // come from a frame counter, so JUSYNC_ANIM_DT, skipped steps and scrubbing
+  // cannot desynchronise Unreal from ParaView.
+  double g_frameTime = -1.0;
+  bool g_frameTimeSeen = false;
+  double g_lastStampedTime = -1.0;
+
   bool DetectEnabled()
   {
     static const bool enabled = [](){
@@ -118,7 +127,7 @@ namespace
     if(const char* v = getenv("JUSYNC_ANIM_TIMECAP"))
       if(v[0]) g_timeCap = (size_t)atol(v);
     g_clock = std::chrono::steady_clock::now();
-    fprintf(stderr, "[JusyncAnim] module v12 (replace-in-place, timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
+    fprintf(stderr, "[JusyncAnim] module v13 (replace-in-place, timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
         1.0 / g_frameDt, g_time0, g_timeDt, g_maxSamples, g_timeCap);
   }
 
@@ -340,6 +349,8 @@ namespace
 
   void Publish(Group& g, Sample& s, const char* tag)
   {
+    if(s.Time < 0.0)
+      return; // still waiting for the renderer's usd::time
     Part* key = nullptr;
     for(Part* m : g.Members)
       if(m && (!key || m->Uniq > key->Uniq))
@@ -365,6 +376,21 @@ namespace
     return nullptr;
   }
 } // anonymous namespace
+
+void SetFrameTime(double t)
+{
+  if(!DetectEnabled() || !(t > 0.0))
+    return;
+
+  std::lock_guard<std::recursive_mutex> lk(g_mutex);
+  if(!g_frameTimeSeen)
+  {
+    g_frameTimeSeen = true;
+    fprintf(stderr, "[JusyncAnim] dataset time source: usd::time=%.6g (exact pipeline time; "
+        "JUSYNC_ANIM_DT is ignored)\n", t);
+  }
+  g_frameTime = t;
+}
 
 bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     const char* primName, const UsdBridgeInstancerData& data, double timeStep)
@@ -451,6 +477,11 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     if(g_lastAccepted.time_since_epoch().count() != 0 &&
        std::chrono::duration<double>(nowAccepted - g_lastAccepted).count() < g_publishDt)
     {
+      // Rate limited: this payload is not published, but the dataset time slot
+      // it belongs to is real. Advance the clock so the samples that do get
+      // published keep the dataset's own time instead of drifting by the drop
+      // ratio (PUBLISH_HZ < ANIM_FPS would otherwise compress the timeline).
+      ++g.Seq;
       g.Touched = true;
       return true;
     }
@@ -461,21 +492,25 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   {
     g.LastPayloadAt = std::chrono::steady_clock::now();
 
-    // Exact dataset time for this payload. A caller that already knows the
-    // time (usd::time > 0, e.g. the C demo) wins. A checksum seen before
-    // (loop or scrub-back revisit) reuses its FIRST time, so clip names and
-    // UE sample times stay stable across revisits. Anything else takes the
-    // next slot t0 + n*dt. ParaView never sets usd::time, so its stream
-    // advances one slot per new payload: JUSYNC_ANIM_DT must equal the
-    // dataset step dt, and the publish rate must stay >= the animation FPS
-    // so no step gets skipped (a skipped step would skew every later time).
+    // Exact dataset time for this payload, in order of preference:
+    //   1. a caller that already knows the time (usd::time > 0 on the geometry
+    //      or on the device, e.g. the C demo) wins;
+    //   2. the frame's usd::time, which the renderer reports per render - the
+    //      sample is left unstamped here (t < 0) and Tick() stamps it with the
+    //      exact pipeline time. This is what makes Unreal match ParaView for
+    //      any time step, including irregular ones and scrubbing;
+    //   3. a checksum seen before (loop or scrub-back revisit) reuses its FIRST
+    //      time, so clip names and UE sample times stay stable across revisits;
+    //   4. otherwise the next slot t0 + n*dt. Only used when no renderer time
+    //      is available at all, which is why JUSYNC_ANIM_DT has to match the
+    //      dataset step.
     double t = timeStep > 0.0 ? timeStep : -1.0;
-    if(t < 0.0)
+    if(t < 0.0 && !g_frameTimeSeen)
     {
       for(const auto& hc : g.TimeHistory)
         if(hc.first == cksum) { t = hc.second; break; }
     }
-    if(t < 0.0)
+    if(t < 0.0 && !g_frameTimeSeen)
     {
       t = g_time0 + double(g.Seq) * g_timeDt;
       ++g.Seq;
@@ -576,16 +611,52 @@ void Tick()
   std::lock_guard<std::recursive_mutex> lk(g_mutex);
   ReadEnv();
 
+  // Stamp queued samples with the exact dataset time the renderer reported as
+  // usd::time. The new payload was committed earlier in this render, before the
+  // frame's time reached us, so the time is applied here, right before publish.
+  for(Group* g : g_groups)
+  {
+    if(g->Pending.empty())
+      continue;
+    for(size_t si : g->Pending)
+    {
+      if(si >= g->Samples.size())
+        continue;
+      Sample& s = g->Samples[si];
+      if(s.Time >= 0.0)
+        continue;
+      if(g_frameTimeSeen && g_frameTime > 0.0 && g_frameTime != g_lastStampedTime)
+      {
+        s.Time = g_frameTime;
+        g_lastStampedTime = g_frameTime;
+      }
+      else if(++s.WaitTicks >= 3)
+      {
+        // The renderer never supplied a time: fall back to the slot counter so
+        // the stream keeps moving (this is the old behaviour).
+        s.Time = g_time0 + double(g->Seq) * g_timeDt;
+        ++g->Seq;
+      }
+    }
+  }
+
   for(Group* g : g_groups)
   {
     if(g->Pending.empty())
       continue;
     if(g->Members.empty())
       continue; // no live key prim yet - keep this group queued, do not
+    std::vector<size_t> keep;
     for(size_t si : g->Pending)
-      if(si < g->Samples.size())
+    {
+      if(si >= g->Samples.size())
+        continue;
+      if(g->Samples[si].Time >= 0.0)
         Publish(*g, g->Samples[si], "sample+");
-    g->Pending.clear();
+      else
+        keep.push_back(si);
+    }
+    g->Pending.swap(keep);
   }
 
   const auto now = std::chrono::steady_clock::now();

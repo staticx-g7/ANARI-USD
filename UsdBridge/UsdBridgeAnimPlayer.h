@@ -28,6 +28,10 @@ namespace jusync_anim
 
   bool IsStaleVariantMember(UsdGeometryHandle geometry);
 
+  // Exact dataset time reported by the renderer (frame `usd::time`). When this
+  // arrives, sample times come from the pipeline instead of the slot counter.
+  void SetFrameTime(double t);
+
   void Tick();
 }
 

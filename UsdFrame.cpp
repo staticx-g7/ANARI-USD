@@ -2,6 +2,7 @@
 
 #include "UsdFrame.h"
 #include "UsdBridge/UsdBridge.h"
+#include "UsdBridge/UsdBridgeAnimPlayer.h"
 #include "UsdAnari.h"
 #include "UsdDevice.h"
 #include "UsdCamera.h"
@@ -82,6 +83,10 @@ bool UsdFrame::doCommitData(UsdDevice* device)
   }
 
   const UsdFrameData& paramData = getReadParams();
+  // `usd::time` on the frame is the renderer's own notion of the dataset time.
+  // Hand it to the animation player so samples carry the real pipeline time
+  // instead of a frame counter (works for any step size, even irregular).
+  jusync_anim::SetFrameTime(paramData.time);
   if (paramData.size.Data[0] > 0 && paramData.size.Data[1] > 0)
   {
     frameBridge->SetFrameRenderSize(frameName, paramData.size.Data[0], paramData.size.Data[1]);
@@ -160,6 +165,7 @@ char* UsdFrame::ReserveBuffer(ANARIDataType format)
 
 void UsdFrame::saveUsd(UsdDevice* device)
 {
+  jusync_anim::SetFrameTime(getReadParams().time);
   if (!frameBridge)
     frameBridge = device->getUsdBridge();
   if (frameBridge)
