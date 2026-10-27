@@ -1,4 +1,0 @@
-# Shell scripts run inside the Linux container — keep LF regardless of
-# the checkout platform (Windows CRLF breaks #!/bin/bash).
-*.sh text eol=lf
-Dockerfile text eol=lf

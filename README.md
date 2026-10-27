@@ -25,7 +25,7 @@ From this directory, run `mkdir _build && cd _build`, after which there are two 
 - Regular build: Directly run `(c)cmake(-gui)` on the root directory.
     - Example of release configuration with Omniverse support, without OpenVDB: `ccmake .. -D "USD_DEVICE_USE_OMNIVERSE=ON" -D "ANARI_ROOT_DIR=<anari_install_path>" -D "USD_ROOT_DIR=<usd_install_path>" -D "OMNIUSDRESOLVER_ROOT_DIR=<omni_usd_resolver_install_path>" -D "OMNICLIENT_ROOT_DIR=<omni_client_install_path>" -D "Python3_ROOT_DIR=<python_install_path>" -D "Python3_FIND_STRATEGY_LOCATION=ON" -D "CMAKE_POSITION_INDEPENDENT_CODE=ON" -D "CMAKE_BUILD_TYPE=Release" -D "CMAKE_INSTALL_PREFIX=<install_path>"`
     - If you want all dependencies to be installed alongside the USD device's binaries, add `-D "INSTALL_ANARI_DEPS=ON" -D "INSTALL_ANARI_COMPILE_DEPS=ON" -D "INSTALL_USD_DEPS=ON" -D "INSTALL_OMNIVERSE_DEPS=ON"`
-    - If you also want to generate the example executables, add `-D "USD_DEVICE_BUILD_EXAMPLES=ON"`. They can be executed standalone if the dependencies from the previous step are installed.
+    - If you also want to generate the example executables, add `-D "USD_DEVICE_BUILD_EXAMPLES=ON"`. They can be executed standalone if the dependencies from the previous step are installed. The example sources and the container rig live in the separate `anari-usd-rig` repository, so this option is only available when that checkout's `examples/` is linked back into this tree.
 - (Experimental) Superbuild: run `(c)cmake(-gui)` on the `../superbuild` subdir, for detailed instructions see `superbuild/README.md`.
 
 After configuring and generating any of the above builds, run `cmake --build . --config [Release|Debug] --target install` to build and install.
@@ -35,7 +35,7 @@ After configuring and generating any of the above builds, run `cmake --build . -
 - Library and device names are both `usd`
 - All device-specific parameters are prefixed with `usd::`
 - See `usd_device_features.json` for parameter names and descriptions
-- Examples in `examples/anariTutorial_usd(_time).c`
+- Examples (`anariTutorial_usd(_time).c` and the JUSYNC demos) live in the `anari-usd-rig` repository
 
 More details about specific parameters and unsupported features follow below.
 

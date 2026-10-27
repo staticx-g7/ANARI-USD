@@ -275,7 +275,14 @@ endif()
 
 option(USD_DEVICE_BUILD_EXAMPLES "Build USD device examples" OFF)
 if(USD_DEVICE_BUILD_EXAMPLES)
-  add_subdirectory(examples)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
+    add_subdirectory(examples)
+  else()
+    message(WARNING
+      "USD_DEVICE_BUILD_EXAMPLES is ON but examples/ is not present. "
+      "The example and container rig now lives in the anari-usd-rig repository; "
+      "build the examples from there.")
+  endif()
 endif()
 
 install(TARGETS anari_library_usd
