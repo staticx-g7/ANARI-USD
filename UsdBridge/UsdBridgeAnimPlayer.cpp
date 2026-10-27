@@ -13,6 +13,7 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace jusync_anim
@@ -48,7 +49,10 @@ namespace
     std::vector<Part*> AllMembers;
 
     std::deque<Sample> Samples; // accumulated timeline (device-owned)
-    size_t Seq = 0;             // monotonic sample counter -> synthetic time
+    size_t Seq = 0;             // next time slot: unseen payloads take t0 + Seq*dt
+    std::vector<std::pair<uint64_t, double>> TimeHistory; // checksum -> first time seen
+    std::chrono::steady_clock::time_point LastPayloadAt{}; // last commit seen (any path)
+  std::chrono::steady_clock::time_point MembersEmptySince{}; // when the last member died ({} = live)
     uint64_t LastChecksum = 0;
     uint64_t MaxPoints = 0;     // largest commit seen (streaming chunks are smaller)
     bool NeedReseed = false;    // all prims died; first commit republishes
@@ -78,6 +82,7 @@ namespace
 
   double g_publishDt = 0.0;
   std::chrono::steady_clock::time_point g_lastAccepted{};
+  size_t g_timeCap = 512; // checksum->time history entries per group
 
   bool DetectEnabled()
   {
@@ -110,9 +115,11 @@ namespace
     if(g_maxSamples < 2) g_maxSamples = 2;
     if(const char* v = getenv("JUSYNC_ANIM_PUBLISH_HZ"))
       if(v[0]) { const double hz = atof(v); if(hz > 0.0) g_publishDt = 1.0 / hz; }
+    if(const char* v = getenv("JUSYNC_ANIM_TIMECAP"))
+      if(v[0]) g_timeCap = (size_t)atol(v);
     g_clock = std::chrono::steady_clock::now();
-    fprintf(stderr, "[JusyncAnim] module v10 (replace-in-place, constant key) fps=%.3g t0=%.3g dt=%.3g cap=%zu\n",
-        1.0 / g_frameDt, g_time0, g_timeDt, g_maxSamples);
+    fprintf(stderr, "[JusyncAnim] module v12 (replace-in-place, timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
+        1.0 / g_frameDt, g_time0, g_timeDt, g_maxSamples, g_timeCap);
   }
 
   uint32_t FloatComponents(UsdBridgeType type)
@@ -408,6 +415,24 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   if(std::find(g.Members.begin(), g.Members.end(), p) == g.Members.end())
     g.Members.push_back(p);
 
+  // Clock reset decided HERE (not in OnPrimDeleted): a per-step _u swap
+  // leaves the group empty only for the ms between the old prim's release
+  // and this registration, even under multi-second slow-render latency;
+  // a dataset swap leaves it empty through the user's reload (tens of s).
+  // The empty window's duration is the structural discriminator.
+  if(g.MembersEmptySince.time_since_epoch().count() != 0)
+  {
+    const auto nowReg = std::chrono::steady_clock::now();
+    const bool idleSwap =
+        std::chrono::duration<double>(nowReg - g.MembersEmptySince).count() > 2.0;
+    g.MembersEmptySince = {};
+    if(idleSwap)
+    {
+      g.TimeHistory.clear();
+      g.Seq = 0; // new dataset: the timeline restarts at t0
+    }
+  }
+
   const uint64_t cksum = ChecksumOf(data);
 
   bool seen = false;
@@ -422,6 +447,7 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   if(newPayload && g_publishDt > 0.0)
   {
     const auto nowAccepted = std::chrono::steady_clock::now();
+    g.LastPayloadAt = nowAccepted; // stream activity, even if we drop this one
     if(g_lastAccepted.time_since_epoch().count() != 0 &&
        std::chrono::duration<double>(nowAccepted - g_lastAccepted).count() < g_publishDt)
     {
@@ -433,13 +459,36 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
 
   if(newPayload)
   {
+    g.LastPayloadAt = std::chrono::steady_clock::now();
+
+    // Exact dataset time for this payload. A caller that already knows the
+    // time (usd::time > 0, e.g. the C demo) wins. A checksum seen before
+    // (loop or scrub-back revisit) reuses its FIRST time, so clip names and
+    // UE sample times stay stable across revisits. Anything else takes the
+    // next slot t0 + n*dt. ParaView never sets usd::time, so its stream
+    // advances one slot per new payload: JUSYNC_ANIM_DT must equal the
+    // dataset step dt, and the publish rate must stay >= the animation FPS
+    // so no step gets skipped (a skipped step would skew every later time).
+    double t = timeStep > 0.0 ? timeStep : -1.0;
+    if(t < 0.0)
+    {
+      for(const auto& hc : g.TimeHistory)
+        if(hc.first == cksum) { t = hc.second; break; }
+    }
+    if(t < 0.0)
+    {
+      t = g_time0 + double(g.Seq) * g_timeDt;
+      ++g.Seq;
+      if(g.TimeHistory.size() < g_timeCap)
+        g.TimeHistory.emplace_back(cksum, t);
+    }
+
     g.Samples.clear();
     g.Pending.clear();
-    g.Seq = 0;
     g.Mode = 0;
     g.Samples.emplace_back();
     Sample& s = g.Samples.back();
-    Capture(s, data, cksum, g_time0);
+    Capture(s, data, cksum, t);
     if(data.NumPoints > g.MaxPoints)
       g.MaxPoints = data.NumPoints;
     g.LastChecksum = cksum;
@@ -481,6 +530,16 @@ void OnPrimDeleted(const UsdBridgePrimCache* primCache)
           g->NeedReseed = true; // prims are gone - next commit re-seeds
           if(g->Mode == 1)
             g->Mode = 0;        // static prim rebuilt: re-evaluate samples
+          // VTK swaps the spheres prim on every timestep, so an empty member
+          // list alone is NOT a new-dataset signal. Do NOT reset the clock
+          // here: under slow (software) rendering the old prim is released
+          // >2 s after the last payload and before the next registration,
+          // so deletion-time quiet checks reset the timeline EVERY step
+          // (all frames collapse to t=0). Just stamp when we went empty;
+          // MaybeRegister decides from the empty window's DURATION, which
+          // is ~ms for step swaps and tens of seconds for dataset swaps.
+          if(g->MembersEmptySince.time_since_epoch().count() == 0)
+            g->MembersEmptySince = std::chrono::steady_clock::now();
         }
         g->Touched = true;
       }

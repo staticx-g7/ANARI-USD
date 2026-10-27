@@ -419,6 +419,21 @@ void UsdDevice::initializeBridge()
     }
   }
 
+  // VTK/ParaView re-commit their prims every render and never parent them via
+  // Set*Refs, so the per-frame "unreferenced prim" GC deletes the streamed
+  // actors between commits (stream content oscillates, clips vanish, and a
+  // freed prim can still be committed into — heap abort). Apps that manage
+  // refs (the ANARI demos) leave this off; streaming GUIs set the env.
+  {
+    const char *envNoGC = getenv("ANARI_USD_DISABLE_GC");
+    if (envNoGC && atoi(envNoGC) > 0)
+    {
+      disableGarbageCollect_ = true;
+      reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
+        "USDRMNG: ANARI_USD_DISABLE_GC=1 — per-frame garbage collection disabled");
+    }
+  }
+
   reportStatus(this, ANARI_DEVICE, ANARI_SEVERITY_INFO, ANARI_STATUS_NO_ERROR,
       "usd::flush = renderFrame only (camera pan triggers USD save + ZMQ)");
 
