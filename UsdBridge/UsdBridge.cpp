@@ -685,6 +685,13 @@ void UsdBridge::SetNoClipRefs(ParentHandleType parentHandle, const ChildHandleTy
 {
   if (parentHandle.value == nullptr) return;
   if(HasNullHandles(childHandles, numChildren)) return;
+  // An empty (but present) reference array means "no children this frame", not
+  // "delete every child": a transient empty commit (e.g. while a view or
+  // pipeline is being re-registered) would otherwise let ManageUnusedRefs
+  // remove all existing refs and free their geometry caches via AtRemoveRef,
+  // leaving the world with no geometry in the published stage until something
+  // re-adds it. Explicit deletes go through DeleteRefs* instead.
+  if (numChildren == 0) return;
 
   UsdBridgePrimCache* parentCache = BRIDGE_CACHE.ConvertToPrimCache(parentHandle);
   const UsdBridgePrimCacheList& childCaches = Internals->ExtractPrimCaches<ChildHandleType>(childHandles, numChildren);
