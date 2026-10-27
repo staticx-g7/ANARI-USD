@@ -130,7 +130,7 @@ namespace
     if(const char* v = getenv("JUSYNC_ANIM_TIMECAP"))
       if(v[0]) g_timeCap = (size_t)atol(v);
     g_clock = std::chrono::steady_clock::now();
-    fprintf(stderr, "[JusyncAnim] module v14 (frame-table + timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
+    fprintf(stderr, "[JusyncAnim] module v15 (renderer time, frame-table fallback) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
         1.0 / g_frameDt, g_time0, g_timeDt, g_maxSamples, g_timeCap);
 
     LoadFrameIndex();
@@ -603,18 +603,17 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   {
     g.LastPayloadAt = std::chrono::steady_clock::now();
 
-    // Exact dataset time for this payload, in order of preference:
-    //   1. a caller that already knows the time (usd::time > 0 on the geometry
-    //      or on the device, e.g. the C demo) wins;
-    //   2. the dataset frame table (JUSYNC_ANIM_FRAME_INDEX): the payload's
-    //      points identify the frame, so skipped playback frames and scrubs to
-    //      never-streamed frames still get the dataset's exact time;
-    //   3. the frame's usd::time, which the renderer reports per render - the
-    //      sample is left unstamped here (t < 0) and Tick() stamps it with the
-    //      exact pipeline time (dormant: this ParaView plugin never sends it);
-    //   4. a checksum seen before (loop or scrub-back revisit) reuses its FIRST
+    // Exact time for this payload, in order of preference:
+    //   1. the renderer's own time (usd::time on the geometry, filled by
+    //      libpvtime from vtkPVView::SetViewTime): this IS the value in
+    //      ParaView's Time field, so it always wins;
+    //   2. the dataset frame table (JUSYNC_ANIM_FRAME_INDEX): only used when
+    //      the renderer gave no time at all, so a client that does not ship
+    //      libpvtime still gets the dataset's exact time for the frames whose
+    //      points identify them;
+    //   3. a checksum seen before (loop or scrub-back revisit) reuses its FIRST
     //      time, so clip names and UE sample times stay stable across revisits;
-    //   5. otherwise the next slot t0 + n*dt, which is only right when the
+    //   4. otherwise the next slot t0 + n*dt, which is only right when the
     //      pipeline executed every frame once, in order, from t0.
     double t = timeStep > 0.0 ? timeStep : -1.0;
     if(t < 0.0)
@@ -673,23 +672,36 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
   // up with the ParaView toolbar even when nothing visibly moves.
   {
     double ft = 0.0;
-    const double expected =
-        g_lastMatchedTime >= 0.0 ? g_lastMatchedTime + g_timeDt : g_time0;
-    if(LookupFrameTime(data, expected, ft))
+    bool haveTime = false;
+    if(timeStep > 0.0)
     {
+      // ParaView's own time came with the geometry (libpvtime -> usd::time):
+      // exact, so never re-derive it from the payload or the frame table.
+      ft = timeStep;
+      haveTime = true;
       g_lastMatchedTime = ft;
-      if(g.Samples.size() == 1)
+    }
+    else
+    {
+      const double expected =
+          g_lastMatchedTime >= 0.0 ? g_lastMatchedTime + g_timeDt : g_time0;
+      if(LookupFrameTime(data, expected, ft))
       {
-        const double cur = g.Samples.back().Time;
-        const double diff = cur - ft;
-        if(cur < 0.0 || diff > 1e-9 || diff < -1e-9)
-        {
-          g.Samples.back().Time = ft;
-          if(g.TimeHistory.size() < g_timeCap)
-            g.TimeHistory.emplace_back(cksum, ft);
-          g.Touched = true;
-          g.Pending.push_back(g.Samples.size() - 1);
-        }
+        g_lastMatchedTime = ft;
+        haveTime = true;
+      }
+    }
+    if(haveTime && g.Samples.size() == 1)
+    {
+      const double cur = g.Samples.back().Time;
+      const double diff = cur - ft;
+      if(cur < 0.0 || diff > 1e-9 || diff < -1e-9)
+      {
+        g.Samples.back().Time = ft;
+        if(g.TimeHistory.size() < g_timeCap)
+          g.TimeHistory.emplace_back(cksum, ft);
+        g.Touched = true;
+        g.Pending.push_back(g.Samples.size() - 1);
       }
     }
   }

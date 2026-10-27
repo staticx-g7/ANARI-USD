@@ -176,11 +176,12 @@ class UsdBridgedBaseObject : public UsdParameterizedBaseObject<T, D>
 
     double selectObjTime(double objTimeStep, double worldTimeStep)
     {
-      return
-#ifdef VALUE_CLIP_RETIMING
-        !std::isnan(objTimeStep) ? objTimeStep :
-#endif
-        worldTimeStep;
+      // JUSYNC: always honour a per-object time. VTK's ANARI mapper sets
+      // "usd::time" on every geometry from vtkDataObject::DATA_TIME_STEP(),
+      // i.e. the time ParaView is actually rendering. Gating that behind
+      // VALUE_CLIP_RETIMING threw it away and left every object on the world
+      // time (0), which is why the stream had to guess the dataset time.
+      return !std::isnan(objTimeStep) ? objTimeStep : worldTimeStep;
     }
 
     double selectRefTime(double refTimeStep, double objTimeStep, double worldTimeStep)
