@@ -102,6 +102,9 @@ namespace
     return enabled;
   }
 
+  void LoadFrameIndex();
+  uint64_t Fnv(const void* p, size_t n, uint64_t h);
+
   void ReadEnv()
   {
     if(g_envRead)
@@ -127,8 +130,116 @@ namespace
     if(const char* v = getenv("JUSYNC_ANIM_TIMECAP"))
       if(v[0]) g_timeCap = (size_t)atol(v);
     g_clock = std::chrono::steady_clock::now();
-    fprintf(stderr, "[JusyncAnim] module v13 (replace-in-place, timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
+    fprintf(stderr, "[JusyncAnim] module v14 (frame-table + timed key) fps=%.3g t0=%.3g dt=%.3g cap=%zu timecap=%zu\n",
         1.0 / g_frameDt, g_time0, g_timeDt, g_maxSamples, g_timeCap);
+
+    LoadFrameIndex();
+  }
+
+  // ---------------------------------------------------------------------
+  // Dataset frame table (written by docker/jusync-frame-index)
+  // ---------------------------------------------------------------------
+  // ParaView does not tell the device which time the pipeline is at: the
+  // plugin never reports usd::time, so the fallback clock counts published
+  // samples and drifts as soon as playback skips a frame or the user scrubs
+  // to a frame that was never streamed. This table lets the device recognise
+  // the payload - four of its points, exactly as they were read from the
+  // dataset - and stamp the dataset's own time instead.
+  struct FrameKey
+  {
+    double Time = 0.0;
+    uint64_t NumPoints = 0;
+    uint64_t Hash = 0;
+  };
+
+  std::vector<FrameKey> g_frameKeys;
+  int g_frameMatchLog = 0;
+  double g_lastMatchedTime = -1.0;
+
+  void LoadFrameIndex()
+  {
+    const char* path = getenv("JUSYNC_ANIM_FRAME_INDEX");
+    if(!path || !path[0])
+      return;
+    FILE* f = fopen(path, "r");
+    if(!f)
+    {
+      fprintf(stderr, "[JusyncAnim] frame index '%s' unreadable, using clock\n", path);
+      return;
+    }
+    char line[256];
+    while(fgets(line, sizeof(line), f))
+    {
+      if(line[0] == '#' || line[0] == '\n')
+        continue;
+      FrameKey k;
+      unsigned long long n = 0;
+      unsigned long long h = 0;
+      if(sscanf(line, "%lf %llu %llx", &k.Time, &n, &h) < 3)
+        continue;
+      k.NumPoints = n;
+      k.Hash = h;
+      g_frameKeys.push_back(k);
+    }
+    fclose(f);
+    fprintf(stderr, "[JusyncAnim] frame index '%s': %zu frames\n", path, g_frameKeys.size());
+  }
+
+  bool LookupFrameTime(const UsdBridgeInstancerData& d, double expected, double& outTime)
+  {
+    if(g_frameKeys.empty() || !d.Points || d.NumPoints == 0)
+      return false;
+    const uint64_t h =
+        Fnv(d.Points, size_t(d.NumPoints) * 3 * sizeof(float), 0xcbf29ce484222325ULL);
+
+    bool found = false;
+    double best = 0.0;
+    double bestD = 0.0;
+    double minT = g_frameKeys.front().Time;
+    double maxT = g_frameKeys.front().Time;
+    for(const FrameKey& k : g_frameKeys)
+    {
+      if(k.Time < minT)
+        minT = k.Time;
+      if(k.Time > maxT)
+        maxT = k.Time;
+      if(k.NumPoints != d.NumPoints || k.Hash != h)
+        continue;
+      const double dd = k.Time - expected;
+      const double ad = dd < 0.0 ? -dd : dd;
+      if(!found || ad < bestD)
+      {
+        best = k.Time;
+        bestD = ad;
+        found = true;
+      }
+    }
+    if(!found)
+      return false;
+
+    // Several frames can hold the same pose (this dataset repeats geometry for
+    // stretches of frames), so the hash alone is ambiguous. Prefer the time
+    // nearest the expected slot; when the payload is a frame from the start of
+    // the dataset while we are at its end, playback has looped - wrap.
+    if(expected > maxT - g_timeDt && best < expected - 0.1 * (maxT - minT + g_timeDt))
+    {
+      double first = 0.0;
+      bool got = false;
+      for(const FrameKey& k : g_frameKeys)
+      {
+        if(k.NumPoints != d.NumPoints || k.Hash != h)
+          continue;
+        if(!got || k.Time < first)
+        {
+          first = k.Time;
+          got = true;
+        }
+      }
+      if(got)
+        best = first;
+    }
+    outTime = best;
+    return true;
   }
 
   uint32_t FloatComponents(UsdBridgeType type)
@@ -495,16 +606,39 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     // Exact dataset time for this payload, in order of preference:
     //   1. a caller that already knows the time (usd::time > 0 on the geometry
     //      or on the device, e.g. the C demo) wins;
-    //   2. the frame's usd::time, which the renderer reports per render - the
+    //   2. the dataset frame table (JUSYNC_ANIM_FRAME_INDEX): the payload's
+    //      points identify the frame, so skipped playback frames and scrubs to
+    //      never-streamed frames still get the dataset's exact time;
+    //   3. the frame's usd::time, which the renderer reports per render - the
     //      sample is left unstamped here (t < 0) and Tick() stamps it with the
-    //      exact pipeline time. This is what makes Unreal match ParaView for
-    //      any time step, including irregular ones and scrubbing;
-    //   3. a checksum seen before (loop or scrub-back revisit) reuses its FIRST
+    //      exact pipeline time (dormant: this ParaView plugin never sends it);
+    //   4. a checksum seen before (loop or scrub-back revisit) reuses its FIRST
     //      time, so clip names and UE sample times stay stable across revisits;
-    //   4. otherwise the next slot t0 + n*dt. Only used when no renderer time
-    //      is available at all, which is why JUSYNC_ANIM_DT has to match the
-    //      dataset step.
+    //   5. otherwise the next slot t0 + n*dt, which is only right when the
+    //      pipeline executed every frame once, in order, from t0.
     double t = timeStep > 0.0 ? timeStep : -1.0;
+    if(t < 0.0)
+    {
+      // The dataset's own frame table wins over every counting scheme: this
+      // is what makes Unreal's t equal to ParaView's Time field after a skip
+      // or a scrub to a frame that was never published before.
+      double frameTime = 0.0;
+      const double expected =
+          g_lastMatchedTime >= 0.0 ? g_lastMatchedTime + g_timeDt : g_time0;
+      if(LookupFrameTime(data, expected, frameTime))
+      {
+        t = frameTime;
+        g_lastMatchedTime = frameTime;
+        if(g_frameMatchLog < 6)
+        {
+          ++g_frameMatchLog;
+          fprintf(stderr, "[JusyncAnim] frame match -> t=%.6g (%llu pts)\n",
+              t, (unsigned long long)data.NumPoints);
+        }
+        if(g.TimeHistory.size() < g_timeCap)
+          g.TimeHistory.emplace_back(cksum, t);
+      }
+    }
     if(t < 0.0 && !g_frameTimeSeen)
     {
       for(const auto& hc : g.TimeHistory)
@@ -531,6 +665,33 @@ bool MaybeRegister(UsdBridge* bridge, UsdGeometryHandle geometry,
     g.NeedReseed = false;
     g.Pending.push_back(0); // published from Tick(), not here
     return true;
+  }
+
+  // Same pose as the current sample, but the dataset clock may have moved on:
+  // this morph holds its pose for stretches of frames, so the geometry does not
+  // change while ParaView's time does. Re-stamp and publish so Unreal's t keeps
+  // up with the ParaView toolbar even when nothing visibly moves.
+  {
+    double ft = 0.0;
+    const double expected =
+        g_lastMatchedTime >= 0.0 ? g_lastMatchedTime + g_timeDt : g_time0;
+    if(LookupFrameTime(data, expected, ft))
+    {
+      g_lastMatchedTime = ft;
+      if(g.Samples.size() == 1)
+      {
+        const double cur = g.Samples.back().Time;
+        const double diff = cur - ft;
+        if(cur < 0.0 || diff > 1e-9 || diff < -1e-9)
+        {
+          g.Samples.back().Time = ft;
+          if(g.TimeHistory.size() < g_timeCap)
+            g.TimeHistory.emplace_back(cksum, ft);
+          g.Touched = true;
+          g.Pending.push_back(g.Samples.size() - 1);
+        }
+      }
+    }
   }
 
   if(g.NeedReseed && !g.Samples.empty())
